@@ -48,6 +48,7 @@ async function loadPreview() {
     const r = await fetch(`/api/preview?seed=${encodeURIComponent($("seed").value || 0)}`);
     if (!r.ok || seq !== previewSeq || running) return;
     const p = await r.json();
+    if (seq !== previewSeq || running) return;
     showImage("live", `data:image/jpeg;base64,${p.front}`);
     showImage("top", `data:image/png;base64,${p.top}`);
   } catch (err) {
@@ -74,6 +75,7 @@ $("run").addEventListener("submit", async (e) => {
     max_steps: Number($("max_steps").value),
     show_positions: $("show_positions").checked,
   };
+  previewSeq++;  // drop a preview that is still on its way
   try {
     const r = await fetch("/api/run", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -89,7 +91,6 @@ $("run").addEventListener("submit", async (e) => {
     return;
   }
   running = true;
-  previewSeq++;  // drop a preview that is still on its way
   $("steps").replaceChildren();
   $("todo").replaceChildren();
   $("notes").textContent = "";

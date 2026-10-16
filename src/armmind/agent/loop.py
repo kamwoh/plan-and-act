@@ -84,6 +84,9 @@ class Agent:
             if solved:
                 status = "success"
                 break
+            if self._stop.is_set():
+                status = "stopped"
+                break
             if reply.done and not env.has_check:
                 status = "done"
                 break

@@ -129,3 +129,12 @@ async def test_check_still_ends_with_success_when_done():
     env = FakeEnv(succeed_after=1)
     status = await Agent(FakeBackend([good(done=True)])).run(env, direct, Recorder())
     assert status == "success"
+
+
+async def test_stop_during_actions_wins_over_done():
+    agent = Agent(FakeBackend([good([{"type": "open"}, {"type": "close"}], done=True)]))
+    env = FakeEnv(has_check=False)
+    act = env.act
+    env.act = lambda action: (agent._stop.set(), act(action))[1]  # Stop arrives during the first action
+    status = await agent.run(env, direct, Recorder())
+    assert status == "stopped" and len(env.acts) == 1
