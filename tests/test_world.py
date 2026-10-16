@@ -73,7 +73,7 @@ SLIDER_XML = """    <body name="slider" pos="0.6 -0.3 0.03">
 def _probe_scene():
     from armmind.scenes.base import Scene, threshold_monitor
     return Scene(name="probe", title="Probe", objects=(), fixtures_xml=SLIDER_XML, fixtures_text="",
-                 region=(0.4, 0.5, -0.1, 0.1), min_gap=0.1, tasks={}, joints=("slider",),
+                 region=(0.4, 0.5, -0.1, 0.1), min_gap=0.1, tasks={}, joints={"slider": "slider out {:.3f} m"},
                  monitors=(threshold_monitor("slider", 0.05, 0.02, "slider out"),), initial_qpos={"slider": 0.01})
 
 

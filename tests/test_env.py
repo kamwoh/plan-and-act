@@ -118,7 +118,7 @@ def test_observe_gives_new_events_and_debug_joints():
     env = MujocoEnv(scene, None, seed=0, instruction="x", show_positions=True)
     try:
         assert plain.observe().joints is None
-        assert env.observe().joints == {"slider": pytest.approx(0.01, abs=1e-3)}
+        assert env.observe().joints == ("slider out 0.010 m",)
         _push(env.world, 1.0, 50)
         assert env.observe().events == ("slider out",)
         assert env.observe().events == ()  # each event comes once

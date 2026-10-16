@@ -62,4 +62,4 @@ class Observation:
     objects: dict[str, Vec3] | None = None  # only with the debug switch on
     gripper_yaw: float = 0.0  # degrees
     events: tuple[str, ...] = ()  # what happened since the last observation, e.g. "red button pressed"
-    joints: dict[str, float] | None = None  # scene joint positions, only with the debug switch on
+    joints: tuple[str, ...] | None = None  # moving parts with units, e.g. "drawer slide 0.120 m"; debug only

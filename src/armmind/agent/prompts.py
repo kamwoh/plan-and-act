@@ -91,7 +91,7 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
     if obs.objects:
         lines.append("Object centres (debug): " + "; ".join(f"{n} {fmt(p)}" for n, p in obs.objects.items()))
     if obs.joints:
-        lines.append("Joint positions (debug): " + "; ".join(f"{n} {q:.3f}" for n, q in obs.joints.items()))
+        lines.append(f"Moving parts (debug): {'; '.join(obs.joints)}.")
     if obs.events:
         lines.append(f"Events: {'; '.join(obs.events)}.")
     if history:

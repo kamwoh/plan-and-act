@@ -32,7 +32,8 @@ FIXTURES = "\n".join([
 TEXT = (f"A low grey panel, {PANEL_H * 100:.0f} cm high, at x {PANEL_X - PANEL_HX:.2f} to {PANEL_X + PANEL_HX:.2f}, "
         f"y {-PANEL_HY:.2f} to {PANEL_HY:.2f}. On top are three round buttons, {2 * CAP_R * 100:.0f} cm wide, "
         f"at x {PANEL_X:.2f}: red at y -0.10, green at y 0.00, blue at y 0.10. The top of a button is at "
-        f"z {PANEL_H + 2 * CAP_HH:.3f}. Push a button down about 1 cm to press it.")
+        f"z {PANEL_H + 2 * CAP_HH:.3f}. Close the gripper first, then push a button down about 1 cm "
+        "with the fingertips. An open gripper straddles the button and lands on the panel.")
 
 
 def presses(w) -> list[str]:
@@ -49,7 +50,7 @@ def press(colour: str) -> list[Action]:
 
 BUTTONS_SCENE = Scene(
     name="buttons", title="Buttons", objects=(), fixtures_xml=FIXTURES, fixtures_text=TEXT,
-    region=(0.35, 0.45, -0.1, 0.1), min_gap=0.1, joints=tuple(f"{c}_button" for c in BUTTONS),
+    region=(0.35, 0.45, -0.1, 0.1), min_gap=0.1, joints={f"{c}_button": f"{c} button depth {{:.3f}} m" for c in BUTTONS},
     monitors=tuple(threshold_monitor(f"{c}_button", FIRE, REARM, f"{c} button pressed") for c in BUTTONS),
     tasks={t.name: t for t in (
         Task("press_green", "Press the green button.", lambda w: "green" in presses(w),

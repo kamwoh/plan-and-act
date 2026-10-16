@@ -45,7 +45,7 @@ def test_layout_is_repeatable_and_spread_out(name):
             assert np.hypot(p[0] - q[0], p[1] - q[1]) >= scene.min_gap
         for x, y in a.values():
             assert x0 <= x <= x1 and y0 <= y <= y1
-    if len(scene.objects) > 1:
+    if len(scene.objects) > 0:
         assert scene.layout(0) != scene.layout(1)
 
 
@@ -312,3 +312,45 @@ def test_image_text_and_camera_labels():
     for name in ("cubes", "tray", "zones", "shapes", "buttons"):
         assert SCENES[name].image_text is None and SCENES[name].camera_overrides == {}
         assert SCENES[name].camera_labels == {"front": "Front", "top": "Top · grid"}
+
+
+@pytest.mark.assets
+def test_joint_text_has_units_and_meaning():
+    from armmind.env import MujocoEnv
+    for name, want in [("drawer", ("drawer slide 0.120 m (0 = closed)",)),
+                       ("buttons", ("red button depth 0.000 m", "green button depth 0.000 m",
+                                    "blue button depth 0.000 m"))]:
+        scene = SCENES[name]
+        env = MujocoEnv(scene, None, 0, "x", show_positions=True)
+        try:
+            if name == "drawer":
+                env.world.reset(scene.layout(0), {"drawer": 0.12})
+            assert env.observe().joints == want
+        finally:
+            env.close()
+
+
+@pytest.mark.assets
+def test_open_drawer_keeps_clear_of_the_cube_region():
+    """At full open (0.15 m), no drawer geom reaches the cube start region. The cube starts square to the axes,
+    so the region grows by its half width, plus 3 mm."""
+    scene = SCENES["drawer"]
+    w = World(scene)
+    w.reset(scene.layout(0), {"drawer": 0.15})
+    m, d = w.model, w.data
+    grow = scene.objects[0].size[0] + 0.003
+    x0, x1, y0, y1 = scene.region
+    drawer = m.body("drawer").id
+    geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] == drawer]
+    assert len(geoms) == 8
+    for g in geoms:
+        rot = d.geom_xmat[g].reshape(3, 3)
+        centre = d.geom_xpos[g] + rot @ m.geom_aabb[g][:3]
+        half = np.abs(rot) @ m.geom_aabb[g][3:]
+        apart = (centre[0] + half[0] < x0 - grow or centre[0] - half[0] > x1 + grow
+                 or centre[1] + half[1] < y0 - grow or centre[1] - half[1] > y1 + grow)
+        assert apart, f"{m.geom(g).name} reaches the cube region"
+
+
+def test_buttons_text_says_to_close_the_gripper_first():
+    assert "Close the gripper first" in SCENES["buttons"].fixtures_text

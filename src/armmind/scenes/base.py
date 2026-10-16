@@ -69,7 +69,8 @@ class Scene:
     region: tuple[float, float, float, float]  # x_min, x_max, y_min, y_max where the objects start
     min_gap: float  # the smallest distance between two object centres
     tasks: dict[str, Task]
-    joints: tuple[str, ...] = ()  # scene joints to report in the debug positions
+    # Scene joints to report in the debug positions: name -> text with units, e.g. "drawer slide {:.3f} m".
+    joints: dict[str, str] = field(default_factory=dict)
     # Monitor factories: each world makes its own monitors, because a monitor keeps state.
     monitors: tuple[Callable[[], Monitor], ...] = ()
     initial_qpos: dict[str, float] = field(default_factory=dict)  # scene joint positions at the start

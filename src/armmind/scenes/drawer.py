@@ -20,7 +20,7 @@ HANDLE_DX, HANDLE_R, HANDLE_HY = -0.11, 0.008, 0.04  # the bar: 4 cm in front of
 MAX_OPEN = 0.15
 WOOD, DARK = "0.62 0.45 0.3 1", "0.35 0.25 0.17 1"
 LIFT_Z = 0.25  # above the cabinet top
-SIDE_CAMERA = ("0.42 -1.1 0.5", "1 0 0 0 0.35 1")  # at y -1.05, looks along +y and down; image right is +x
+SIDE_CAMERA = ("0.42 -1.1 0.5", "1 0 0 0 0.35 1")  # at y -1.1, looks along +y and down; image right is +x
 HOOK_YAW = 90.0  # fingers along y: the closed gripper fits between the bar and the panel
 
 
@@ -125,7 +125,7 @@ def _cube_plan(w) -> list[Action]:
 
 DRAWER = Scene(
     name="drawer", title="Drawer", objects=(RED,), fixtures_xml=FIXTURES, fixtures_text=TEXT,
-    region=(0.35, 0.45, -0.25, -0.12), min_gap=0.10, joints=("drawer",),
+    region=(0.35, 0.45, -0.25, -0.12), min_gap=0.10, joints={"drawer": "drawer slide {:.3f} m (0 = closed)"},
     # The front camera would see only the back of the cabinet. A side camera shows the drawer slide left-right.
     camera_overrides={"front": SIDE_CAMERA}, camera_labels={"front": "Side", "top": "Top · grid"},
     image_text="Image 1: side camera, looking along +y (+x is to the right, the robot is on the left). "

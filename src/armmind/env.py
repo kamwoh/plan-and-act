@@ -59,7 +59,8 @@ class MujocoEnv:
 
     def observe(self) -> Observation:
         objects = {o.name: _r3(self.world.object_pos(o.name)) for o in self.world.objects} if self.show_positions else None
-        joints = {n: round(q, 3) for n, q in self.world.joints().items()} if self.show_positions else None
+        joints = (tuple(self.world.scene.joints[n].format(q) for n, q in self.world.joints().items())
+                  if self.show_positions else None)
         events, self._seen = tuple(self.world.events[self._seen:]), len(self.world.events)
         return Observation(
             front_png=png(self.cams.with_grid("front")), top_png=png(self.cams.with_grid("top")),

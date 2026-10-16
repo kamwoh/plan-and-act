@@ -4,6 +4,12 @@ let scenes = [];
 let sceneName = "cubes";
 const DEFAULT_CAMERAS = { front: "Front", top: "Top · grid" };
 let cameras = { ...DEFAULT_CAMERAS };  // the image labels of the chosen scene
+let runCameras = { ...DEFAULT_CAMERAS };  // the image labels of the scene of the last run, for its step details
+
+function cameraLabels(name) {
+  const scene = scenes.find((s) => s.name === name);
+  return { ...DEFAULT_CAMERAS, ...((scene && scene.cameras) || {}) };
+}
 
 function el(tag, text = "", cls = "") {
   const e = document.createElement(tag);
@@ -81,7 +87,7 @@ function chooseScene(name, keepText = false) {
   writeScene(sceneName);
   for (const c of $("scenes").children) c.classList.toggle("active", c.dataset.name === sceneName);
   $("examples").replaceChildren(chip("Your own", "", ""), ...tasks.map((t) => chip(t.name, t.name, t.instruction)));
-  cameras = { ...DEFAULT_CAMERAS, ...(scene.cameras || {}) };
+  cameras = cameraLabels(scene.name);
   for (const cam of ["front", "top"]) $(`cam_${cam}`).querySelector(".cam-label").textContent = cameras[cam];
   showMode();
 }
@@ -229,7 +235,7 @@ function openStepDetails(ev) {
   const imgs = stepImages[ev.step];
   if (imgs) {
     const pair = el("div", "", "pair");
-    for (const [name, data] of [[`Image 1 · ${cameras.front}`, imgs.front], [`Image 2 · ${cameras.top}`, imgs.top]]) {
+    for (const [name, data] of [[`Image 1 · ${runCameras.front}`, imgs.front], [`Image 2 · ${runCameras.top}`, imgs.top]]) {
       const fig = el("figure");
       const img = document.createElement("img");
       img.src = `data:image/png;base64,${data}`;
@@ -477,6 +483,7 @@ $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" })
 function onEvent(ev) {
   if (ev.kind === "run_start") {
     runSystemPrompt = ev.system_prompt || "";
+    runCameras = cameraLabels(ev.scene);
     setRunning(true);
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true);
   } else if (ev.kind === "observation") {

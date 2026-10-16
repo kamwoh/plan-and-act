@@ -53,10 +53,10 @@ def test_user_text_shows_yaw():
 
 def test_user_text_lists_events_and_debug_joints():
     obs = Observation(b"", b"", (0.3, 0.0, 0.4), 0.08, (), events=("red button pressed", "green button pressed"),
-                      joints={"drawer": 0.12})
+                      joints=("drawer slide 0.120 m (0 = closed)", "red button depth 0.004 m"))
     text = build_user_text(SCENE, "t", 1, 30, obs, "", (), [])
     assert "Events: red button pressed; green button pressed." in text
-    assert "Joint positions (debug): drawer 0.120" in text
+    assert "Moving parts (debug): drawer slide 0.120 m (0 = closed); red button depth 0.004 m." in text
     assert "Events" not in build_user_text(SCENE, "t", 1, 30, OBS, "", (), [])
 
 
