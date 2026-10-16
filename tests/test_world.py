@@ -54,3 +54,10 @@ def test_no_gripper_contacts_at_home():
 def test_scene_file_is_named_after_the_scene():
     w = World(CUBES)
     assert (w.scene_file.name, w.scene_file.parent.joinpath("panda.xml").is_file()) == ("armmind_scene_cubes.xml", True)
+
+
+@pytest.mark.assets
+def test_gripper_yaw_is_zero_at_home():
+    w = World(CUBES)
+    w.reset(LAYOUT)
+    assert w.gripper_yaw() == pytest.approx(0.0, abs=0.1)

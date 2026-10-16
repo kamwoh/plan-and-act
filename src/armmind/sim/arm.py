@@ -1,4 +1,4 @@
-"""Moves the gripper to targets. IK finds joint angles, and the joint controllers follow a smooth path."""
+"""Moves the gripper to targets in a straight line. IK finds joint angles for each point of the path."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -13,6 +13,10 @@ WORKSPACE_LO = np.array([0.25, -0.40, 0.01])
 WORKSPACE_HI = np.array([0.75, 0.40, 0.50])
 READY = np.array([0.30, 0.0, 0.40])
 SPEED = 0.25  # m/s along the straight distance
+TURN_SPEED = 90.0  # degrees per second for a change of yaw
+YAW_LIMIT = 90.0  # degrees
+TICK_STEPS = 5  # physics steps per control tick: the path gets a new IK target every 10 ms
+PATH_ITERS = 50  # IK iterations per path point, warm-started from the last point
 SETTLE_S = 0.3
 GRIP_S = 0.6
 GRIP_OPEN, GRIP_CLOSED = 255.0, 0.0
@@ -25,22 +29,25 @@ class Arm:
     def __init__(self, world: World, on_frame: Callable[[], None] | None = None):
         self.w, self.on_frame = world, on_frame
         self._ik = mujoco.MjData(world.model)  # scratch data: IK never moves the real arm
-        mujoco.mj_resetDataKeyframe(world.model, self._ik, 0)
-        mujoco.mj_kinematics(world.model, self._ik)
-        self._rot0 = self._ik.xmat[world.hand_id].reshape(3, 3).copy()  # home: points down
+        self._yaw = 0.0  # the commanded yaw in degrees
         self._next_frame = 0.0
 
-    def solve_ik(self, target) -> np.ndarray | None:
+    def solve_ik(self, target, yaw: float = 0.0, start=None, iters: int = 300) -> np.ndarray | None:
+        """Joint angles that put the TCP at target with this yaw. Starts from `start`, or else the current pose."""
         m, d, hand = self.w.model, self._ik, self.w.hand_id
         d.qpos[:] = self.w.data.qpos
+        if start is not None:
+            d.qpos[:7] = start
+        c, s = np.cos(np.radians(yaw)), np.sin(np.radians(yaw))
+        want = np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]) @ self.w.rot0
         jp, jr = np.zeros((3, m.nv)), np.zeros((3, m.nv))
-        for _ in range(300):
+        for _ in range(iters):
             mujoco.mj_kinematics(m, d)
             mujoco.mj_comPos(m, d)
             rot = d.xmat[hand].reshape(3, 3)
             p = d.xpos[hand] + rot @ TCP_OFFSET
             err_p = target - p
-            err_r = 0.5 * sum(np.cross(rot[:, i], self._rot0[:, i]) for i in range(3))
+            err_r = 0.5 * sum(np.cross(rot[:, i], want[:, i]) for i in range(3))
             if np.linalg.norm(err_p) < 1e-3 and np.linalg.norm(err_r) < 1e-2:
                 return d.qpos[:7].copy()
             mujoco.mj_jac(m, d, jp, jr, p, hand)
@@ -57,6 +64,7 @@ class Arm:
         d.qpos[:7] = q
         d.ctrl[:7] = q
         d.ctrl[7] = GRIP_OPEN
+        self._yaw = 0.0
         mujoco.mj_forward(self.w.model, d)
         self._next_frame = self.w.time
         self._run(SETTLE_S)
@@ -76,18 +84,30 @@ class Arm:
     def _move_to(self, action: Action) -> ActionResult:
         want = np.asarray(action.xyz, dtype=float)
         target = np.clip(want, WORKSPACE_LO, WORKSPACE_HI)
-        note = "target clamped to the workspace" if not np.allclose(target, want) else ""
-        q_goal = self.solve_ik(target)
-        if q_goal is None:
+        notes = ["target clamped to the workspace"] if not np.allclose(target, want) else []
+        yaw = self._yaw if action.yaw is None else float(np.clip(action.yaw, -YAW_LIMIT, YAW_LIMIT))
+        if action.yaw is not None and yaw != action.yaw:
+            notes.append(f"yaw clamped to {yaw:g}")
+        note = ", ".join(notes)
+        if self.solve_ik(target, yaw) is None:
             why = "no joint solution for this point"
             return self._result(action, "unreachable", f"{note}, and {why}" if note else why)
-        q0 = self.w.data.ctrl[:7].copy()
-        duration = max(0.4, float(np.linalg.norm(target - self.w.tcp())) / SPEED)
-        n = int(duration / self.w.dt)
-        for i in range(1, n + 1):
-            a = i / n
-            self.w.data.ctrl[:7] = q0 + (a * a * (3 - 2 * a)) * (q_goal - q0)  # smoothstep
-            self._step()
+        start, yaw0, q = self.w.tcp(), self._yaw, self.w.data.ctrl[:7].copy()
+        duration = max(0.4, float(np.linalg.norm(target - start)) / SPEED, abs(yaw - yaw0) / TURN_SPEED)
+        ticks = max(1, round(duration / (self.w.dt * TICK_STEPS)))
+        for i in range(1, ticks + 1):
+            a = i / ticks
+            a = a * a * (3 - 2 * a)  # smoothstep: start and stop gently
+            q_next = self.solve_ik(start + a * (target - start), yaw0 + a * (yaw - yaw0), q, PATH_ITERS)
+            if q_next is None:  # hold the last good point
+                self._yaw = yaw0 + a * (yaw - yaw0)
+                self._run(SETTLE_S)
+                return self._result(action, "unreachable", "path leaves the reachable area")
+            q = q_next
+            self.w.data.ctrl[:7] = q
+            for _ in range(TICK_STEPS):
+                self._step()
+        self._yaw = yaw
         self._run(SETTLE_S)
         reached = np.linalg.norm(self.w.tcp() - target) <= REACH_TOL
         return self._result(action, "reached" if reached else "blocked", note)
@@ -95,7 +115,8 @@ class Arm:
     def _result(self, action: Action, status: Status, note: str = "") -> ActionResult:
         p = self.w.tcp()
         return ActionResult(action, status, (round(float(p[0]), 3), round(float(p[1]), 3), round(float(p[2]), 3)),
-                            round(self.w.gripper_width(), 3), tuple(self.w.gripper_contacts()), note)
+                            round(self.w.gripper_width(), 3), tuple(self.w.gripper_contacts()), note,
+                            round(self.w.gripper_yaw(), 1))
 
     def _step(self) -> None:
         self.w.step()

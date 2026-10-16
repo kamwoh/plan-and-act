@@ -60,7 +60,8 @@ class MujocoEnv:
         return Observation(
             front_png=png(self.cams.with_grid("front")), top_png=png(self.cams.with_grid("top")),
             tcp=_r3(self.world.tcp()), gripper_width=round(self.world.gripper_width(), 3),
-            contacts=tuple(self.world.gripper_contacts()), objects=objects)
+            contacts=tuple(self.world.gripper_contacts()), objects=objects,
+            gripper_yaw=round(self.world.gripper_yaw(), 1))
 
     def act(self, action: Action) -> ActionResult:
         return self.arm.act(action)

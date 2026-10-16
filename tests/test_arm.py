@@ -79,3 +79,61 @@ def test_clamped_and_unreachable_note_says_both(arm):
     res = arm.act(Action("move_to", (0.9, 0.5, 0.0)))
     assert res.status == "unreachable"
     assert res.note == "target clamped to the workspace, and no joint solution for this point"
+
+
+def _dist_to_segment(p, a, b) -> float:
+    ab = b - a
+    t = np.clip(np.dot(p - a, ab) / np.dot(ab, ab), 0.0, 1.0)
+    return float(np.linalg.norm(p - (a + t * ab)))
+
+
+def test_move_to_follows_a_straight_line():
+    w = World(SCENES["cubes"])
+    w.reset(LAYOUT)
+    points = []
+    a = Arm(w, on_frame=lambda: points.append(w.tcp().copy()))
+    a.reset_ready()
+    start, goal = w.tcp().copy(), np.array([0.6, 0.25, 0.12])
+    points.clear()
+    assert a.act(Action("move_to", tuple(goal))).status == "reached"
+    assert len(points) > 10
+    assert max(_dist_to_segment(p, start, goal) for p in points) < 0.01
+
+
+def test_yaw_turns_the_gripper_and_back(arm):
+    assert arm.w.gripper_yaw() == pytest.approx(0.0, abs=1.0)
+    res = arm.act(Action("move_to", (0.5, 0.0, 0.2), yaw=45.0))
+    assert res.status == "reached"
+    assert arm.w.gripper_yaw() == pytest.approx(45.0, abs=3.0)
+    assert res.gripper_yaw == pytest.approx(45.0, abs=3.0)
+    assert "yaw 45" in res.summary()
+    res = arm.act(Action("move_to", (0.5, 0.1, 0.2)))  # no yaw: keep 45
+    assert arm.w.gripper_yaw() == pytest.approx(45.0, abs=3.0)
+    res = arm.act(Action("move_to", (0.5, 0.0, 0.2), yaw=0.0))
+    assert arm.w.gripper_yaw() == pytest.approx(0.0, abs=3.0)
+    assert "yaw" not in res.summary().split(": ", 1)[1]  # the result part leaves out a yaw of 0
+
+
+def test_pure_rotation_takes_time(arm):
+    arm.act(Action("move_to", (0.5, 0.0, 0.2)))
+    t0 = arm.w.time
+    arm.act(Action("move_to", (0.5, 0.0, 0.2), yaw=90.0))
+    assert arm.w.time - t0 >= 0.9
+
+
+def test_yaw_outside_the_range_is_clamped(arm):
+    res = arm.act(Action("move_to", (0.5, 0.0, 0.2), yaw=150.0))
+    assert res.status == "reached"
+    assert "yaw clamped to 90" in res.note
+    assert arm.w.gripper_yaw() == pytest.approx(90.0, abs=3.0)
+
+
+def test_path_that_leaves_the_reach_stops_as_unreachable(arm):
+    assert arm.act(Action("move_to", (0.25, -0.2, 0.1))).status == "reached"
+    res = arm.act(Action("move_to", (0.25, 0.2, 0.1)))
+    assert res.status == "unreachable"
+    assert res.note == "path leaves the reachable area"
+    assert res.tcp[1] < 0.15  # it stopped on the way
+    held = arm.w.tcp().copy()
+    arm.act(Action("wait", seconds=0.5))
+    np.testing.assert_allclose(arm.w.tcp(), held, atol=0.005)

@@ -38,3 +38,14 @@ def test_system_speaks_of_objects_not_cubes():
     assert "cube" not in SYSTEM.lower()
     assert "To grasp an object: open, move 10 cm above it, move down to its centre height, close, then move up." in SYSTEM
     assert "step message lists them with their sizes" in SYSTEM
+
+
+def test_schema_and_system_know_yaw():
+    assert REPLY_SCHEMA["properties"]["actions"]["items"]["properties"]["yaw"] == {"type": "number"}
+    assert '"yaw"' in SYSTEM and "straight line" in SYSTEM
+
+
+def test_user_text_shows_yaw():
+    obs = Observation(b"", b"", (0.3, 0.0, 0.4), 0.08, (), gripper_yaw=30.0)
+    text = build_user_text(SCENE, "t", 1, 30, obs, "", (), [])
+    assert "Gripper at (0.300, 0.000, 0.400), yaw 30°, width 0.080 m." in text

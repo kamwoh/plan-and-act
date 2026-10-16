@@ -54,3 +54,16 @@ def test_parse_done_flag():
 def test_parse_rejects_non_bool_done(done):
     with pytest.raises(ReplyError, match="done"):
         parse_reply(reply([], done=done))
+
+
+def test_parse_move_to_with_yaw():
+    r = parse_reply(reply([{"type": "move_to", "xyz": [0.5, 0, 0.1], "yaw": 30}, {"type": "move_to", "xyz": [0.5, 0, 0.1]}]))
+    assert r.actions == (Action("move_to", (0.5, 0.0, 0.1), yaw=30.0), Action("move_to", (0.5, 0.0, 0.1)))
+    assert r.actions[0].describe() == "move_to(0.500, 0.000, 0.100, yaw 30°)"
+    assert r.actions[1].describe() == "move_to(0.500, 0.000, 0.100)"
+
+
+@pytest.mark.parametrize("yaw", ["a", float("nan"), float("inf"), True, None, [1]])
+def test_parse_rejects_bad_yaw(yaw):
+    with pytest.raises(ReplyError, match="yaw"):
+        parse_reply(reply([{"type": "move_to", "xyz": [0.5, 0, 0.1], "yaw": yaw}]))

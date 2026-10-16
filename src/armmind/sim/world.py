@@ -42,6 +42,10 @@ class World:
         self.data = mujoco.MjData(self.model)
         self.hand_id = self.model.body("hand").id
         self._gripper = {self.model.body(n).id for n in GRIPPER_BODIES}
+        home = mujoco.MjData(self.model)
+        mujoco.mj_resetDataKeyframe(self.model, home, 0)
+        mujoco.mj_kinematics(self.model, home)
+        self.rot0 = home.xmat[self.hand_id].reshape(3, 3).copy()  # the home orientation: yaw 0, points down
 
     @property
     def objects(self) -> tuple[ObjSpec, ...]:
@@ -72,6 +76,11 @@ class World:
     def tcp(self) -> np.ndarray:
         rot = self.data.xmat[self.hand_id].reshape(3, 3)
         return self.data.xpos[self.hand_id] + rot @ TCP_OFFSET
+
+    def gripper_yaw(self) -> float:
+        """The turn of the hand about world +z from the home orientation, in degrees."""
+        turn = self.data.xmat[self.hand_id].reshape(3, 3) @ self.rot0.T
+        return float(np.degrees(np.arctan2(turn[1, 0], turn[0, 0])))
 
     def gripper_width(self) -> float:
         return float(self.data.qpos[7] + self.data.qpos[8])

@@ -18,10 +18,13 @@ class Action:
     type: ActionType
     xyz: Vec3 | None = None
     seconds: float = 0.5
+    yaw: float | None = None  # degrees about world +z, 0 is the start orientation; None keeps the current yaw
 
     def describe(self) -> str:
         if self.type == "move_to":
-            return f"move_to{fmt(self.xyz)}"
+            if self.yaw is None:
+                return f"move_to{fmt(self.xyz)}"
+            return f"move_to{fmt(self.xyz)[:-1]}, yaw {self.yaw:g}°)"
         if self.type == "wait":
             return f"wait({self.seconds:.1f} s)"
         return self.type
@@ -35,10 +38,13 @@ class ActionResult:
     gripper_width: float
     contacts: tuple[str, ...] = ()
     note: str = ""
+    gripper_yaw: float = 0.0  # degrees
 
     def summary(self) -> str:
-        s = (f"{self.action.describe()}: {self.status}, gripper at {fmt(self.tcp)}, "
-             f"width {self.gripper_width:.3f}")
+        s = f"{self.action.describe()}: {self.status}, gripper at {fmt(self.tcp)}"
+        if round(self.gripper_yaw):
+            s += f", yaw {self.gripper_yaw:.0f}°"
+        s += f", width {self.gripper_width:.3f}"
         if self.contacts:
             s += f", touching {', '.join(self.contacts)}"
         if self.note:
@@ -54,3 +60,4 @@ class Observation:
     gripper_width: float
     contacts: tuple[str, ...]
     objects: dict[str, Vec3] | None = None  # only with the debug switch on
+    gripper_yaw: float = 0.0  # degrees

@@ -41,7 +41,10 @@ def _action(i: int, a) -> Action:
         xyz = a.get("xyz")
         if not (isinstance(xyz, list) and len(xyz) == 3 and all(_number(v) for v in xyz)):
             raise ReplyError(f"action {i}: move_to needs 'xyz' with 3 finite numbers")
-        return Action("move_to", (float(xyz[0]), float(xyz[1]), float(xyz[2])))
+        if "yaw" in a and not _number(a["yaw"]):
+            raise ReplyError(f"action {i}: 'yaw' must be a finite number of degrees")
+        yaw = float(a["yaw"]) if "yaw" in a else None  # the arm clamps the range
+        return Action("move_to", (float(xyz[0]), float(xyz[1]), float(xyz[2])), yaw=yaw)
     if kind in ("open", "close"):
         return Action(kind)
     if kind == "wait":

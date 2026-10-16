@@ -25,6 +25,7 @@ def test_observe_has_two_images_and_no_positions():
         obs = env.observe()
         assert obs.front_png[:4] == b"\x89PNG" and obs.top_png[:4] == b"\x89PNG"
         assert obs.objects is None
+        assert obs.gripper_yaw == pytest.approx(0.0, abs=1.0)
         assert obs.gripper_width == pytest.approx(0.08, abs=0.005)
         assert env.instruction == "Touch it." and env.has_check and env.check_name == "reach"
         assert env.scene_name == "cubes" and env.scene_text == CUBES.describe()
@@ -94,5 +95,15 @@ def test_custom_env_has_no_check():
         assert env.has_check is False and env.check_name is None
         assert env.success() is False
         assert env.instruction == "Wave at the blue cube."
+    finally:
+        env.close()
+
+
+@pytest.mark.assets
+def test_observe_reports_the_yaw():
+    env = MujocoEnv(CUBES, TASKS["reach"], seed=0, instruction="Touch it.")
+    try:
+        env.act(Action("move_to", (0.5, 0.0, 0.2), yaw=-30.0))
+        assert env.observe().gripper_yaw == pytest.approx(-30.0, abs=3.0)
     finally:
         env.close()

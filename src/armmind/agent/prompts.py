@@ -22,7 +22,10 @@ The gripper is 0.08 m wide when open. When it closes on an object, the width is 
 When it closes on nothing, the width is about 0.
 
 Actions:
-- {"type": "move_to", "xyz": [x, y, z]}: move the gripper to this point.
+- {"type": "move_to", "xyz": [x, y, z]}: move the gripper to this point. The gripper moves in a straight line.
+  move_to takes an optional "yaw" in degrees (-90 to 90) that turns the gripper about the vertical axis. \
+0 is the start orientation, and at 0 the fingers close along the x axis. Positive yaw turns the gripper \
+counter-clockwise, seen from above. Without "yaw", the gripper keeps its current yaw.
 - {"type": "open"} and {"type": "close"}: open or close the gripper.
 - {"type": "wait", "seconds": s}: wait for s seconds (at most 3).
 The arm can reach x from 0.25 to 0.75, y from -0.40 to 0.40, z from 0.01 to 0.50. \
@@ -54,6 +57,7 @@ REPLY_SCHEMA = {
                     "type": {"enum": ["move_to", "open", "close", "wait"]},
                     "xyz": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
                     "seconds": {"type": "number"},
+                    "yaw": {"type": "number"},
                 },
             },
         },
@@ -77,7 +81,7 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
         f"Scene: {scene}",
         f"Task: {instruction}",
         f"Step {step} of {max_steps}.",
-        f"Gripper at {fmt(obs.tcp)}, width {obs.gripper_width:.3f} m.",
+        f"Gripper at {fmt(obs.tcp)}, yaw {round(obs.gripper_yaw)}°, width {obs.gripper_width:.3f} m.",
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
     if obs.objects is not None:
