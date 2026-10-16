@@ -1,6 +1,6 @@
 # arm-mind
 
-An LLM controls a simulated robot arm. Pick a task, change the instruction if you want, press Start, and watch Claude move a Franka Panda arm in MuJoCo. The physics stops while Claude thinks, so a slow model is not a problem.
+An LLM controls a simulated robot arm. Write an instruction or pick an example, press Start, and watch Claude move a Franka Panda arm in MuJoCo. The physics stops while Claude thinks, so a slow model is not a problem.
 
 ## Setup (WSL2 or Linux)
 
@@ -25,7 +25,13 @@ The `serve` command takes these options:
 - `--port`: the port (default 8780). The command refuses 8765, because ps1-mind uses it.
 - `--runs`: the folder for run logs (default `runs`).
 
-Pick a task (reach, pick or stack), a seed and a step limit, then press Start. You can change the instruction text. The success check of the task stays the same. The left side shows the front camera live and the top camera from the last step. The right side shows Claude's to-do list, notes and each step.
+Type an instruction in the text box. You can also pick an example from the Examples list. This fills the box with the instruction of a built-in task: reach, pick or stack.
+
+A line under the box shows the mode. If your text matches an example exactly, the line reads "Auto-check: reach" (or pick, or stack). The app then checks the physics and ends the run on success. If your text is different, the line reads "No auto-check". Claude then sets "done" in its reply when it thinks the task is complete, and the run ends.
+
+Before you press Start, the page shows the starting scene for the seed in both camera views. It updates when you change the seed. The scene shows the cube layout and the arm in the ready pose.
+
+Set a seed and a step limit, then press Start. The left side shows the front camera live and the top camera from the last step. The right side shows Claude's to-do list, notes and each step.
 
 The debug switch gives Claude the true cube positions. Use it to find out if a failure comes from vision or from planning.
 
