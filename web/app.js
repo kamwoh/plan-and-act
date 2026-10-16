@@ -285,8 +285,7 @@ function onEvent(ev) {
   if (ev.kind === "run_start") {
     runSystemPrompt = ev.system_prompt || "";
   } else if (ev.kind === "observation") {
-    stepImages[ev.step] = { front: ev.front_png, top: ev.top_png };
-    showImage("top", `data:image/png;base64,${ev.top_png}`);
+    stepImages[ev.step] = { front: ev.front_png, top: ev.top_png };  // shown in the step details
     setStatus(`step ${ev.step}: thinking`);
   } else if (ev.kind === "reply") {
     setStatus(`step ${ev.step}: moving`);
