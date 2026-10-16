@@ -79,7 +79,8 @@ class Arm:
         note = "target clamped to the workspace" if not np.allclose(target, want) else ""
         q_goal = self.solve_ik(target)
         if q_goal is None:
-            return self._result(action, "unreachable", note or "no joint solution for this point")
+            why = "no joint solution for this point"
+            return self._result(action, "unreachable", f"{note}, and {why}" if note else why)
         q0 = self.w.data.ctrl[:7].copy()
         duration = max(0.4, float(np.linalg.norm(target - self.w.tcp())) / SPEED)
         n = int(duration / self.w.dt)

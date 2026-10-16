@@ -72,3 +72,9 @@ def test_wait_is_capped_and_frames_are_paced():
     a.act(Action("wait", seconds=10.0))
     assert w.time - t0 == pytest.approx(3.0, abs=0.01)
     assert 88 <= len(frames) <= 92
+
+
+def test_clamped_and_unreachable_note_says_both(arm):
+    res = arm.act(Action("move_to", (0.9, 0.5, 0.0)))
+    assert res.status == "unreachable"
+    assert res.note == "target clamped to the workspace, and no joint solution for this point"
