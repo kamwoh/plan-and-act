@@ -35,11 +35,18 @@ $("run").addEventListener("submit", async (e) => {
     show_positions: $("show_positions").checked,
     instruction: $("instruction").value.trim() || null,
   };
-  const r = await fetch("/api/run", {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-  });
-  if (!r.ok) {
-    setStatus(`error: ${(await r.json()).detail}`, "bad");
+  try {
+    const r = await fetch("/api/run", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const { detail } = await r.json().catch(() => ({}));
+      const text = Array.isArray(detail) ? detail.map((d) => d.msg).join(", ") : (detail || r.statusText);
+      setStatus(`error: ${text}`, "bad");
+      return;
+    }
+  } catch (err) {
+    setStatus(`error: ${err.message}`, "bad");
     return;
   }
   $("steps").replaceChildren();

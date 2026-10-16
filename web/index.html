@@ -16,7 +16,7 @@
     <section class="side">
       <form id="run">
         <label>Task <select id="task"></select></label>
-        <label>Instruction <textarea id="instruction" rows="2"></textarea></label>
+        <label>Instruction <textarea id="instruction" rows="2" maxlength="500"></textarea></label>
         <label>Seed <input id="seed" type="number" value="0" min="0"></label>
         <label>Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
         <label class="check"><input id="show_positions" type="checkbox"> Debug: give cube positions to the model</label>
@@ -24,7 +24,7 @@
       </form>
       <h2>To-do</h2><ul id="todo"></ul>
       <h2>Notes</h2><p id="notes"></p>
-      <h2>Steps</h2><ol id="steps"></ol>
+      <h2>Steps</h2><ul id="steps"></ul>
     </section>
   </main>
   <script src="app.js"></script>
