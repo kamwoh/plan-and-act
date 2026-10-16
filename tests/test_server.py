@@ -263,7 +263,7 @@ def test_prompt_endpoint_returns_system_and_an_example(tmp_path):
 def test_scenes_list_every_scene_with_its_tasks(tmp_path):
     with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
         body = c.get("/api/scenes").json()
-    assert [s["name"] for s in body] == ["cubes", "tray", "zones", "shapes"]
+    assert [s["name"] for s in body] == ["cubes", "tray", "zones", "shapes", "drawer", "buttons"]
     tray = body[1]
     assert tray["title"] == "Tray" and tray["description"] == SCENES["tray"].describe()
     assert tray["tasks"] == [{"name": t.name, "instruction": t.instruction} for t in SCENES["tray"].tasks.values()]

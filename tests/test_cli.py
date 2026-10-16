@@ -21,3 +21,9 @@ def test_scripted_refuses_a_task_of_another_scene(capsys):
         main(["scripted", "--scene", "cubes", "--task", "nope"])
     assert exc.value.code == 2
     assert "nope" in capsys.readouterr().err
+
+
+@pytest.mark.assets
+def test_scripted_uses_the_task_start_joints(capsys):
+    assert main(["scripted", "--scene", "drawer", "--task", "close_drawer", "--seed", "0"]) == 0
+    assert capsys.readouterr().out.strip().endswith("success")

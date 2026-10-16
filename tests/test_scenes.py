@@ -7,6 +7,7 @@ import pytest
 from armmind.scenes import SCENES
 from armmind.sim.arm import Arm
 from armmind.sim.world import World
+from armmind.types import Action
 
 CASES = [(s, t) for s in SCENES for t in SCENES[s].tasks]
 
@@ -17,10 +18,11 @@ def _radius(obj) -> float:
 
 
 def test_registry_order_and_tasks():
-    assert list(SCENES) == ["cubes", "tray", "zones", "shapes"]
+    assert list(SCENES) == ["cubes", "tray", "zones", "shapes", "drawer", "buttons"]
     assert {n: list(s.tasks) for n, s in SCENES.items()} == {
         "cubes": ["reach", "pick", "stack"], "tray": ["red_in_tray", "all_in_tray"],
-        "zones": ["red_on_green", "sort"], "shapes": ["pick_cylinder", "small_on_big"]}
+        "zones": ["red_on_green", "sort"], "shapes": ["pick_cylinder", "small_on_big"],
+        "drawer": ["open_drawer", "close_drawer", "cube_in_drawer"], "buttons": ["press_green", "press_sequence"]}
 
 
 def test_cubes_layout_is_unchanged():
@@ -43,7 +45,8 @@ def test_layout_is_repeatable_and_spread_out(name):
             assert np.hypot(p[0] - q[0], p[1] - q[1]) >= scene.min_gap
         for x, y in a.values():
             assert x0 <= x <= x1 and y0 <= y <= y1
-    assert scene.layout(0) != scene.layout(1)
+    if len(scene.objects) > 1:
+        assert scene.layout(0) != scene.layout(1)
 
 
 @pytest.mark.parametrize("name", list(SCENES))
@@ -74,7 +77,7 @@ def test_fixtures_are_outside_the_region(name):
     scene = SCENES[name]
     w = World(scene)
     m = w.model
-    grow = max(_radius(o) for o in scene.objects)
+    grow = max((_radius(o) for o in scene.objects), default=0.0)
     x0, x1, y0, y1 = scene.region
     fixtures = 0
     for g in range(m.ngeom):
@@ -86,7 +89,7 @@ def test_fixtures_are_outside_the_region(name):
         hx, hy = m.geom_size[g][:2]
         apart = cx + hx < x0 - grow or cx - hx > x1 + grow or cy + hy < y0 - grow or cy - hy > y1 + grow
         assert apart, f"{m.body(b).name} geom {g} overlaps the region"
-    assert fixtures == {"cubes": 0, "tray": 5, "zones": 3, "shapes": 0}[name]
+    assert fixtures == {"cubes": 0, "tray": 5, "zones": 3, "shapes": 0, "drawer": 5, "buttons": 1}[name]
 
 
 @pytest.mark.assets
@@ -214,3 +217,81 @@ def test_a_scene_without_objects_has_an_empty_layout():
     empty = replace(SCENES["cubes"], objects=())
     assert empty.layout(0) == {}
     assert empty.describe().startswith("Objects: none.")
+
+
+def _run(scene_name: str, actions, joint_qpos=None) -> World:
+    scene = SCENES[scene_name]
+    w = World(scene)
+    w.reset(scene.layout(0), joint_qpos)
+    arm = Arm(w)
+    arm.reset_ready()
+    for a in actions:
+        arm.act(a)
+    return w
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("slide,expected", [(0.05, False), (0.11, True)])
+def test_open_drawer_needs_10_cm(slide, expected):
+    w = _run("drawer", [], {"drawer": slide})
+    assert w.joint_pos("drawer") == pytest.approx(slide, abs=1e-3)
+    assert SCENES["drawer"].tasks["open_drawer"].success(w) is expected
+
+
+@pytest.mark.assets
+def test_drawer_stays_where_it_is_left():
+    w = _run("drawer", [], {"drawer": 0.08})
+    w.step(500)
+    assert w.joint_pos("drawer") == pytest.approx(0.08, abs=1e-3)
+
+
+@pytest.mark.assets
+def test_close_drawer_check_rejects_a_gripper_on_the_handle():
+    from armmind.scenes.drawer import handle_pos
+    scene = SCENES["drawer"]
+    w = World(scene)
+    w.reset(scene.layout(0), {"drawer": 0.0})
+    arm = Arm(w)
+    arm.reset_ready()
+    h = handle_pos(w)
+    for a in [Action("close"), Action("move_to", (h[0] - 0.05, 0.0, h[2]), yaw=90.0),
+              Action("move_to", (h[0] - 0.005, 0.0, h[2]))]:
+        arm.act(a)
+    assert "drawer" in w.gripper_contacts()
+    assert not scene.tasks["close_drawer"].success(w)
+
+
+@pytest.mark.assets
+def test_cube_in_drawer_check_needs_the_cube_inside():
+    scene = SCENES["drawer"]
+    w = World(scene)
+    w.reset(scene.layout(0), {"drawer": 0.12})
+    assert not scene.tasks["cube_in_drawer"].success(w)  # the cube is on the table
+    floor = w.data.body("drawer").xpos
+    adr = w.model.jnt_qposadr[w.model.joint("red_cube").id]
+    w.data.qpos[adr:adr + 3] = [floor[0], floor[1], floor[2] + 0.02]
+    mujoco.mj_forward(w.model, w.data)
+    assert scene.tasks["cube_in_drawer"].success(w)
+
+
+def _presses(*colours: str) -> list:
+    from armmind.scenes.buttons import press
+    return [Action("close"), *(a for c in colours for a in press(c))]
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("colours,expected", [(("red", "green", "blue"), True), (("green", "red", "blue"), False),
+                                              (("green",), False)])
+def test_press_sequence_needs_the_right_order(colours, expected):
+    w = _run("buttons", _presses(*colours))
+    assert w.events == [f"{c} button pressed" for c in colours]  # once per press
+    assert SCENES["buttons"].tasks["press_sequence"].success(w) is expected
+    assert SCENES["buttons"].tasks["press_green"].success(w) is True
+
+
+@pytest.mark.assets
+def test_buttons_rest_up_and_no_event_at_start():
+    w = _run("buttons", [Action("wait", seconds=1.0)])
+    assert w.events == []
+    assert all(q < 0.002 for q in w.joints().values())
+    assert set(w.joints()) == {"red_button", "green_button", "blue_button"}
