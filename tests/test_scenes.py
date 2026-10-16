@@ -15,6 +15,13 @@ def _radius(obj) -> float:
     return float(np.hypot(obj.size[0], obj.size[1])) if obj.shape == "box" else float(obj.size[0])
 
 
+def test_registry_order_and_tasks():
+    assert list(SCENES) == ["cubes", "tray", "zones", "shapes"]
+    assert {n: list(s.tasks) for n, s in SCENES.items()} == {
+        "cubes": ["reach", "pick", "stack"], "tray": ["red_in_tray", "all_in_tray"],
+        "zones": ["red_on_green", "sort"], "shapes": ["pick_cylinder", "small_on_big"]}
+
+
 def test_cubes_layout_is_unchanged():
     cubes = SCENES["cubes"]
     assert cubes.layout(0) == {"red_cube": (0.559, -0.115), "blue_cube": (0.41, -0.242),
@@ -68,14 +75,17 @@ def test_fixtures_are_outside_the_region(name):
     m = w.model
     grow = max(_radius(o) for o in scene.objects)
     x0, x1, y0, y1 = scene.region
+    fixtures = 0
     for g in range(m.ngeom):
         b = m.geom_bodyid[g]
         if b == 0 or m.body_parentid[b] != 0 or m.body_jntnum[b] or m.body(b).name == "link0":
             continue  # a fixture is a static body at the root, other than the arm base
+        fixtures += 1
         cx, cy = m.body_pos[b][:2] + m.geom_pos[g][:2]
         hx, hy = m.geom_size[g][:2]
         apart = cx + hx < x0 - grow or cx - hx > x1 + grow or cy + hy < y0 - grow or cy - hy > y1 + grow
         assert apart, f"{m.body(b).name} geom {g} overlaps the region"
+    assert fixtures == {"cubes": 0, "tray": 5, "zones": 3, "shapes": 0}[name]
 
 
 @pytest.mark.assets
@@ -113,3 +123,13 @@ def test_solution_solves_task(scene_name, task_name, seed):
     for action in task.solution(w):
         arm.act(action)
     assert task.success(w)
+
+
+@pytest.mark.assets
+def test_zones_do_not_collide_and_the_tray_does():
+    w = World(SCENES["zones"])
+    m = w.model
+    zone_geoms = [g for g in range(m.ngeom) if m.body(m.geom_bodyid[g]).name.endswith("_zone")]
+    assert len(zone_geoms) == 3 and all(m.geom_contype[g] == 0 and m.geom_conaffinity[g] == 0 for g in zone_geoms)
+    t = World(SCENES["tray"]).model
+    assert all(t.geom_contype[g] == 1 for g in range(t.ngeom) if t.body(t.geom_bodyid[g]).name == "tray")
