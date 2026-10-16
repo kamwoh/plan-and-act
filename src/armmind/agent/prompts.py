@@ -84,8 +84,12 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
         f"Gripper at {fmt(obs.tcp)}, yaw {round(obs.gripper_yaw)}°, width {obs.gripper_width:.3f} m.",
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
-    if obs.objects is not None:
+    if obs.objects:
         lines.append("Object centres (debug): " + "; ".join(f"{n} {fmt(p)}" for n, p in obs.objects.items()))
+    if obs.joints:
+        lines.append("Joint positions (debug): " + "; ".join(f"{n} {q:.3f}" for n, q in obs.joints.items()))
+    if obs.events:
+        lines.append(f"Events: {'; '.join(obs.events)}.")
     if history:
         lines.append("Recent steps:")
         lines += [f"- step {h.step}: {h.plan} -> {'; '.join(h.results) or 'no actions'}" for h in history]

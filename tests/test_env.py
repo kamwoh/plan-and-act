@@ -107,3 +107,20 @@ def test_observe_reports_the_yaw():
         assert env.observe().gripper_yaw == pytest.approx(-30.0, abs=3.0)
     finally:
         env.close()
+
+
+@pytest.mark.assets
+def test_observe_gives_new_events_and_debug_joints():
+    from tests.test_world import _probe_scene, _push
+    scene = _probe_scene()
+    plain = MujocoEnv(scene, None, seed=0, instruction="x")
+    env = MujocoEnv(scene, None, seed=0, instruction="x", show_positions=True)
+    try:
+        assert plain.observe().joints is None
+        assert env.observe().joints == {"slider": pytest.approx(0.01, abs=1e-3)}
+        _push(env.world, 1.0, 50)
+        assert env.observe().events == ("slider out",)
+        assert env.observe().events == ()  # each event comes once
+    finally:
+        plain.close()
+        env.close()

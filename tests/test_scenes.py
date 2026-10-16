@@ -106,10 +106,11 @@ def test_objects_stay_still_at_their_start_poses(name):
 @pytest.mark.parametrize("scene_name,task_name", CASES)
 def test_no_task_is_solved_at_start(scene_name, task_name):
     scene = SCENES[scene_name]
+    task = scene.tasks[task_name]
     w = World(scene)
-    w.reset(scene.layout(0))
+    w.reset(scene.layout(0), task.initial_qpos)
     Arm(w).reset_ready()
-    assert not scene.tasks[task_name].success(w)
+    assert not task.success(w)
 
 
 @pytest.mark.assets
@@ -118,7 +119,7 @@ def test_solution_solves_task(scene_name, task_name, seed):
     scene = SCENES[scene_name]
     task = scene.tasks[task_name]
     w = World(scene)
-    w.reset(scene.layout(seed))
+    w.reset(scene.layout(seed), task.initial_qpos)
     arm = Arm(w)
     arm.reset_ready()
     for action in task.solution(w):
@@ -206,3 +207,10 @@ def test_tray_check_rejects_a_cube_the_gripper_holds(touch):
     assert abs(x - 0.5) < 0.01 and abs(y - 0.28) < 0.01 and z < 0.06  # inside the tray either way
     assert ("red_cube" in w.gripper_contacts()) is touch
     assert scene.tasks["red_in_tray"].success(w) is (not touch)
+
+
+def test_a_scene_without_objects_has_an_empty_layout():
+    from dataclasses import replace
+    empty = replace(SCENES["cubes"], objects=())
+    assert empty.layout(0) == {}
+    assert empty.describe().startswith("Objects: none.")

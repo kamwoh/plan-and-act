@@ -50,7 +50,7 @@ def _scripted(scene_name: str, task_name: str, seed: int) -> int:
     scene = SCENES[scene_name]
     task = scene.tasks[task_name]
     w = World(scene)
-    w.reset(scene.layout(seed))
+    w.reset(scene.layout(seed), task.initial_qpos)
     arm = Arm(w)
     arm.reset_ready()
     for action in task.solution(w):

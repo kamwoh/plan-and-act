@@ -42,11 +42,12 @@ class MujocoEnv:
         self.scene_name, self.scene_text = scene.name, scene.describe()
         self.has_check, self.check_name = task is not None, task.name if task else None
         self.world = World(scene)
-        self.world.reset(scene.layout(seed))
+        self.world.reset(scene.layout(seed), task.initial_qpos if task else None)
         self.cams = Cameras(self.world)
         self._on_frame, self._n_frames = on_frame, 0
         self.arm = Arm(self.world, on_frame=self._frame if on_frame else None)
         self.arm.reset_ready()
+        self._seen = 0  # events before this index went out in an earlier observation
 
     def _frame(self) -> None:
         """Send the front camera on every frame and the top camera on every third frame. No shadows, for speed."""
@@ -57,11 +58,13 @@ class MujocoEnv:
 
     def observe(self) -> Observation:
         objects = {o.name: _r3(self.world.object_pos(o.name)) for o in self.world.objects} if self.show_positions else None
+        joints = {n: round(q, 3) for n, q in self.world.joints().items()} if self.show_positions else None
+        events, self._seen = tuple(self.world.events[self._seen:]), len(self.world.events)
         return Observation(
             front_png=png(self.cams.with_grid("front")), top_png=png(self.cams.with_grid("top")),
             tcp=_r3(self.world.tcp()), gripper_width=round(self.world.gripper_width(), 3),
             contacts=tuple(self.world.gripper_contacts()), objects=objects,
-            gripper_yaw=round(self.world.gripper_yaw(), 1))
+            gripper_yaw=round(self.world.gripper_yaw(), 1), events=events, joints=joints)
 
     def act(self, action: Action) -> ActionResult:
         return self.arm.act(action)

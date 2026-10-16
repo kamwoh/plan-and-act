@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -13,7 +13,27 @@ if TYPE_CHECKING:
     from armmind.sim.world import World
 
 Layout = dict[str, tuple[float, float]]
+Monitor = Callable[["World"], "str | None"]  # called after each physics step; returns an event or None
 MAX_TRIES = 10000  # random points to try before layout() gives up
+
+
+def threshold_monitor(joint: str, fire_at: float, rearm_at: float, event: str) -> Callable[[], Monitor]:
+    """A factory for a monitor that gives `event` once when the joint goes above fire_at.
+    It fires again only after the joint comes back below rearm_at."""
+    def make() -> Monitor:
+        armed = True
+
+        def check(w: World) -> str | None:
+            nonlocal armed
+            q = w.joint_pos(joint)
+            if armed and q > fire_at:
+                armed = False
+                return event
+            if q < rearm_at:
+                armed = True
+            return None
+        return check
+    return make
 
 
 @dataclass(frozen=True)
@@ -36,6 +56,7 @@ class Task:
     instruction: str
     success: Callable[[World], bool]
     solution: Callable[[World], list[Action]]  # a hard-coded plan that reads the true positions
+    initial_qpos: dict[str, float] | None = None  # scene joint positions at the start, over the scene's own
 
 
 @dataclass(frozen=True)
@@ -43,14 +64,20 @@ class Scene:
     name: str
     title: str
     objects: tuple[ObjSpec, ...]
-    fixtures_xml: str  # extra static geoms for <worldbody>
+    fixtures_xml: str  # extra bodies for <worldbody>: static geoms, or parts on joints
     fixtures_text: str  # the fixed items, for the prompt
     region: tuple[float, float, float, float]  # x_min, x_max, y_min, y_max where the objects start
     min_gap: float  # the smallest distance between two object centres
     tasks: dict[str, Task]
+    joints: tuple[str, ...] = ()  # scene joints to report in the debug positions
+    # Monitor factories: each world makes its own monitors, because a monitor keeps state.
+    monitors: tuple[Callable[[], Monitor], ...] = ()
+    initial_qpos: dict[str, float] = field(default_factory=dict)  # scene joint positions at the start
 
     def layout(self, seed: int) -> Layout:
         """Random start positions. The same seed gives the same layout."""
+        if not self.objects:
+            return {}
         x0, x1, y0, y1 = self.region
         rng = np.random.default_rng(seed)
         points: list[tuple[float, float]] = []
@@ -63,5 +90,5 @@ class Scene:
         raise ValueError(f"scene {self.name}: no layout with min_gap {self.min_gap} after {MAX_TRIES} tries")
 
     def describe(self) -> str:
-        text = "Objects: " + "; ".join(o.label for o in self.objects) + "."
+        text = "Objects: " + ("; ".join(o.label for o in self.objects) or "none") + "."
         return f"{text} {self.fixtures_text}" if self.fixtures_text else text

@@ -61,3 +61,53 @@ def test_gripper_yaw_is_zero_at_home():
     w = World(CUBES)
     w.reset(LAYOUT)
     assert w.gripper_yaw() == pytest.approx(0.0, abs=0.1)
+
+
+# A test scene: a block on a slide joint along x, with a monitor that fires when it is out more than 5 cm.
+SLIDER_XML = """    <body name="slider" pos="0.6 -0.3 0.03">
+      <joint name="slider" type="slide" axis="1 0 0" range="0 0.1" damping="0"/>
+      <geom type="box" size="0.02 0.02 0.02" rgba="0.5 0.5 0.5 1" contype="0" conaffinity="0"/>
+    </body>"""
+
+
+def _probe_scene():
+    from armmind.scenes.base import Scene, threshold_monitor
+    return Scene(name="probe", title="Probe", objects=(), fixtures_xml=SLIDER_XML, fixtures_text="",
+                 region=(0.4, 0.5, -0.1, 0.1), min_gap=0.1, tasks={}, joints=("slider",),
+                 monitors=(threshold_monitor("slider", 0.05, 0.02, "slider out"),), initial_qpos={"slider": 0.01})
+
+
+def _push(w, speed: float, steps: int) -> None:
+    w.data.qvel[w.model.jnt_dofadr[w.model.joint("slider").id]] = speed
+    w.step(steps)
+
+
+@pytest.mark.assets
+def test_reset_sets_scene_joints_and_clears_events():
+    w = World(_probe_scene())
+    w.reset({})
+    assert w.joint_pos("slider") == pytest.approx(0.01)
+    w.events.append("old")
+    w.reset({}, {"slider": 0.07})
+    assert w.joint_pos("slider") == pytest.approx(0.07)
+    assert w.events == []
+    assert w.joints() == {"slider": pytest.approx(0.07)}
+
+
+@pytest.mark.assets
+def test_monitor_fires_once_per_rising_edge():
+    w = World(_probe_scene())
+    w.reset({})
+    _push(w, 1.0, 50)  # out to about 0.1, past 0.05 once
+    assert w.events == ["slider out"]
+    w.step(100)  # stays out: no new event
+    assert w.events == ["slider out"]
+    _push(w, -1.0, 30)  # back to about 0.04: not re-armed yet
+    _push(w, 1.0, 30)
+    assert w.events == ["slider out"]
+    _push(w, -1.0, 100)  # back to 0: re-armed
+    _push(w, 1.0, 100)
+    assert w.events == ["slider out", "slider out"]
+    w.reset({})
+    _push(w, 1.0, 50)
+    assert w.events == ["slider out"]  # a reset re-arms the monitor too

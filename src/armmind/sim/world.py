@@ -42,6 +42,8 @@ class World:
         self.data = mujoco.MjData(self.model)
         self.hand_id = self.model.body("hand").id
         self._gripper = {self.model.body(n).id for n in GRIPPER_BODIES}
+        self.events: list[str] = []  # brief happenings, such as a button press, since the reset
+        self.monitors: list = []
         home = mujoco.MjData(self.model)
         mujoco.mj_resetDataKeyframe(self.model, home, 0)
         mujoco.mj_kinematics(self.model, home)
@@ -59,7 +61,8 @@ class World:
     def time(self) -> float:
         return float(self.data.time)
 
-    def reset(self, layout: Layout) -> None:
+    def reset(self, layout: Layout, joint_qpos: dict[str, float] | None = None) -> None:
+        """Objects at the layout, scene joints at the scene's start values, changed by joint_qpos."""
         missing = sorted({o.name for o in self.objects} - set(layout))
         if missing:
             raise ValueError(f"layout misses {missing}")
@@ -68,10 +71,26 @@ class World:
             adr = self.model.jnt_qposadr[self.model.joint(o.name).id]
             x, y = layout[o.name]
             self.data.qpos[adr:adr + 7] = [x, y, o.half_height, 1, 0, 0, 0]
+        for name, q in {**self.scene.initial_qpos, **(joint_qpos or {})}.items():
+            self.data.qpos[self.model.jnt_qposadr[self.model.joint(name).id]] = q
         mujoco.mj_forward(self.model, self.data)
+        self.events = []
+        self.monitors = [make() for make in self.scene.monitors]  # fresh monitors are armed
 
     def step(self, n: int = 1) -> None:
-        mujoco.mj_step(self.model, self.data, nstep=n)
+        if not self.monitors:
+            mujoco.mj_step(self.model, self.data, nstep=n)
+            return
+        for _ in range(n):
+            mujoco.mj_step(self.model, self.data)
+            self.events += [e for m in self.monitors if (e := m(self)) is not None]
+
+    def joint_pos(self, name: str) -> float:
+        return float(self.data.qpos[self.model.jnt_qposadr[self.model.joint(name).id]])
+
+    def joints(self) -> dict[str, float]:
+        """The scene joints that the scene reports, by name."""
+        return {n: self.joint_pos(n) for n in self.scene.joints}
 
     def tcp(self) -> np.ndarray:
         rot = self.data.xmat[self.hand_id].reshape(3, 3)
