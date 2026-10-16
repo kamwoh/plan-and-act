@@ -6,7 +6,7 @@ An LLM controls a simulated robot arm. Write an instruction or pick an example, 
 
     uv sync
     ./scripts/fetch_assets.sh
-    uv run armmind scripted --task stack --seed 0
+    uv run armmind scripted --scene cubes --task stack --seed 0
 
 The second command downloads the Panda model from MuJoCo Menagerie (Apache 2.0). The third command checks the arm without a model.
 
@@ -25,15 +25,36 @@ The `serve` command takes these options:
 - `--port`: the port (default 8780). The command refuses 8765, because ps1-mind uses it.
 - `--runs`: the folder for run logs (default `runs`).
 
-Type an instruction in the text box. You can also pick an example from the Examples list. This fills the box with the instruction of a built-in task: reach, pick or stack.
+Pick a scene from the Scene row first. Then type an instruction in the text box. You can also pick an example from the Examples list. This fills the box with the instruction of a built-in task of the scene.
 
-A line under the box shows the mode. If your text matches an example exactly, the line reads "Auto-check: reach" (or pick, or stack). The app then checks the physics and ends the run on success. If your text is different, the line reads "No auto-check". Claude then sets "done" in its reply when it thinks the task is complete, and the run ends.
+A line under the box shows the mode. If your text matches an example of the scene exactly, the line reads "Auto-check: " and the task name. The app then checks the physics and ends the run on success. If your text is different, the line reads "No auto-check". Claude then sets "done" in its reply when it thinks the task is complete, and the run ends.
 
-Before you press Start, the page shows the starting scene for the seed in both camera views. It updates when you change the seed. The scene shows the cube layout and the arm in the ready pose.
+Before you press Start, the page shows the starting scene for the seed in both camera views. It updates when you change the seed or the scene. The view shows the object layout and the arm in the ready pose.
 
 Set a seed and a step limit, then press Start. The left side shows the front camera and the top camera live, with a grid on the top view. The right side shows Claude's to-do list, notes and each step.
 
-The debug switch gives Claude the true cube positions. Use it to find out if a failure comes from vision or from planning.
+The debug switch gives Claude the true object positions. Use it to find out if a failure comes from vision or from planning.
+
+## Scenes
+
+A scene sets the objects on the table, the fixed items and the example tasks. The seed sets the start positions of the objects. The fixed items stay in the same place for each seed.
+
+| Scene | What is on the table | Tasks |
+| --- | --- | --- |
+| cubes | A red, a blue and a green cube, each 4 cm | `reach`, `pick`, `stack` |
+| tray | The three cubes and a grey tray with low walls | `red_in_tray`, `all_in_tray` |
+| zones | The three cubes and three flat squares: red, blue and green | `red_on_green`, `sort` |
+| shapes | A big orange cube (6 cm), a small purple cube (3 cm) and a yellow cylinder | `pick_cylinder`, `small_on_big` |
+
+The page keeps your choice of scene in the browser. When you change the scene, the examples, the auto-check line and the preview change too. The text box keeps your own text. It becomes empty only when it holds an example of the old scene.
+
+Each step message starts with a line `Scene:`. This line lists the objects with their sizes and describes the fixed items. Claude gets this line also when you edit the system prompt.
+
+Each task has a scripted solution that reads the true positions. Use it to check a task without a model:
+
+    uv run armmind scripted --scene tray --task all_in_tray --seed 2
+
+`--scene` is `cubes` when you do not give it. To add a scene, add a file in `src/armmind/scenes/` and add the scene to `SCENES` in `src/armmind/scenes/__init__.py`.
 
 ## See and change what Claude gets
 
