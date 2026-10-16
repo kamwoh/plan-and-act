@@ -78,3 +78,23 @@ async def test_stop_wins_over_a_model_call_that_ignores_cancel():
     await agent.stop()
     status = await asyncio.wait_for(task, 1.0)
     assert status == "stopped" and rec.kinds()[-1] == "run_end"
+
+
+async def test_each_step_opens_and_closes_its_own_conversation():
+    backend = FakeBackend([good(), good(), good()])
+    await Agent(backend, AgentConfig(max_steps=3)).run(FakeEnv(), direct, Recorder())
+    assert len(backend.systems) == 3 and backend.closed == 3
+
+
+async def test_retry_uses_the_same_conversation():
+    convs = []
+
+    class Spy(FakeBackend):
+        async def open(self, system):
+            conv = await super().open(system)
+            convs.append(conv)
+            return conv
+
+    backend = Spy([bad(), good()])
+    await Agent(backend, AgentConfig(max_steps=1)).run(FakeEnv(), direct, Recorder())
+    assert len(convs) == 1 and len(backend.sent) == 2 and backend.closed == 1

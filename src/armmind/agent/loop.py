@@ -35,56 +35,57 @@ class Agent:
             await self._conv.cancel()
 
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
-        self._conv = await self.backend.open(SYSTEM)
         history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
         notes, todo, status = "", (), "step_limit"
         emit("run_start", {"instruction": env.instruction, "max_steps": self.cfg.max_steps})
-        try:
-            for n in range(1, self.cfg.max_steps + 1):
-                if self._stop.is_set():
-                    status = "stopped"
-                    break
-                obs = await call(env.observe)
-                emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
-                text = build_user_text(env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history))
+        for n in range(1, self.cfg.max_steps + 1):
+            if self._stop.is_set():
+                status = "stopped"
+                break
+            obs = await call(env.observe)
+            emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
+            text = build_user_text(env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history))
+            self._conv = await self.backend.open(SYSTEM)
+            try:
                 reply, error, usage = await self._ask(Message("user", text, (obs.front_png, obs.top_png)))
+            finally:
+                conv, self._conv = self._conv, None
+                await conv.close()
+            if self._stop.is_set():
+                status = "stopped"
+                break
+            if reply is None and error is not None and error.kind != "schema":
+                emit("llm_error", {"step": n, "error_kind": error.kind, "message": error.message})
+                status = "llm_error"
+                break
+            if reply is None:
+                emit("bad_reply", {"step": n, "error": error.message if error else "no reply"})
+                continue
+            emit("reply", {"step": n, "plan": reply.plan, "actions": [a.describe() for a in reply.actions]})
+            results = []
+            for action in reply.actions:
                 if self._stop.is_set():
-                    status = "stopped"
                     break
-                if reply is None and error is not None and error.kind != "schema":
-                    emit("llm_error", {"step": n, "error_kind": error.kind, "message": error.message})
-                    status = "llm_error"
+                results.append(await call(env.act, action))
+                if await call(env.success):
                     break
-                if reply is None:
-                    emit("bad_reply", {"step": n, "error": error.message if error else "no reply"})
-                    continue
-                emit("reply", {"step": n, "plan": reply.plan, "actions": [a.describe() for a in reply.actions]})
-                results = []
-                for action in reply.actions:
-                    if self._stop.is_set():
-                        break
-                    results.append(await call(env.act, action))
-                    if await call(env.success):
-                        break
-                if reply.notes is not None:
-                    notes = reply.notes
-                todo = reply.todo or todo
-                history.append(StepSummary(n, reply.plan, tuple(r.summary() for r in results)))
-                done = await call(env.success)
-                emit("step", {
-                    "step": n, "observation": reply.observation, "plan": reply.plan,
-                    "actions": [a.describe() for a in reply.actions], "results": [r.summary() for r in results],
-                    "truncated": reply.truncated, "notes": notes, "todo": list(todo), "success": done,
-                    "latency_s": usage.latency_s if usage else None, "cost_usd": usage.cost_usd if usage else None,
-                })
-                if done:
-                    status = "success"
-                    break
-            else:
-                if self._stop.is_set():
-                    status = "stopped"
-        finally:
-            await self._conv.close()
+            if reply.notes is not None:
+                notes = reply.notes
+            todo = reply.todo or todo
+            history.append(StepSummary(n, reply.plan, tuple(r.summary() for r in results)))
+            done = await call(env.success)
+            emit("step", {
+                "step": n, "observation": reply.observation, "plan": reply.plan,
+                "actions": [a.describe() for a in reply.actions], "results": [r.summary() for r in results],
+                "truncated": reply.truncated, "notes": notes, "todo": list(todo), "success": done,
+                "latency_s": usage.latency_s if usage else None, "cost_usd": usage.cost_usd if usage else None,
+            })
+            if done:
+                status = "success"
+                break
+        else:
+            if self._stop.is_set():
+                status = "stopped"
         emit("run_end", {"status": status})
         return status
 
