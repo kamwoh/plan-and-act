@@ -131,6 +131,98 @@ def test_mesh_spec_needs_a_mesh_name():
     assert ObjSpec("x", "mesh", label="thing", mesh="Some_Folder").size == ()
 
 
+@pytest.mark.objects
+def test_scanned_mesh_compiles_and_measures():
+    from armmind.scenes import SCENES
+    from armmind.sim.meshes import measure
+    for scene in ("kitchen", "toys"):
+        for o in SCENES[scene].objects:
+            if o.shape != "mesh":
+                continue
+            info = measure(o.mesh)
+            w, d, h = info.dims
+            assert 0.01 < w < 0.3 and 0.01 < d < 0.3 and 0.01 < h < 0.2
+            assert info.mass > 0
+
+
+@pytest.mark.assets
+@pytest.mark.objects
+@pytest.mark.parametrize("scene_name", ["kitchen", "toys"])
+def test_world_measures_mesh_objects_centred(scene_name):
+    from armmind.scenes import SCENES
+    from armmind.sim.meshes import measure
+    from armmind.sim.world import World
+    scene = SCENES[scene_name]
+    w = World(scene)
+    for o in scene.objects:
+        info = w.object_info(o.name)
+        dims = measure(o.mesh).dims
+        assert (info.width, info.depth, info.height) == pytest.approx(dims, abs=1e-4)
+        assert info.bottom == pytest.approx(-info.height / 2, abs=1e-4)  # the body origin is the box centre
+        assert info.narrow == ("x" if info.width <= info.depth else "y")
+        mass = w.model.body_subtreemass[w.model.body(o.name).id]
+        assert mass == pytest.approx(o.mass, rel=0.02)
+
+
+@pytest.mark.assets
+@pytest.mark.objects
+@pytest.mark.parametrize("scene_name", ["kitchen", "toys"])
+def test_mesh_objects_rest_on_the_table(scene_name):
+    """Each object starts 2 mm above the table, at its layout yaw, and stands still for 2 s."""
+    from armmind.scenes import SCENES
+    from armmind.sim.world import World
+    scene = SCENES[scene_name]
+    w = World(scene)
+    for seed in range(3):
+        lay = scene.layout(seed)
+        w.reset(lay)
+        for name, (x, y, yaw) in lay.items():
+            assert w.object_bottom(name) == pytest.approx(0.002, abs=1e-4)
+            assert w.object_yaw(name) == pytest.approx(yaw, abs=1e-6)
+        assert all(d >= -1e-4 for d in w.data.contact.dist)  # nothing starts inside anything
+        w.step(round(2.0 / w.dt))
+        for name, (x, y, yaw) in lay.items():
+            np.testing.assert_allclose(w.object_pos(name)[:2], (x, y), atol=0.003)
+            assert w.object_bottom(name) == pytest.approx(0.0, abs=0.002)
+            turn = (w.object_yaw(name) - yaw + 180) % 360 - 180
+            assert abs(turn) < 2.0
+            z_axis = w.data.body(name).xmat.reshape(3, 3)[:, 2]
+            assert z_axis[2] > math.cos(math.radians(3))  # not tipped
+
+
+@pytest.mark.assets
+@pytest.mark.objects
+@pytest.mark.parametrize("scene_name", ["kitchen", "toys"])
+@pytest.mark.parametrize("seed", range(3))
+def test_scripted_grasp_lifts_every_item(scene_name, seed):
+    from armmind.scenes import SCENES
+    from armmind.scenes.handling import grip, items
+    from armmind.sim.arm import Arm
+    from armmind.sim.world import World
+    from armmind.types import Action
+    scene = SCENES[scene_name]
+    w = World(scene)
+    arm = Arm(w)
+    for o in items(scene):
+        w.reset(scene.layout(seed))
+        arm.reset_ready()
+        z0 = w.object_pos(o.name)[2]
+        p = w.object_pos(o.name)
+        for a in [*grip(w, o.name), Action("move_to", (float(p[0]), float(p[1]), 0.25))]:
+            arm.act(a)
+        assert w.object_pos(o.name)[2] >= z0 + 0.10, o.name
+        assert o.name in w.gripper_contacts()
+
+
 def test_mesh_label_without_objects_is_the_plain_label(tmp_path, monkeypatch):
     monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path))
     assert ObjSpec("x", "mesh", label="red can", mesh="Missing_Folder").text() == "red can"
+
+
+@pytest.mark.objects
+def test_mesh_label_has_the_measured_size():
+    from armmind.scenes import SCENES
+    bottle = next(o for o in SCENES["kitchen"].objects if o.name == "bottle")
+    w, d, h = (round(v * 100, 1) for v in bottle.dims)
+    assert bottle.text() == f"white bottle, {w:.1f} cm wide, {d:.1f} cm deep, {h:.1f} cm tall"
+    assert bottle.text() in SCENES["kitchen"].describe()

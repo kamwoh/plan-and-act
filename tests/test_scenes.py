@@ -13,11 +13,13 @@ CASES = [(s, t) for s in SCENES for t in SCENES[s].tasks]
 
 
 def test_registry_order_and_tasks():
-    assert list(SCENES) == ["cubes", "tray", "zones", "shapes", "drawer", "buttons"]
+    assert list(SCENES) == ["cubes", "tray", "zones", "shapes", "drawer", "buttons", "kitchen", "toys"]
     assert {n: list(s.tasks) for n, s in SCENES.items()} == {
         "cubes": ["reach", "pick", "stack"], "tray": ["red_in_tray", "all_in_tray"],
         "zones": ["red_on_green", "sort"], "shapes": ["pick_cylinder", "small_on_big"],
-        "drawer": ["open_drawer", "close_drawer", "cube_in_drawer"], "buttons": ["press_green", "press_sequence"]}
+        "drawer": ["open_drawer", "close_drawer", "cube_in_drawer"], "buttons": ["press_green", "press_sequence"],
+        "kitchen": ["bottle_in_bowl", "purple_box_on_plate", "clear_table"],
+        "toys": ["panda_in_tray", "all_toys_in_tray"]}
 
 
 def test_cubes_layout_is_unchanged():
@@ -97,7 +99,8 @@ def test_fixtures_are_outside_the_region(name):
         hx, hy = m.geom_size[g][:2]
         apart = cx + hx < x0 - grow or cx - hx > x1 + grow or cy + hy < y0 - grow or cy - hy > y1 + grow
         assert apart, f"{m.body(b).name} geom {g} overlaps the region"
-    assert fixtures == {"cubes": 0, "tray": 5, "zones": 3, "shapes": 0, "drawer": 5, "buttons": 1}[name]
+    assert fixtures == {"cubes": 0, "tray": 5, "zones": 3, "shapes": 0, "drawer": 5, "buttons": 1, "kitchen": 0,
+                        "toys": 5}[name]
 
 
 @pytest.mark.assets
@@ -363,3 +366,101 @@ def test_open_drawer_keeps_clear_of_the_cube_region():
 def test_buttons_text_says_to_close_the_gripper_first():
     assert "Close the gripper first" in SCENES["buttons"].fixtures_text
 
+
+def _dropped(scene_name: str, spots: dict, seed: int = 0, settle: bool = True) -> World:
+    """A world from the layout of the seed, with some items moved: name -> (x, y, bottom height). The items
+    fall the last millimetres and settle for 1 s, unless settle is False. The arm stays in its home pose."""
+    scene = SCENES[scene_name]
+    w = World(scene)
+    w.reset(scene.layout(seed))
+    for name, (x, y, bottom) in spots.items():
+        adr = w.model.jnt_qposadr[w.model.joint(name).id]
+        w.data.qpos[adr:adr + 3] = [x, y, bottom - w.object_info(name).bottom + 0.002]
+    mujoco.mj_forward(w.model, w.data)
+    if settle:
+        w.step(500)
+    assert w.gripper_contacts() == []
+    return w
+
+
+AWAY_K = {"purple_box": (0.40, -0.10, 0.0), "yellow_box": (0.40, 0.10, 0.0)}
+# (task, item spots, expected). The bowl inner floor is about 1 cm up, the plate surface about 0.8 cm up.
+KITCHEN_CHECKS = [
+    ("bottle_in_bowl", {"bottle": (0.62, 0.22, 0.012), **AWAY_K}, True),
+    ("bottle_in_bowl", {"bottle": (0.62, 0.22 - 0.12, 0.0), **AWAY_K}, False),  # beside the bowl
+    ("bottle_in_bowl", {"bottle": (0.62, -0.22, 0.01), **AWAY_K}, False),  # on the plate
+    ("purple_box_on_plate", {"purple_box": (0.62, -0.22, 0.01), "bottle": (0.40, 0.0, 0.0),
+                             "yellow_box": (0.40, 0.12, 0.0)}, True),
+    ("purple_box_on_plate", {"purple_box": (0.62, -0.22 + 0.14, 0.0), "bottle": (0.40, 0.0, 0.0),
+                             "yellow_box": (0.40, 0.12, 0.0)}, False),  # beside the plate
+    ("purple_box_on_plate", {"purple_box": (0.62, 0.22, 0.012), "bottle": (0.40, 0.0, 0.0),
+                             "yellow_box": (0.40, 0.12, 0.0)}, False),  # in the bowl
+    ("clear_table", {"bottle": (0.62, 0.22, 0.012), "purple_box": (0.62, -0.175, 0.01),
+                     "yellow_box": (0.62, -0.265, 0.01)}, True),
+    ("clear_table", {"bottle": (0.62, 0.22, 0.012), "purple_box": (0.62, -0.175, 0.01),
+                     "yellow_box": (0.45, -0.1, 0.0)}, False),  # one item is still on the table
+]
+
+
+@pytest.mark.assets
+@pytest.mark.objects
+@pytest.mark.parametrize("task_name,spots,expected", KITCHEN_CHECKS)
+def test_kitchen_checks_on_set_spots(task_name, spots, expected):
+    w = _dropped("kitchen", spots)
+    assert SCENES["kitchen"].tasks[task_name].success(w) is expected
+
+
+AWAY_T = {"orange_robot": (0.40, -0.20, 0.0), "green_robot": (0.60, -0.20, 0.0), "pink_toy": (0.40, 0.0, 0.0)}
+# (task, toy spots, settle, expected)
+TOY_CHECKS = [
+    ("panda_in_tray", {"panda": (0.50, 0.28, 0.005), **AWAY_T}, True, True),
+    ("panda_in_tray", {"panda": (0.50, 0.28 - 0.12, 0.0), **AWAY_T}, True, False),  # beside the tray
+    # On top of another toy, before it falls: the check wants it on the tray floor.
+    ("panda_in_tray", {**AWAY_T, "pink_toy": (0.50, 0.28, 0.005), "panda": (0.50, 0.28, 0.074)}, False, False),
+    ("all_toys_in_tray", {"green_robot": (0.46, 0.25, 0.005), "pink_toy": (0.46, 0.315, 0.005),
+                          "orange_robot": (0.54, 0.25, 0.005), "panda": (0.54, 0.313, 0.005)}, True, True),
+    ("all_toys_in_tray", {"green_robot": (0.46, 0.25, 0.005), "pink_toy": (0.46, 0.315, 0.005),
+                          "orange_robot": (0.54, 0.25, 0.005), "panda": (0.40, 0.0, 0.0)}, True, False),
+]
+
+
+@pytest.mark.assets
+@pytest.mark.objects
+@pytest.mark.parametrize("task_name,spots,settle,expected", TOY_CHECKS)
+def test_toy_checks_on_set_spots(task_name, spots, settle, expected):
+    w = _dropped("toys", spots, settle=settle)
+    assert SCENES["toys"].tasks[task_name].success(w) is expected
+
+
+@pytest.mark.assets
+@pytest.mark.objects
+@pytest.mark.parametrize("scene_name,task_name,item", [("kitchen", "bottle_in_bowl", "bottle"),
+                                                        ("kitchen", "purple_box_on_plate", "purple_box"),
+                                                        ("toys", "panda_in_tray", "panda")])
+def test_mesh_checks_reject_an_item_the_gripper_holds(scene_name, task_name, item):
+    """The scripted plan without its last two actions holds the item at the target. The check passes only
+    after the gripper lets go and moves up."""
+    scene = SCENES[scene_name]
+    task = scene.tasks[task_name]
+    w = World(scene)
+    w.reset(scene.layout(0))
+    arm = Arm(w)
+    arm.reset_ready()
+    plan = task.solution(w)
+    assert plan[-2] == Action("open")
+    for a in plan[:-2]:
+        arm.act(a)
+    assert item in w.gripper_contacts()
+    assert not task.success(w)
+    for a in plan[-2:]:
+        arm.act(a)
+    assert task.success(w)
+
+
+def test_objects_txt_lists_every_scanned_object_once():
+    from pathlib import Path
+
+    import armmind.scenes
+    listed = Path(armmind.scenes.__file__).with_name("objects.txt").read_text().split()
+    used = [m for s in SCENES.values() for m in s.meshes]
+    assert sorted(listed) == sorted(set(listed)) == sorted(set(used))

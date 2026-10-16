@@ -8,6 +8,7 @@ CX, CY = 0.50, 0.28  # tray centre
 HALF, WALL, WALL_HALF_H, FLOOR_HALF_H = 0.07, 0.005, 0.0125, 0.0025
 INNER = HALF - WALL  # 0.065: the inner area is the centre +- this
 MARGIN = 0.01
+TOP_Z = 0.04  # an object in the tray has its lowest point below this: on the floor, not on top of another
 RELEASE_Z = 0.06
 GREY = "0.55 0.57 0.6 1"
 # Three spots inside the tray, at least 6 cm apart, so that the cubes do not touch.
@@ -38,9 +39,10 @@ TEXT = (f"A grey tray: inner area x {CX - INNER:.3f} to {CX + INNER:.3f}, y {CY 
 
 
 def in_tray(w, name: str) -> bool:
-    x, y, z = w.object_pos(name)
+    """The object's centre is over the inner area, its lowest point is low, and the gripper does not touch it."""
+    x, y, _ = w.object_pos(name)
     lim = INNER - MARGIN
-    return bool(abs(x - CX) <= lim and abs(y - CY) <= lim and z < 0.06 and free(w, name))
+    return bool(abs(x - CX) <= lim and abs(y - CY) <= lim and w.object_bottom(name) < TOP_Z and free(w, name))
 
 
 def _red_plan(w):
