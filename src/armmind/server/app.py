@@ -7,8 +7,9 @@ import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -64,6 +65,12 @@ class Pacer:
 def default_env_factory(task: Task, seed: int, show_positions: bool, on_frame: Callable[[bytes], None]) -> Env:
     from armmind.env import MujocoEnv
     return MujocoEnv(task, seed, show_positions=show_positions, on_frame=on_frame)
+
+
+def _same_origin(headers) -> bool:
+    """True when the request has no Origin header, or the Origin host:port equals the Host header."""
+    origin = headers.get("origin")
+    return origin is None or urlsplit(origin).netloc == headers.get("host")
 
 
 def _b64(b: bytes) -> str:
@@ -154,20 +161,27 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
     def state() -> dict:
         return {"running": runner.running, "run_dir": str(runner.run_dir) if runner.run_dir else None}
 
-    @app.post("/api/run")
+    def same_origin(request: Request) -> None:
+        if not _same_origin(request.headers):
+            raise HTTPException(403, "cross-site request refused")
+
+    @app.post("/api/run", dependencies=[Depends(same_origin)])
     async def run(req: RunRequest) -> dict:
         task = TASKS.get(req.task)
         if task is None:
             raise HTTPException(404, f"unknown task {req.task!r}")
         return {"run_dir": str(await runner.start(req, task))}
 
-    @app.post("/api/stop")
+    @app.post("/api/stop", dependencies=[Depends(same_origin)])
     async def stop() -> dict:
         await runner.stop()
         return {"ok": True}
 
     @app.websocket("/ws")
     async def ws(sock: WebSocket) -> None:
+        if not _same_origin(sock.headers):
+            await sock.close(code=1008)
+            return
         await sock.accept()
         hub.clients.add(sock)
         try:

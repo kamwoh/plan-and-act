@@ -1,5 +1,6 @@
-import pytest
 import json
+
+import pytest
 
 from armmind.store.runlog import RunLog
 

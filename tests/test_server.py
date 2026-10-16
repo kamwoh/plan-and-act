@@ -1,7 +1,9 @@
 import json
 import time
 
+import pytest
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from armmind.llm.fake import FakeBackend
 from armmind.llm.protocol import LLMError
@@ -134,3 +136,16 @@ def test_close_error_is_logged_and_log_is_closed(tmp_path):
     assert any(e["kind"] == "run_end" and e["status"] == "success" for e in events)
     runner = c.app.state.runner
     assert runner.task.done() and runner.task.exception() is None
+
+
+def test_cross_site_requests_are_refused(tmp_path):
+    with TestClient(create_app(FakeBackend([good()]), fake_factory, tmp_path)) as c:
+        evil = {"Origin": "http://evil.example"}
+        assert c.post("/api/run", json={"task": "reach"}, headers=evil).status_code == 403
+        assert c.post("/api/stop", headers=evil).status_code == 403
+        with pytest.raises(WebSocketDisconnect) as info, c.websocket_connect("/ws", headers=evil):
+            pass
+        assert info.value.code == 1008
+        ok = c.post("/api/run", json={"task": "reach"}, headers={"Origin": "http://testserver"})
+        assert ok.status_code == 200
+        wait_idle(c)
