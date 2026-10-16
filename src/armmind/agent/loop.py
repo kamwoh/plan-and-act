@@ -56,7 +56,7 @@ class Agent:
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
         history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
         notes, todo, status, check_failed = "", (), "step_limit", False
-        emit("run_start", {"instruction": env.instruction, "max_steps": self.cfg.max_steps,
+        emit("run_start", {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
                            "check": env.check_name, "system_prompt": self.system})
         for n in range(1, self.cfg.max_steps + 1):
             if self._stop.is_set():
@@ -64,7 +64,7 @@ class Agent:
                 break
             obs = await call(env.observe)
             emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
-            text = build_user_text(env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history), check_failed)
+            text = build_user_text(env.scene_text, env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history), check_failed)
             self._conv = await self.backend.open(self.system)
             attempts: list[dict] = []
             try:

@@ -8,3 +8,16 @@ def test_serve_refuses_ps1_mind_port(capsys):
         main(["serve", "--port", "8765"])
     assert exc.value.code == 2
     assert "8765" in capsys.readouterr().err
+
+
+@pytest.mark.assets
+def test_scripted_defaults_to_cubes(capsys):
+    assert main(["scripted", "--task", "reach", "--seed", "0"]) == 0
+    assert capsys.readouterr().out.strip().endswith("success")
+
+
+def test_scripted_refuses_a_task_of_another_scene(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["scripted", "--scene", "cubes", "--task", "nope"])
+    assert exc.value.code == 2
+    assert "nope" in capsys.readouterr().err

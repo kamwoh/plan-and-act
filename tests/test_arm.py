@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from armmind.scenes import SCENES
 from armmind.sim.arm import REACH_TOL, READY, Arm
 from armmind.sim.world import World
 from armmind.types import Action
@@ -12,7 +13,7 @@ pytestmark = pytest.mark.assets
 
 @pytest.fixture
 def arm():
-    w = World()
+    w = World(SCENES["cubes"])
     w.reset(LAYOUT)
     a = Arm(w)
     a.reset_ready()
@@ -52,17 +53,17 @@ def test_close_on_nothing_and_open(arm):
 
 
 def test_grasp_and_lift_red_cube(arm):
-    x, y, _ = arm.w.cube_pos("red_cube")
+    x, y, _ = arm.w.object_pos("red_cube")
     for a in [Action("move_to", (x, y, 0.15)), Action("move_to", (x, y, 0.02)), Action("close")]:
         arm.act(a)
     res = arm.act(Action("move_to", (x, y, 0.2)))
     assert res.gripper_width == pytest.approx(0.04, abs=0.008)
     assert "red_cube" in res.contacts
-    assert arm.w.cube_pos("red_cube")[2] > 0.15
+    assert arm.w.object_pos("red_cube")[2] > 0.15
 
 
 def test_wait_is_capped_and_frames_are_paced():
-    w = World()
+    w = World(SCENES["cubes"])
     w.reset(LAYOUT)
     frames = []
     a = Arm(w, on_frame=lambda: frames.append(w.time))

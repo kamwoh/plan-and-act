@@ -7,10 +7,11 @@ from starlette.websockets import WebSocketDisconnect
 
 from armmind.llm.fake import FakeBackend
 from armmind.llm.protocol import LLMError
+from armmind.scenes import SCENES
 from armmind.server.app import Hub, create_app
-from armmind.tasks import TASKS
 from tests.fakes import FakeEnv, HangingBackend, bad, good
 
+TASKS = SCENES["cubes"].tasks
 REACH = TASKS["reach"].instruction
 
 

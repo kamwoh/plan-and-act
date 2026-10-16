@@ -9,15 +9,17 @@ from typing import Protocol
 
 import numpy as np
 
+from armmind.scenes import Scene, Task
 from armmind.sim.arm import Arm
 from armmind.sim.render import Cameras, jpeg, png
-from armmind.sim.world import CUBES, World
-from armmind.tasks import Task, random_layout
+from armmind.sim.world import World
 from armmind.types import Action, ActionResult, Observation
 
 
 class Env(Protocol):
     instruction: str
+    scene_name: str
+    scene_text: str  # the scene description for the step message
     has_check: bool
     check_name: str | None
 
@@ -34,12 +36,13 @@ def _r3(p) -> tuple[float, float, float]:
 class MujocoEnv:
     """Make it and use it on one thread only (see SimThread)."""
 
-    def __init__(self, task: Task | None, seed: int, instruction: str, show_positions: bool = False,
+    def __init__(self, scene: Scene, task: Task | None, seed: int, instruction: str, show_positions: bool = False,
                  on_frame: Callable[[str, bytes], None] | None = None):
         self.task, self.instruction, self.show_positions = task, instruction, show_positions
+        self.scene_name, self.scene_text = scene.name, scene.describe()
         self.has_check, self.check_name = task is not None, task.name if task else None
-        self.world = World()
-        self.world.reset(random_layout(seed))
+        self.world = World(scene)
+        self.world.reset(scene.layout(seed))
         self.cams = Cameras(self.world)
         self._on_frame, self._n_frames = on_frame, 0
         self.arm = Arm(self.world, on_frame=self._frame if on_frame else None)
@@ -53,7 +56,7 @@ class MujocoEnv:
         self._n_frames += 1
 
     def observe(self) -> Observation:
-        objects = {n: _r3(self.world.cube_pos(n)) for n in CUBES} if self.show_positions else None
+        objects = {o.name: _r3(self.world.object_pos(o.name)) for o in self.world.objects} if self.show_positions else None
         return Observation(
             front_png=png(self.cams.with_grid("front")), top_png=png(self.cams.with_grid("top")),
             tcp=_r3(self.world.tcp()), gripper_width=round(self.world.gripper_width(), 3),
@@ -69,9 +72,9 @@ class MujocoEnv:
         self.cams.close()
 
 
-def render_preview(seed: int) -> dict:
+def render_preview(scene: Scene, seed: int) -> dict:
     """The starting scene of a seed as base64 images. Call it on a fresh SimThread."""
-    env = MujocoEnv(None, seed, "")
+    env = MujocoEnv(scene, None, seed, "")
     try:
         return {"front": base64.b64encode(jpeg(env.cams.render("front"))).decode(),
                 "top": base64.b64encode(png(env.cams.with_grid("top"))).decode()}

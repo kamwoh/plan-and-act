@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from armmind.scenes import SCENES
 from armmind.sim.render import GRID_X, GRID_Y, Cameras, jpeg, png
 from armmind.sim.world import World
 
@@ -11,7 +12,7 @@ pytestmark = pytest.mark.assets
 
 @pytest.fixture
 def cams():
-    w = World()
+    w = World(SCENES["cubes"])
     w.reset(LAYOUT)
     c = Cameras(w)
     yield c
@@ -27,7 +28,7 @@ def test_render_shape(cams, cam):
 
 @pytest.mark.parametrize("cam", ["front", "top"])
 def test_projection_hits_red_cube(cams, cam):
-    top_face = cams.world.cube_pos("red_cube") + [0, 0, 0.02]
+    top_face = cams.world.object_pos("red_cube") + [0, 0, 0.02]
     (u, v), = cams.project(cam, [top_face])
     r, g, b = cams.render(cam)[int(v), int(u)].astype(int)
     assert r > 150 and r > g + 80 and r > b + 80

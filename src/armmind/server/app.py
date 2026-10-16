@@ -17,8 +17,8 @@ from armmind.agent.loop import Agent, AgentConfig
 from armmind.agent.prompts import SYSTEM, example_step_text
 from armmind.env import Env, SimThread
 from armmind.llm.protocol import LLMBackend
+from armmind.scenes import SCENES, Task
 from armmind.store.runlog import RunLog
-from armmind.tasks import TASKS, Task
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
 EnvFactory = Callable[[Task | None, str, int, bool, Callable[[str, bytes], None]], Env]
@@ -80,12 +80,12 @@ class Pacer:
 def default_env_factory(task: Task | None, instruction: str, seed: int, show_positions: bool,
                         on_frame: Callable[[str, bytes], None]) -> Env:
     from armmind.env import MujocoEnv
-    return MujocoEnv(task, seed, instruction, show_positions=show_positions, on_frame=on_frame)
+    return MujocoEnv(SCENES["cubes"], task, seed, instruction, show_positions=show_positions, on_frame=on_frame)
 
 
 def default_preview(seed: int) -> dict:
     from armmind.env import render_preview
-    return render_preview(seed)
+    return render_preview(SCENES["cubes"], seed)
 
 
 def _same_origin(headers) -> bool:
@@ -175,7 +175,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.get("/api/tasks")
     def tasks() -> list[dict]:
-        return [{"name": t.name, "instruction": t.instruction} for t in TASKS.values()]
+        return [{"name": t.name, "instruction": t.instruction} for t in SCENES["cubes"].tasks.values()]
 
     @app.get("/api/state")
     def state() -> dict:
@@ -187,7 +187,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.post("/api/run", dependencies=[Depends(same_origin)])
     async def run(req: RunRequest) -> dict:
-        task = next((t for t in TASKS.values() if t.instruction == req.instruction), None)
+        task = next((t for t in SCENES["cubes"].tasks.values() if t.instruction == req.instruction), None)
         return {"run_dir": str(await runner.start(req, task))}
 
     @app.get("/api/prompt")

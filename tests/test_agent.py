@@ -180,7 +180,7 @@ async def test_bad_reply_and_llm_error_carry_prompt_and_attempts():
     await Agent(backend, AgentConfig(max_steps=2)).run(FakeEnv(), direct, rec)
     events = dict(rec.events)
     for kind in ("bad_reply", "llm_error"):
-        assert events[kind]["prompt"].startswith("Task: ")
+        assert events[kind]["prompt"].startswith("Scene: ")
         assert "usage" in events[kind]
     assert len(events["bad_reply"]["attempts"]) == 2
     assert events["llm_error"]["attempts"][0]["error"] == "please log in"
@@ -204,3 +204,10 @@ async def test_empty_system_prompt_falls_back_to_the_default():
     backend = FakeBackend([good()])
     await Agent(backend, AgentConfig(max_steps=1), system="").run(FakeEnv(), direct, Recorder())
     assert backend.systems == [SYSTEM]
+
+
+async def test_scene_text_reaches_the_model_and_the_log():
+    backend, rec = FakeBackend([good()]), Recorder()
+    await Agent(backend, AgentConfig(max_steps=1), system="Be brief.").run(FakeEnv(), direct, rec)
+    assert backend.sent[0][0].text.startswith(f"Scene: {FakeEnv.scene_text}\n")
+    assert dict(rec.events)["run_start"]["scene"] == "cubes"

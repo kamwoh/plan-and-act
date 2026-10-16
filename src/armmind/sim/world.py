@@ -1,32 +1,51 @@
-"""MuJoCo world: the Panda arm, a table and three cubes."""
+"""MuJoCo world: the Panda arm, a table and the objects and fixed items of a scene."""
 from __future__ import annotations
 
-import shutil
+import os
 from pathlib import Path
+from string import Template
 
 import mujoco
 import numpy as np
 
+from armmind.scenes.base import Layout, ObjSpec, Scene
 from armmind.sim.assets import panda_dir
 
-SCENE = Path(__file__).with_name("scene.xml")
-CUBES = ("red_cube", "blue_cube", "green_cube")
-CUBE_HALF = 0.02
+TEMPLATE = Path(__file__).with_name("scene.xml")
 TCP_OFFSET = np.array([0.0, 0.0, 0.1034])  # from the hand frame to the point between the fingertips
 GRIPPER_BODIES = ("hand", "left_finger", "right_finger")
 
-Layout = dict[str, tuple[float, float]]
+
+def _object_xml(o: ObjSpec, i: int) -> str:
+    size = " ".join(f"{v:g}" for v in o.size)
+    return (f'    <body name="{o.name}" pos="0.5 {-0.3 + 0.1 * i:.2f} {o.half_height:g}">\n'
+            f'      <freejoint name="{o.name}"/>\n'
+            f'      <geom name="{o.name}" type="{o.shape}" size="{size}" rgba="{o.rgba}" mass="{o.mass:g}"\n'
+            f'            friction="1.5 0.01 0.001"/>\n'
+            f'    </body>')
+
+
+def scene_xml(scene: Scene) -> str:
+    objects = "\n".join(_object_xml(o, i) for i, o in enumerate(scene.objects))
+    return Template(TEMPLATE.read_text()).substitute(fixtures=scene.fixtures_xml, objects=objects)
 
 
 class World:
-    def __init__(self, model_dir: Path | None = None):
+    def __init__(self, scene: Scene, model_dir: Path | None = None):
+        self.scene = scene
         folder = model_dir or panda_dir()
-        scene = folder / "armmind_scene.xml"
-        shutil.copyfile(SCENE, scene)  # MJCF resolves <include> next to the scene file
-        self.model = mujoco.MjModel.from_xml_path(str(scene))
+        self.scene_file = folder / f"armmind_scene_{scene.name}.xml"  # MJCF resolves <include> next to it
+        tmp = folder / f".armmind_scene_{scene.name}.{os.getpid()}.xml"
+        tmp.write_text(scene_xml(scene))
+        os.replace(tmp, self.scene_file)  # a whole file at all times, also for another process
+        self.model = mujoco.MjModel.from_xml_path(str(self.scene_file))
         self.data = mujoco.MjData(self.model)
         self.hand_id = self.model.body("hand").id
         self._gripper = {self.model.body(n).id for n in GRIPPER_BODIES}
+
+    @property
+    def objects(self) -> tuple[ObjSpec, ...]:
+        return self.scene.objects
 
     @property
     def dt(self) -> float:
@@ -37,14 +56,14 @@ class World:
         return float(self.data.time)
 
     def reset(self, layout: Layout) -> None:
-        missing = sorted(set(CUBES) - set(layout))
+        missing = sorted({o.name for o in self.objects} - set(layout))
         if missing:
             raise ValueError(f"layout misses {missing}")
         mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
-        for name in CUBES:
-            adr = self.model.jnt_qposadr[self.model.joint(name).id]
-            x, y = layout[name]
-            self.data.qpos[adr:adr + 7] = [x, y, CUBE_HALF, 1, 0, 0, 0]
+        for o in self.objects:
+            adr = self.model.jnt_qposadr[self.model.joint(o.name).id]
+            x, y = layout[o.name]
+            self.data.qpos[adr:adr + 7] = [x, y, o.half_height, 1, 0, 0, 0]
         mujoco.mj_forward(self.model, self.data)
 
     def step(self, n: int = 1) -> None:
@@ -57,7 +76,7 @@ class World:
     def gripper_width(self) -> float:
         return float(self.data.qpos[7] + self.data.qpos[8])
 
-    def cube_pos(self, name: str) -> np.ndarray:
+    def object_pos(self, name: str) -> np.ndarray:
         return self.data.body(name).xpos.copy()
 
     def gripper_contacts(self) -> list[str]:

@@ -9,6 +9,8 @@ from armmind.types import Action, ActionResult, Observation
 
 class FakeEnv:
     instruction = "Touch the red cube with the gripper."
+    scene_name = "cubes"
+    scene_text = "Objects: red cube, 4 cm; blue cube, 4 cm."
 
     def __init__(self, succeed_after: int | None = None, has_check: bool = True):
         self.has_check = has_check

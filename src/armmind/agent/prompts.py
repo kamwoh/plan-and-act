@@ -15,9 +15,10 @@ Coordinates are in metres, in the world frame:
 - In the top image, +x points down. In the front image, +x points toward the camera.
 - Both images have a grid on the table, with labels for x and y. Use it to find positions.
 
-The cubes are 4 cm wide. The centre of a cube on the table is at z=0.02.
+Objects sit on the table, and the step message lists them with their sizes. \
+The centre of an object on the table is at half its height.
 The gripper position is the point between the two fingertips. The gripper always points down.
-The gripper is 0.08 m wide when open. When it closes on a cube, the width is about 0.04 m. \
+The gripper is 0.08 m wide when open. When it closes on an object, the width is about the width of the object. \
 When it closes on nothing, the width is about 0.
 
 Actions:
@@ -26,7 +27,7 @@ Actions:
 - {"type": "wait", "seconds": s}: wait for s seconds (at most 3).
 The arm can reach x from 0.25 to 0.75, y from -0.40 to 0.40, z from 0.01 to 0.50. \
 The arm moves a target outside this box to the nearest point inside it.
-To grasp a cube: open, move 10 cm above it, move down to its centre, close, then move up.
+To grasp an object: open, move 10 cm above it, move down to its centre height, close, then move up.
 Each result says if the gripper reached the target, was blocked, or could not reach it.
 
 The simulation stops while you think. Use at most 8 actions in each step. \
@@ -70,16 +71,17 @@ class StepSummary:
     results: tuple[str, ...]
 
 
-def build_user_text(instruction: str, step: int, max_steps: int, obs: Observation, notes: str,
+def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs: Observation, notes: str,
                     todo: tuple[str, ...], history: list[StepSummary], check_failed: bool = False) -> str:
     lines = [
+        f"Scene: {scene}",
         f"Task: {instruction}",
         f"Step {step} of {max_steps}.",
         f"Gripper at {fmt(obs.tcp)}, width {obs.gripper_width:.3f} m.",
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
     if obs.objects is not None:
-        lines.append("Cube centres (debug): " + "; ".join(f"{n} {fmt(p)}" for n, p in obs.objects.items()))
+        lines.append("Object centres (debug): " + "; ".join(f"{n} {fmt(p)}" for n, p in obs.objects.items()))
     if history:
         lines.append("Recent steps:")
         lines += [f"- step {h.step}: {h.plan} -> {'; '.join(h.results) or 'no actions'}" for h in history]
@@ -93,6 +95,7 @@ def build_user_text(instruction: str, step: int, max_steps: int, obs: Observatio
 
 def example_step_text() -> str:
     """A sample step message with invented values, so that the page can show how the code fills it in."""
-    from armmind.tasks import TASKS
+    from armmind.scenes import SCENES
+    cubes = SCENES["cubes"]
     obs = Observation(b"", b"", (0.3, 0.0, 0.4), 0.08, ())
-    return build_user_text(TASKS["stack"].instruction, 1, 30, obs, "", (), [])
+    return build_user_text(cubes.describe(), cubes.tasks["stack"].instruction, 1, 30, obs, "", (), [])
