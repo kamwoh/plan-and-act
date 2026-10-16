@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from armmind.sim.world import World
 
 Layout = dict[str, tuple[float, float]]
+MAX_TRIES = 10000  # random points to try before layout() gives up
 
 
 @dataclass(frozen=True)
@@ -53,11 +54,13 @@ class Scene:
         x0, x1, y0, y1 = self.region
         rng = np.random.default_rng(seed)
         points: list[tuple[float, float]] = []
-        while len(points) < len(self.objects):
+        for _ in range(MAX_TRIES):
             p = (round(float(rng.uniform(x0, x1)), 3), round(float(rng.uniform(y0, y1)), 3))
             if all(np.hypot(p[0] - q[0], p[1] - q[1]) >= self.min_gap for q in points):
                 points.append(p)
-        return dict(zip((o.name for o in self.objects), points, strict=True))
+                if len(points) == len(self.objects):
+                    return dict(zip((o.name for o in self.objects), points, strict=True))
+        raise ValueError(f"scene {self.name}: no layout with min_gap {self.min_gap} after {MAX_TRIES} tries")
 
     def describe(self) -> str:
         text = "Objects: " + "; ".join(o.label for o in self.objects) + "."

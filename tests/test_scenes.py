@@ -1,5 +1,6 @@
 import itertools
 
+import mujoco
 import numpy as np
 import pytest
 
@@ -90,7 +91,7 @@ def test_fixtures_are_outside_the_region(name):
 
 @pytest.mark.assets
 @pytest.mark.parametrize("name", list(SCENES))
-def test_objects_rest_without_overlap(name):
+def test_objects_stay_still_at_their_start_poses(name):
     scene = SCENES[name]
     w = World(scene)
     for seed in range(5):
@@ -133,3 +134,75 @@ def test_zones_do_not_collide_and_the_tray_does():
     assert len(zone_geoms) == 3 and all(m.geom_contype[g] == 0 and m.geom_conaffinity[g] == 0 for g in zone_geoms)
     t = World(SCENES["tray"]).model
     assert all(t.geom_contype[g] == 1 for g in range(t.ngeom) if t.body(t.geom_bodyid[g]).name == "tray")
+
+
+def test_layout_gives_up_when_the_objects_cannot_fit():
+    from dataclasses import replace
+    crowded = replace(SCENES["cubes"], region=(0.5, 0.51, 0.0, 0.01))
+    with pytest.raises(ValueError, match="cubes"):
+        crowded.layout(0)
+
+
+def _posed(scene_name: str, poses: dict) -> World:
+    """A world with each object at the given centre (x, y, z). The arm stays in its home pose, high above."""
+    scene = SCENES[scene_name]
+    w = World(scene)
+    w.reset({n: p[:2] for n, p in poses.items()})
+    for name, p in poses.items():
+        adr = w.model.jnt_qposadr[w.model.joint(name).id]
+        w.data.qpos[adr:adr + 7] = [*p, 1, 0, 0, 0]
+    mujoco.mj_forward(w.model, w.data)
+    assert w.gripper_contacts() == []
+    return w
+
+
+AWAY = {"blue_cube": (0.42, -0.22, 0.02), "green_cube": (0.62, -0.22, 0.02)}
+TRAY_IN = (0.50, 0.28, 0.025)
+# (scene, task, poses, expected): each set has one pose that passes, to show that the pose code works.
+CHECK_CASES = [
+    ("cubes", "stack", {"red_cube": (0.5, 0.0, 0.06), "blue_cube": (0.5, 0.0, 0.02), "green_cube": (0.62, -0.22, 0.02)},
+     True),
+    ("cubes", "stack", {"red_cube": (0.5, 0.05, 0.02), "blue_cube": (0.5, 0.0, 0.02), "green_cube": (0.62, -0.22, 0.02)},
+     False),
+    ("tray", "red_in_tray", {"red_cube": TRAY_IN, **AWAY}, True),
+    ("tray", "red_in_tray", {"red_cube": (0.50 + 0.056, 0.28, 0.025), **AWAY}, False),
+    ("tray", "red_in_tray", {"red_cube": (0.50, 0.28, 0.07), **AWAY}, False),
+    ("zones", "red_on_green", {"red_cube": (0.68, 0.15, 0.02), **AWAY}, True),
+    ("zones", "red_on_green", {"red_cube": (0.68 + 0.045, 0.15, 0.02), **AWAY}, False),
+    ("zones", "red_on_green", {"red_cube": (0.68, 0.0, 0.02), **AWAY}, False),
+    ("shapes", "small_on_big", {"big_cube": (0.5, 0.0, 0.03), "small_cube": (0.5, 0.0, 0.075),
+                                "cylinder": (0.42, -0.22, 0.03)}, True),
+    ("shapes", "small_on_big", {"big_cube": (0.5, 0.0, 0.03), "small_cube": (0.5, 0.06, 0.015),
+                                "cylinder": (0.42, -0.22, 0.03)}, False),
+    ("shapes", "small_on_big", {"big_cube": (0.5, 0.0, 0.03), "small_cube": (0.53, 0.0, 0.075),
+                                "cylinder": (0.42, -0.22, 0.03)}, False),
+]
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("scene_name,task_name,poses,expected", CHECK_CASES)
+def test_success_check_on_set_poses(scene_name, task_name, poses, expected):
+    w = _posed(scene_name, poses)
+    assert SCENES[scene_name].tasks[task_name].success(w) is expected
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("touch", [True, False])
+def test_tray_check_rejects_a_cube_the_gripper_holds(touch):
+    """The gripper holds the red cube inside the tray. The check passes only after the gripper lets go."""
+    from armmind.types import Action
+    scene = SCENES["tray"]
+    w = _posed("tray", {"red_cube": (0.5, 0.0, 0.02), **AWAY})
+    arm = Arm(w)
+    arm.reset_ready()
+    for a in [Action("open"), Action("move_to", (0.5, 0.0, 0.15)), Action("move_to", (0.5, 0.0, 0.02)),
+              Action("close"), Action("move_to", (0.5, 0.0, 0.15)), Action("move_to", (0.5, 0.28, 0.15)),
+              Action("move_to", (0.5, 0.28, 0.03))]:
+        arm.act(a)
+    if not touch:
+        arm.act(Action("open"))
+        arm.act(Action("move_to", (0.5, 0.28, 0.15)))
+    x, y, z = w.object_pos("red_cube")
+    assert abs(x - 0.5) < 0.01 and abs(y - 0.28) < 0.01 and z < 0.06  # inside the tray either way
+    assert ("red_cube" in w.gripper_contacts()) is touch
+    assert scene.tasks["red_in_tray"].success(w) is (not touch)
