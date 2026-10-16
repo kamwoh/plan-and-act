@@ -6,9 +6,12 @@ An LLM controls a simulated robot arm. Write an instruction or pick an example, 
 
     uv sync
     ./scripts/fetch_assets.sh
+    ./scripts/fetch_objects.sh
     uv run armmind scripted --scene cubes --task stack --seed 0
 
-The second command downloads the Panda model from MuJoCo Menagerie (Apache 2.0). The third command checks the arm without a model.
+The second command downloads the Panda model from MuJoCo Menagerie (Apache 2.0). The third command downloads the 3D-scanned objects for the kitchen and toys scenes. The fourth command checks the arm without a model.
+
+`fetch_objects.sh` reads the object folder names from `src/armmind/scenes/objects.txt`. It downloads only these folders, about 1 MB each, into `assets/scanned_objects/`. When all of them are present, it does nothing.
 
 You also need the Claude Code CLI, logged in. arm-mind uses it as the model backend. No API key is necessary.
 
@@ -47,6 +50,24 @@ A scene sets the objects on the table, the fixed items and the example tasks. Th
 | shapes | A big orange cube (6 cm), a small purple cube (3 cm) and a yellow cylinder | `pick_cylinder`, `small_on_big` |
 | drawer | A cabinet with a drawer that slides out toward the robot, and a red cube | `open_drawer`, `close_drawer`, `cube_in_drawer` |
 | buttons | A low panel with three spring buttons: red, green and blue | `press_green`, `press_sequence` |
+| kitchen | Scanned objects: a heavy bowl and a heavy plate at fixed places, a white bottle, a purple box and a yellow box | `bottle_in_bowl`, `purple_box_on_plate`, `clear_table` |
+| toys | Scanned toys: an orange robot figure, a panda figure, a green robot figure, a pink rubber toy, and the grey tray | `panda_in_tray`, `all_toys_in_tray` |
+
+The kitchen and toys scenes use these scanned objects:
+
+| Object | Folder | Size (cm) | Mass (kg) |
+| --- | --- | --- | --- |
+| white bowl | `Threshold_Bead_Cereal_Bowl_White` | 16.7 × 16.5 × 6.9 | 0.8 |
+| turquoise plate | `Room_Essentials_Salad_Plate_Turquoise` | 21.8 × 21.8 × 2.7 | 0.8 |
+| white bottle | `Krill_Oil` | 5.4 × 5.3 × 9.7 | 0.15 |
+| purple box | `JarroSil_Activated_Silicon` | 5.9 × 4.6 × 10.9 | 0.12 |
+| yellow box | `Ultra_JarroDophilus` | 5.9 × 6.0 × 10.9 | 0.12 |
+| orange robot figure | `Android_Figure_Orange` | 6.5 × 4.6 × 8.0 | 0.05 |
+| panda figure | `Android_Figure_Panda` | 5.9 × 4.6 × 7.5 | 0.05 |
+| green robot figure | `Great_Dinos_Triceratops_Toy` | 6.8 × 4.6 × 7.9 | 0.05 |
+| pink rubber toy | `Kong_Puppy_Teething_Rubber_Small_Pink` | 4.3 × 4.4 × 7.1 | 0.05 |
+
+The sizes are width (x) × depth (y) × height. The code measures them from the collision meshes. In the kitchen and toys scenes, the seed also sets a random yaw for each small item. The bowl and the plate always stand at the same place, with yaw 0. The step message gives the size of each scanned object. With the debug switch on, it also gives the yaw of each object.
 
 Some scenes have parts that move, such as the drawer and the buttons. A brief change, such as a button press, gives an event. The next step message lists the new events, for example "Events: red button pressed". With the debug switch on, Claude also gets the positions of these parts.
 
@@ -88,8 +109,17 @@ Each run writes `runs/<time>/events.jsonl` and the observation images.
 
     ./scripts/check.sh
 
-Tests marked `assets` skip when the Panda model is missing.
+Tests marked `assets` skip when the Panda model is missing. Tests of the kitchen and toys scenes skip when the scanned objects are missing.
 
 ## License
 
 MIT. The Panda model is not in this repository. MuJoCo Menagerie supplies it under Apache 2.0.
+
+## Attribution
+
+The scanned objects are not in this repository. `scripts/fetch_objects.sh` downloads them.
+
+- Object scans: Google Scanned Objects (Downs et al., 2022), CC-BY 4.0. See [Google Scanned Objects](https://research.google/blog/scanned-objects-by-google-research-a-dataset-of-3d-scanned-common-household-items/).
+- MJCF conversion: Kevin Zakka, mujoco_scanned_objects, MIT. See [mujoco_scanned_objects](https://github.com/kevinzakka/mujoco_scanned_objects).
+
+The prompt labels of the objects are our own neutral names, such as "white bottle". They do not use product names.
