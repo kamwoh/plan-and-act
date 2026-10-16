@@ -21,7 +21,7 @@ from armmind.store.runlog import RunLog
 from armmind.tasks import TASKS, Task
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
-EnvFactory = Callable[[Task | None, str, int, bool, Callable[[bytes], None]], Env]
+EnvFactory = Callable[[Task | None, str, int, bool, Callable[[str, bytes], None]], Env]
 Preview = Callable[[int], dict]
 
 
@@ -78,7 +78,7 @@ class Pacer:
 
 
 def default_env_factory(task: Task | None, instruction: str, seed: int, show_positions: bool,
-                        on_frame: Callable[[bytes], None]) -> Env:
+                        on_frame: Callable[[str, bytes], None]) -> Env:
     from armmind.env import MujocoEnv
     return MujocoEnv(task, seed, instruction, show_positions=show_positions, on_frame=on_frame)
 
@@ -116,9 +116,10 @@ class Runner:
         self.run_dir = log.dir
         pacer = Pacer()
 
-        def on_frame(jpg: bytes) -> None:
-            self.hub.publish_threadsafe({"type": "frame", "jpg": _b64(jpg)})
-            pacer()
+        def on_frame(cam: str, jpg: bytes) -> None:
+            self.hub.publish_threadsafe({"type": "frame", "cam": cam, "jpg": _b64(jpg)})
+            if cam == "front":  # the front image comes first in every frame, so this paces once per frame
+                pacer()
 
         def emit(kind: str, data: dict) -> None:
             msg = {"type": "event", **log.event(kind, data)}

@@ -26,8 +26,10 @@ class Cameras:
         self.world, self.w, self.h = world, width, height
         self._r = mujoco.Renderer(world.model, height, width)
 
-    def render(self, cam: str) -> np.ndarray:
+    def render(self, cam: str, shadows: bool = True) -> np.ndarray:
         self._r.update_scene(self.world.data, camera=cam)
+        # Set the flag on every call, because the scene keeps it. No shadows is about 5 times faster.
+        self._r.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = int(shadows)
         return self._r.render().copy()
 
     def project(self, cam: str, points) -> np.ndarray:
@@ -42,8 +44,8 @@ class Cameras:
         out[depth <= 1e-6] = np.nan
         return out
 
-    def with_grid(self, cam: str) -> Image.Image:
-        img = Image.fromarray(self.render(cam))
+    def with_grid(self, cam: str, shadows: bool = True) -> Image.Image:
+        img = Image.fromarray(self.render(cam, shadows))
         draw = ImageDraw.Draw(img)
         for x in GRID_X:
             a, b = self.project(cam, [[x, GRID_Y[0], 0], [x, GRID_Y[-1], 0]])

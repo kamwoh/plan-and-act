@@ -51,3 +51,15 @@ def test_grid_image_and_encoders(cams):
     assert img.size == (640, 480)
     assert png(img)[:8] == b"\x89PNG\r\n\x1a\n"
     assert jpeg(cams.render("front"))[:2] == b"\xff\xd8"
+
+
+@pytest.mark.parametrize("cam", ["front", "top"])
+def test_render_without_shadows(cams, cam):
+    plain, lit = cams.render(cam, shadows=False), cams.render(cam)
+    assert plain.shape == lit.shape == (480, 640, 3)
+    assert (plain != lit).any()
+    assert (cams.render(cam) == lit).all()  # the flag does not stick
+
+
+def test_with_grid_passes_shadows_through(cams):
+    assert np.any(np.asarray(cams.with_grid("top", shadows=False)) != np.asarray(cams.with_grid("top")))

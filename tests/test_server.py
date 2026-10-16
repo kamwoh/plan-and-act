@@ -21,7 +21,8 @@ def make_env(task, instruction, succeed_after=1, cls=FakeEnv):
 
 
 def fake_factory(task, instruction, seed, show_positions, on_frame):
-    on_frame(b"\xff\xd8jpeg")
+    on_frame("front", b"\xff\xd8jpeg")
+    on_frame("top", b"\xff\xd8jpeg")
     return make_env(task, instruction)
 
 
@@ -44,15 +45,18 @@ def test_run_writes_log_and_sends_events(tmp_path):
         with c.websocket_connect("/ws") as ws:
             r = c.post("/api/run", json={"instruction": f"  {REACH}  "})
             assert r.status_code == 200
-            types, kinds = [], []
+            types, kinds, cams = [], [], []
             while "run_end" not in kinds:
                 msg = ws.receive_json()
                 assert msg["type"] in ("frame", "event")
                 types.append(msg["type"])
+                if msg["type"] == "frame":
+                    cams.append(msg["cam"])
                 if msg["type"] == "event":
                     kinds.append(msg["kind"])
         wait_idle(c)
     assert "frame" in types and "step" in kinds
+    assert cams == ["front", "top"]
     events = [json.loads(x) for x in (next(tmp_path.iterdir()) / "events.jsonl").read_text().splitlines()]
     assert events[0]["kind"] == "run_start" and events[0]["instruction"] == REACH
     assert events[-1]["kind"] == "run_end" and events[-1]["status"] == "success"

@@ -40,16 +40,33 @@ def test_debug_switch_shows_positions():
 
 
 @pytest.mark.assets
-def test_act_sends_jpeg_frames():
-    frames: list[bytes] = []
-    env = MujocoEnv(TASKS["reach"], seed=0, instruction="Touch it.", on_frame=frames.append)
+def test_act_sends_front_and_top_jpeg_frames():
+    frames: list[tuple[str, bytes]] = []
+    env = MujocoEnv(TASKS["reach"], seed=0, instruction="Touch it.", on_frame=lambda c, j: frames.append((c, j)))
     try:
         frames.clear()
         res = env.act(Action("wait", seconds=1.0))
         assert res.status == "reached"
-        assert 28 <= len(frames) <= 32
-        assert frames[0][:2] == b"\xff\xd8"
+        front = [j for c, j in frames if c == "front"]
+        top = [j for c, j in frames if c == "top"]
+        assert 28 <= len(front) <= 32
+        assert 13 <= len(top) <= 17
+        assert len(front) + len(top) == len(frames)
+        assert all(j[:2] == b"\xff\xd8" for _, j in frames)
         assert env.success() is False
+    finally:
+        env.close()
+
+
+@pytest.mark.assets
+def test_observe_renders_with_shadows(monkeypatch):
+    env = MujocoEnv(TASKS["reach"], seed=0, instruction="Touch it.")
+    calls = []
+    real = env.cams.render
+    monkeypatch.setattr(env.cams, "render", lambda cam, shadows=True: calls.append(shadows) or real(cam, shadows))
+    try:
+        env.observe()
+        assert calls == [True, True]
     finally:
         env.close()
 

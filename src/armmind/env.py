@@ -7,6 +7,8 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
 
+import numpy as np
+
 from armmind.sim.arm import Arm
 from armmind.sim.render import Cameras, jpeg, png
 from armmind.sim.world import CUBES, World
@@ -33,18 +35,22 @@ class MujocoEnv:
     """Make it and use it on one thread only (see SimThread)."""
 
     def __init__(self, task: Task | None, seed: int, instruction: str, show_positions: bool = False,
-                 on_frame: Callable[[bytes], None] | None = None):
+                 on_frame: Callable[[str, bytes], None] | None = None):
         self.task, self.instruction, self.show_positions = task, instruction, show_positions
         self.has_check, self.check_name = task is not None, task.name if task else None
         self.world = World()
         self.world.reset(random_layout(seed))
         self.cams = Cameras(self.world)
-        self._on_frame = on_frame
+        self._on_frame, self._n_frames = on_frame, 0
         self.arm = Arm(self.world, on_frame=self._frame if on_frame else None)
         self.arm.reset_ready()
 
     def _frame(self) -> None:
-        self._on_frame(jpeg(self.cams.render("front")))
+        """Send the front camera on every frame and the top camera on every second frame. No shadows, for speed."""
+        self._on_frame("front", jpeg(self.cams.render("front", shadows=False)))
+        if self._n_frames % 2 == 1:
+            self._on_frame("top", jpeg(np.asarray(self.cams.with_grid("top", shadows=False))))
+        self._n_frames += 1
 
     def observe(self) -> Observation:
         objects = {n: _r3(self.world.cube_pos(n)) for n in CUBES} if self.show_positions else None

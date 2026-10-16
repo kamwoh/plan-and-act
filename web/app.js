@@ -320,7 +320,7 @@ function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
-    if (msg.type === "frame") showImage("live", `data:image/jpeg;base64,${msg.jpg}`);
+    if (msg.type === "frame") showImage(msg.cam === "top" ? "top" : "live", `data:image/jpeg;base64,${msg.jpg}`);
     else if (msg.type === "event") onEvent(msg);
   };
   ws.onclose = () => setTimeout(connect, 1000);
