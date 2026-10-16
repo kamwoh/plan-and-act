@@ -52,7 +52,7 @@ class Agent:
                     status = "stopped"
                     break
                 if reply is None and error is not None and error.kind != "schema":
-                    emit("llm_error", {"step": n, "kind": error.kind, "message": error.message})
+                    emit("llm_error", {"step": n, "error_kind": error.kind, "message": error.message})
                     status = "llm_error"
                     break
                 if reply is None:

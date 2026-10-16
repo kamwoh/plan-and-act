@@ -69,6 +69,7 @@ function onEvent(ev) {
     $("steps").prepend(li(`Step ${ev.step}: bad reply (${ev.error})`, "bad"));
   } else if (ev.kind === "llm_error") {
     setStatus(`model error: ${ev.message}`, "bad");
+    $("steps").prepend(li(`Step ${ev.step}: model error (${ev.error_kind}): ${ev.message}`, "bad"));
   } else if (ev.kind === "run_end") {
     if (ev.status === "success") setStatus("SUCCESS", "success");
     else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" ? "bad" : "");
