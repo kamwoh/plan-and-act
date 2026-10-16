@@ -235,3 +235,6 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
     url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9' fill='none' stroke='%235b8cff' stroke-width='3' stroke-dasharray='42 15' stroke-linecap='round'><animateTransform attributeName='transform' type='rotate' from='0 12 12' to='360 12 12' dur='0.8s' repeatCount='indefinite'/></circle></svg>");
 }
 .cam.loading .placeholder { visibility: hidden; }
+
+.seed-row { display: flex; gap: 6px; }
+.btn.icon { padding: 4px 9px; line-height: 0; }

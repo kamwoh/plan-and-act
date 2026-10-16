@@ -118,6 +118,7 @@ let running = false;
 function setRunning(value) {
   running = value;
   for (const c of $("scenes").children) c.disabled = value;
+  $("shuffle").disabled = value;
 }
 let previewSeq = 0;
 
@@ -414,6 +415,12 @@ async function renderPreview(seq) {
 }
 
 let previewTimer = null;
+$("shuffle").addEventListener("click", () => {
+  if (running) return;
+  $("seed").value = Math.floor(Math.random() * 100000);
+  loadPreview();
+});
+
 $("seed").addEventListener("input", () => {
   clearTimeout(previewTimer);
   previewTimer = setTimeout(loadPreview, 300);
