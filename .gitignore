@@ -4,3 +4,5 @@ venv/
 __pycache__/
 *.pyc
 assets/
+.pytest_cache/
+.ruff_cache/
