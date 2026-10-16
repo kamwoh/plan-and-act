@@ -98,6 +98,7 @@ form { display: flex; flex-direction: column; gap: 10px; }
   color: var(--muted); font: 500 12px Inter, system-ui, sans-serif; cursor: pointer;
 }
 .chip:hover { color: var(--fg); border-color: #3a4558; }
+.chip:disabled { opacity: 0.5; cursor: not-allowed; }
 .chip.active { color: #fff; background: rgba(91, 140, 255, 0.16); border-color: var(--accent); }
 input, select, textarea { font: inherit; color: var(--fg); }
 textarea, input[type="number"] {

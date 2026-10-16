@@ -68,10 +68,12 @@ function writeScene(name) {
   }
 }
 
-function chooseScene(name) {
+// keepText: true when a run starts, so that its instruction stays in the box
+function chooseScene(name, keepText = false) {
   const scene = scenes.find((s) => s.name === name) || scenes[0];
+  if (!scene) return;
   const text = $("instruction").value.trim();
-  if (tasks.some((t) => t.instruction === text)) $("instruction").value = "";  // an example of the old scene
+  if (!keepText && tasks.some((t) => t.instruction === text)) $("instruction").value = "";  // an example of the old scene
   sceneName = scene.name;
   tasks = scene.tasks;
   writeScene(sceneName);
@@ -85,8 +87,9 @@ function sceneChip(s) {
   b.type = "button";
   b.dataset.name = s.name;
   b.title = s.description;
+  b.disabled = running;
   b.addEventListener("click", () => {
-    if (s.name === sceneName) return;
+    if (running || s.name === sceneName) return;
     chooseScene(s.name);
     loadPreview();
   });
@@ -94,7 +97,15 @@ function sceneChip(s) {
 }
 
 async function loadScenes() {
-  scenes = await (await fetch("/api/scenes")).json();
+  try {
+    const r = await fetch("/api/scenes");
+    if (!r.ok) throw new Error(r.statusText);
+    scenes = await r.json();
+  } catch (err) {
+    $("mode").textContent = "could not load scenes";
+    $("mode").classList.remove("check");
+    return;
+  }
   $("scenes").replaceChildren(...scenes.map(sceneChip));
   chooseScene(readScene() || "cubes");
 }
@@ -102,6 +113,12 @@ async function loadScenes() {
 $("instruction").addEventListener("input", showMode);
 
 let running = false;
+
+// The scene chips are off while a run is active: the run keeps its scene.
+function setRunning(value) {
+  running = value;
+  for (const c of $("scenes").children) c.disabled = value;
+}
 let previewSeq = 0;
 
 // ---- Run totals ----
@@ -368,7 +385,7 @@ async function loadPreview() {
   const seq = ++previewSeq;
   try {
     const state = await (await fetch("/api/state")).json();
-    running = state.running;
+    setRunning(state.running);
     if (running) return;
     const q = `scene=${encodeURIComponent(sceneName)}&seed=${encodeURIComponent($("seed").value || 0)}`;
     const r = await fetch(`/api/preview?${q}`);
@@ -426,7 +443,7 @@ $("run").addEventListener("submit", async (e) => {
     setStatus(`error: ${err.message}`, "bad");
     return;
   }
-  running = true;
+  setRunning(true);
 });
 
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
@@ -435,6 +452,8 @@ $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" })
 function onEvent(ev) {
   if (ev.kind === "run_start") {
     runSystemPrompt = ev.system_prompt || "";
+    setRunning(true);
+    if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true);
   } else if (ev.kind === "observation") {
     stepImages[ev.step] = { front: ev.front_png, top: ev.top_png };  // shown in the step details
     setStatus(`step ${ev.step} · thinking`, "thinking");
@@ -453,7 +472,7 @@ function onEvent(ev) {
     addTotals(ev.usage);
     $("steps").prepend(errorCard(ev, `Model error (${ev.error_kind}): ${ev.message}`));
   } else if (ev.kind === "run_end") {
-    running = false;
+    setRunning(false);
     setCamState("ended");
     if (ev.status === "success") setStatus("success · task solved", "success");
     else if (ev.status === "done") setStatus("done · Claude says finished", "success");
@@ -475,6 +494,6 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1000);
 }
 
-loadScenes().catch(() => {}).finally(loadPreview);  // the preview needs the chosen scene
+loadScenes().finally(loadPreview);  // the preview needs the chosen scene
 loadPrompt();
 connect();
