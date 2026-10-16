@@ -20,6 +20,7 @@ class Env(Protocol):
     instruction: str
     scene_name: str
     scene_text: str  # the scene description for the step message
+    image_text: str | None  # names the two images in the step message; None means the default text
     has_check: bool
     check_name: str | None
 
@@ -39,7 +40,7 @@ class MujocoEnv:
     def __init__(self, scene: Scene, task: Task | None, seed: int, instruction: str, show_positions: bool = False,
                  on_frame: Callable[[str, bytes], None] | None = None):
         self.task, self.instruction, self.show_positions = task, instruction, show_positions
-        self.scene_name, self.scene_text = scene.name, scene.describe()
+        self.scene_name, self.scene_text, self.image_text = scene.name, scene.describe(), scene.image_text
         self.has_check, self.check_name = task is not None, task.name if task else None
         self.world = World(scene)
         self.world.reset(scene.layout(seed), task.initial_qpos if task else None)

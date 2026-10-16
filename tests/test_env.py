@@ -29,6 +29,7 @@ def test_observe_has_two_images_and_no_positions():
         assert obs.gripper_width == pytest.approx(0.08, abs=0.005)
         assert env.instruction == "Touch it." and env.has_check and env.check_name == "reach"
         assert env.scene_name == "cubes" and env.scene_text == CUBES.describe()
+        assert env.image_text is None
     finally:
         env.close()
 

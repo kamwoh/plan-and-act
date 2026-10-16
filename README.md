@@ -50,6 +50,8 @@ A scene sets the objects on the table, the fixed items and the example tasks. Th
 
 Some scenes have parts that move, such as the drawer and the buttons. A brief change, such as a button press, gives an event. The next step message lists the new events, for example "Events: red button pressed". With the debug switch on, Claude also gets the positions of these parts.
 
+The front camera sees only the back of the cabinet. So the drawer scene uses a side camera in place of the front camera. The side image has no grid.
+
 The page keeps your choice of scene in the browser. When you change the scene, the examples, the auto-check line and the preview change too. The text box keeps your own text. It becomes empty only when it holds an example of the old scene.
 
 Each step message starts with a line `Scene:`. This line lists the objects with their sizes and describes the fixed items. Claude gets this line also when you edit the system prompt.

@@ -14,6 +14,10 @@ from armmind.sim.assets import panda_dir
 TEMPLATE = Path(__file__).with_name("scene.xml")
 TCP_OFFSET = np.array([0.0, 0.0, 0.1034])  # from the hand frame to the point between the fingertips
 GRIPPER_BODIES = ("hand", "left_finger", "right_finger")
+CAMERAS = {  # name: (pos, xyaxes). A scene can replace one.
+    "front": ("1.45 0 0.80", "0 1 0 -0.55 0 0.835"),
+    "top": ("0.5 0 1.2", "0 1 0 -1 0 0"),
+}
 
 
 def _object_xml(o: ObjSpec, i: int) -> str:
@@ -27,7 +31,9 @@ def _object_xml(o: ObjSpec, i: int) -> str:
 
 def scene_xml(scene: Scene) -> str:
     objects = "\n".join(_object_xml(o, i) for i, o in enumerate(scene.objects))
-    return Template(TEMPLATE.read_text()).substitute(fixtures=scene.fixtures_xml, objects=objects)
+    cameras = "\n".join(f'    <camera name="{name}" pos="{pos}" xyaxes="{axes}" fovy="45"/>'
+                        for name, (pos, axes) in {**CAMERAS, **scene.camera_overrides}.items())
+    return Template(TEMPLATE.read_text()).substitute(fixtures=scene.fixtures_xml, objects=objects, cameras=cameras)
 
 
 class World:

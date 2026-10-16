@@ -211,3 +211,10 @@ async def test_scene_text_reaches_the_model_and_the_log():
     await Agent(backend, AgentConfig(max_steps=1), system="Be brief.").run(FakeEnv(), direct, rec)
     assert backend.sent[0][0].text.startswith(f"Scene: {FakeEnv.scene_text}\n")
     assert dict(rec.events)["run_start"]["scene"] == "cubes"
+
+
+async def test_image_text_of_the_env_reaches_the_model():
+    backend, env = FakeBackend([good()]), FakeEnv()
+    env.image_text = "Image 1: side camera. Image 2: top camera."
+    await Agent(backend, AgentConfig(max_steps=1)).run(env, direct, Recorder())
+    assert backend.sent[0][0].text.endswith("\nImage 1: side camera. Image 2: top camera.")

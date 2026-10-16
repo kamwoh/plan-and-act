@@ -266,6 +266,8 @@ def test_scenes_list_every_scene_with_its_tasks(tmp_path):
     assert [s["name"] for s in body] == ["cubes", "tray", "zones", "shapes", "drawer", "buttons"]
     tray = body[1]
     assert tray["title"] == "Tray" and tray["description"] == SCENES["tray"].describe()
+    assert tray["cameras"] == {"front": "Front", "top": "Top · grid"}
+    assert body[4]["cameras"]["front"] == "Side"
     assert tray["tasks"] == [{"name": t.name, "instruction": t.instruction} for t in SCENES["tray"].tasks.values()]
 
 

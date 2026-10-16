@@ -58,3 +58,10 @@ def test_user_text_lists_events_and_debug_joints():
     assert "Events: red button pressed; green button pressed." in text
     assert "Joint positions (debug): drawer 0.120" in text
     assert "Events" not in build_user_text(SCENE, "t", 1, 30, OBS, "", (), [])
+
+
+def test_image_text_replaces_the_last_line():
+    assert build_user_text(SCENE, "t", 1, 30, OBS, "", (), []).splitlines()[-1] == \
+        "Image 1: front camera. Image 2: top camera."
+    text = build_user_text(SCENE, "t", 1, 30, OBS, "", (), [], image_text="Image 1: side. Image 2: top.")
+    assert text.splitlines()[-1] == "Image 1: side. Image 2: top."

@@ -64,3 +64,15 @@ def test_render_without_shadows(cams, cam):
 
 def test_with_grid_passes_shadows_through(cams):
     assert np.any(np.asarray(cams.with_grid("top", shadows=False)) != np.asarray(cams.with_grid("top")))
+
+
+def test_an_overridden_camera_has_no_grid():
+    scene = SCENES["drawer"]
+    w = World(scene)
+    w.reset(scene.layout(0))
+    c = Cameras(w)
+    try:
+        assert np.array_equal(np.asarray(c.with_grid("front")), c.render("front"))  # the side view: no grid
+        assert not np.array_equal(np.asarray(c.with_grid("top")), c.render("top"))
+    finally:
+        c.close()

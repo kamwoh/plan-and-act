@@ -295,3 +295,20 @@ def test_buttons_rest_up_and_no_event_at_start():
     assert w.events == []
     assert all(q < 0.002 for q in w.joints().values())
     assert set(w.joints()) == {"red_button", "green_button", "blue_button"}
+
+
+@pytest.mark.assets
+def test_drawer_front_camera_is_the_side_view():
+    m = World(SCENES["drawer"]).model
+    assert m.cam_pos[m.camera("front").id][1] < -0.8  # far to the -y side
+    cubes = World(SCENES["cubes"]).model
+    assert cubes.cam_pos[cubes.camera("front").id][0] == pytest.approx(1.45)
+
+
+def test_image_text_and_camera_labels():
+    drawer = SCENES["drawer"]
+    assert drawer.image_text.startswith("Image 1: side camera, looking along +y")
+    assert drawer.camera_labels["front"] == "Side"
+    for name in ("cubes", "tray", "zones", "shapes", "buttons"):
+        assert SCENES[name].image_text is None and SCENES[name].camera_overrides == {}
+        assert SCENES[name].camera_labels == {"front": "Front", "top": "Top · grid"}

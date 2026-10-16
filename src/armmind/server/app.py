@@ -189,8 +189,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.get("/api/scenes")
     def scenes() -> list[dict]:
-        return [{"name": s.name, "title": s.title, "description": s.describe(), "tasks": task_list(s)}
-                for s in SCENES.values()]
+        return [{"name": s.name, "title": s.title, "description": s.describe(), "tasks": task_list(s),
+                 "cameras": s.camera_labels} for s in SCENES.values()]
 
     @app.get("/api/state")
     def state() -> dict:

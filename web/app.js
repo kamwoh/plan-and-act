@@ -2,6 +2,8 @@ const $ = (id) => document.getElementById(id);
 let tasks = [];       // the tasks of the chosen scene
 let scenes = [];
 let sceneName = "cubes";
+const DEFAULT_CAMERAS = { front: "Front", top: "Top · grid" };
+let cameras = { ...DEFAULT_CAMERAS };  // the image labels of the chosen scene
 
 function el(tag, text = "", cls = "") {
   const e = document.createElement(tag);
@@ -79,6 +81,8 @@ function chooseScene(name, keepText = false) {
   writeScene(sceneName);
   for (const c of $("scenes").children) c.classList.toggle("active", c.dataset.name === sceneName);
   $("examples").replaceChildren(chip("Your own", "", ""), ...tasks.map((t) => chip(t.name, t.name, t.instruction)));
+  cameras = { ...DEFAULT_CAMERAS, ...(scene.cameras || {}) };
+  for (const cam of ["front", "top"]) $(`cam_${cam}`).querySelector(".cam-label").textContent = cameras[cam];
   showMode();
 }
 
@@ -225,7 +229,7 @@ function openStepDetails(ev) {
   const imgs = stepImages[ev.step];
   if (imgs) {
     const pair = el("div", "", "pair");
-    for (const [name, data] of [["Image 1 · front camera", imgs.front], ["Image 2 · top camera", imgs.top]]) {
+    for (const [name, data] of [[`Image 1 · ${cameras.front}`, imgs.front], [`Image 2 · ${cameras.top}`, imgs.top]]) {
       const fig = el("figure");
       const img = document.createElement("img");
       img.src = `data:image/png;base64,${data}`;

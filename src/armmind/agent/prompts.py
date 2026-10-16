@@ -75,8 +75,12 @@ class StepSummary:
     results: tuple[str, ...]
 
 
+IMAGE_TEXT = "Image 1: front camera. Image 2: top camera."
+
+
 def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs: Observation, notes: str,
-                    todo: tuple[str, ...], history: list[StepSummary], check_failed: bool = False) -> str:
+                    todo: tuple[str, ...], history: list[StepSummary], check_failed: bool = False,
+                    image_text: str | None = None) -> str:
     lines = [
         f"Scene: {scene}",
         f"Task: {instruction}",
@@ -97,7 +101,7 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
     lines.append("Your to-do list: " + ("; ".join(todo) if todo else "(empty)"))
     if check_failed:
         lines.append("The automatic check says the task is not finished yet.")
-    lines.append("Image 1: front camera. Image 2: top camera.")
+    lines.append(image_text or IMAGE_TEXT)
     return "\n".join(lines)
 
 

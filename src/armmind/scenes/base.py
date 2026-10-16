@@ -73,6 +73,9 @@ class Scene:
     # Monitor factories: each world makes its own monitors, because a monitor keeps state.
     monitors: tuple[Callable[[], Monitor], ...] = ()
     initial_qpos: dict[str, float] = field(default_factory=dict)  # scene joint positions at the start
+    camera_overrides: dict[str, tuple[str, str]] = field(default_factory=dict)  # camera: (pos, xyaxes)
+    image_text: str | None = None  # replaces the last line of the step message, which names the images
+    camera_labels: dict[str, str] = field(default_factory=lambda: {"front": "Front", "top": "Top · grid"})
 
     def layout(self, seed: int) -> Layout:
         """Random start positions. The same seed gives the same layout."""

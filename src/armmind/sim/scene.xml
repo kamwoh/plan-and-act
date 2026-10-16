@@ -9,7 +9,6 @@
     <geom name="table" type="plane" size="1 1 0.05" rgba="0.55 0.5 0.42 1"/>
 $fixtures
 $objects
-    <camera name="front" pos="1.45 0 0.80" xyaxes="0 1 0 -0.55 0 0.835" fovy="45"/>
-    <camera name="top" pos="0.5 0 1.2" xyaxes="0 1 0 -1 0 0" fovy="45"/>
+$cameras
   </worldbody>
 </mujoco>

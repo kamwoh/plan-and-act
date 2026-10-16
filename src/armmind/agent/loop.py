@@ -64,7 +64,8 @@ class Agent:
                 break
             obs = await call(env.observe)
             emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
-            text = build_user_text(env.scene_text, env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history), check_failed)
+            text = build_user_text(env.scene_text, env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history),
+                                   check_failed, env.image_text)
             self._conv = await self.backend.open(self.system)
             attempts: list[dict] = []
             try:

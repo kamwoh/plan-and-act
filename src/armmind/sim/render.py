@@ -25,6 +25,8 @@ class Cameras:
     def __init__(self, world: World, width: int = 640, height: int = 480):
         self.world, self.w, self.h = world, width, height
         self._r = mujoco.Renderer(world.model, height, width)
+        # The grid only suits the default cameras. On a scene's own camera it would cross the fixed items.
+        self._no_grid = set(world.scene.camera_overrides)
 
     def render(self, cam: str, shadows: bool = True) -> np.ndarray:
         self._r.update_scene(self.world.data, camera=cam)
@@ -46,6 +48,8 @@ class Cameras:
 
     def with_grid(self, cam: str, shadows: bool = True) -> Image.Image:
         img = Image.fromarray(self.render(cam, shadows))
+        if cam in self._no_grid:
+            return img
         draw = ImageDraw.Draw(img)
         for x in GRID_X:
             a, b = self.project(cam, [[x, GRID_Y[0], 0], [x, GRID_Y[-1], 0]])
