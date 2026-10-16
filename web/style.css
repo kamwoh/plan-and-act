@@ -91,6 +91,8 @@ img[hidden] { display: none; }
 /* ---- Controls ---- */
 form { display: flex; flex-direction: column; gap: 10px; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.chips-label { font-size: 11px; color: var(--faint); font-weight: 500; flex: none; }
 .chip {
   padding: 3px 11px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--panel-2);
   color: var(--muted); font: 500 12px Inter, system-ui, sans-serif; cursor: pointer;

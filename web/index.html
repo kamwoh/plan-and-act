@@ -41,13 +41,16 @@
 
     <section class="card controls">
       <form id="run">
-        <div class="card-head"><h2>Instruction</h2><div id="examples" class="chips" role="group" aria-label="Examples"></div></div>
-        <textarea id="instruction" rows="3" maxlength="500" required placeholder="Tell the arm what to do, or pick an example above"></textarea>
+        <div class="card-head"><h2>Instruction</h2>
+          <div class="chip-row"><span class="chips-label">Scene</span><div id="scenes" class="chips" role="group" aria-label="Scene"></div></div>
+        </div>
+        <div class="chip-row"><span class="chips-label">Examples</span><div id="examples" class="chips" role="group" aria-label="Examples"></div></div>
+        <textarea id="instruction" rows="3" maxlength="500" required placeholder="Tell the arm what to do, or pick an example"></textarea>
         <div id="mode" class="mode"></div>
         <div class="settings">
           <label class="field">Seed <input id="seed" type="number" value="0" min="0"></label>
           <label class="field">Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
-          <label class="switch"><input id="show_positions" type="checkbox"><span class="track"></span>Debug: true cube positions</label>
+          <label class="switch"><input id="show_positions" type="checkbox"><span class="track"></span>Debug: true object positions</label>
         </div>
         <div class="buttons">
           <button type="submit" class="btn primary" id="start_btn"><span aria-hidden="true">▶</span> Start</button>

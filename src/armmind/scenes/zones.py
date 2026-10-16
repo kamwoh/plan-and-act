@@ -6,9 +6,9 @@ from armmind.scenes.common import THREE_CUBES, free, put
 
 ZONE_X, ZONE_HALF, RELEASE_Z = 0.68, 0.04, 0.025
 ZONES = {  # colour: (y, rgba)
-    "red": (-0.15, "1 0.6 0.6 1"),
-    "blue": (0.0, "0.6 0.7 1 1"),
-    "green": (0.15, "0.6 0.9 0.65 1"),
+    "red": (-0.15, "0.8 0.4 0.4 1"),
+    "blue": (0.0, "0.4 0.5 0.85 1"),
+    "green": (0.15, "0.4 0.75 0.45 1"),
 }
 
 # Visual only: contype and conaffinity 0, so nothing collides with a zone.

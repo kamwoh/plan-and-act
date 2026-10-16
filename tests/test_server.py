@@ -15,16 +15,17 @@ TASKS = SCENES["cubes"].tasks
 REACH = TASKS["reach"].instruction
 
 
-def make_env(task, instruction, succeed_after=1, cls=FakeEnv):
+def make_env(scene, task, instruction, succeed_after=1, cls=FakeEnv):
     env = cls(succeed_after=succeed_after, has_check=task is not None)
     env.instruction, env.check_name = instruction, task.name if task else None
+    env.scene_name, env.scene_text = scene.name, scene.describe()
     return env
 
 
-def fake_factory(task, instruction, seed, show_positions, on_frame):
+def fake_factory(scene, task, instruction, seed, show_positions, on_frame):
     on_frame("front", b"\xff\xd8jpeg")
     on_frame("top", b"\xff\xd8jpeg")
-    return make_env(task, instruction)
+    return make_env(scene, task, instruction)
 
 
 def wait_idle(client, timeout=5.0):
@@ -88,9 +89,9 @@ def test_bad_instruction_is_422(tmp_path, body):
         assert c.post("/api/run", json=body).status_code == 422
 
 
-def _run_start(tmp_path, instruction):
+def _run_start(tmp_path, instruction, **extra):
     with TestClient(create_app(FakeBackend([good(done=True)]), fake_factory, tmp_path)) as c:
-        assert c.post("/api/run", json={"instruction": instruction}).status_code == 200
+        assert c.post("/api/run", json={"instruction": instruction, **extra}).status_code == 200
         wait_idle(c)
     return _events(tmp_path)[0]
 
@@ -109,18 +110,21 @@ def test_custom_instruction_has_no_check(tmp_path):
 def test_preview_returns_both_images(tmp_path):
     calls = []
 
-    def preview(seed):
-        calls.append(seed)
+    def preview(scene, seed):
+        calls.append((scene.name, seed))
         return {"front": "ZnJvbnQ=", "top": "dG9w"}
 
     with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path, preview=preview)) as c:
         r = c.get("/api/preview", params={"seed": 3})
-        assert r.status_code == 200 and r.json() == {"front": "ZnJvbnQ=", "top": "dG9w"} and calls == [3]
+        assert r.status_code == 200 and r.json() == {"front": "ZnJvbnQ=", "top": "dG9w"}
         assert c.get("/api/preview", params={"seed": -1}).status_code == 422
+        assert c.get("/api/preview", params={"scene": "tray", "seed": 2}).status_code == 200
+        assert c.get("/api/preview", params={"scene": "nope", "seed": 2}).status_code == 404
+    assert calls == [("cubes", 3), ("tray", 2)]
 
 
 def test_preview_is_refused_while_running(tmp_path):
-    with TestClient(create_app(HangingBackend(), fake_factory, tmp_path, preview=lambda s: {})) as c:
+    with TestClient(create_app(HangingBackend(), fake_factory, tmp_path, preview=lambda scene, s: {})) as c:
         assert c.post("/api/run", json={"instruction": REACH}).status_code == 200
         assert c.get("/api/preview", params={"seed": 0}).status_code == 409
         c.post("/api/stop")
@@ -160,7 +164,7 @@ def _events(tmp_path):
 
 
 def test_factory_error_ends_run_with_error(tmp_path):
-    def broken(task, instruction, seed, show_positions, on_frame):
+    def broken(scene, task, instruction, seed, show_positions, on_frame):
         raise ValueError("no renderer")
 
     with TestClient(create_app(FakeBackend([]), broken, tmp_path)) as c:
@@ -178,8 +182,8 @@ class CloseFails(FakeEnv):
 
 
 def test_close_error_is_logged_and_log_is_closed(tmp_path):
-    def factory(task, instruction, seed, show_positions, on_frame):
-        return make_env(task, instruction, cls=CloseFails)
+    def factory(scene, task, instruction, seed, show_positions, on_frame):
+        return make_env(scene, task, instruction, cls=CloseFails)
 
     with TestClient(create_app(FakeBackend([good()]), factory, tmp_path)) as c:
         assert c.post("/api/run", json={"instruction": REACH}).status_code == 200
@@ -254,3 +258,30 @@ def test_prompt_endpoint_returns_system_and_an_example(tmp_path):
     ex = body["step_example"]
     assert TASKS["stack"].instruction in ex and "Step 1 of 30." in ex
     assert "(0.300, 0.000, 0.400)" in ex and "touching: nothing" in ex
+
+
+def test_scenes_list_every_scene_with_its_tasks(tmp_path):
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        body = c.get("/api/scenes").json()
+    assert [s["name"] for s in body] == ["cubes", "tray", "zones", "shapes"]
+    tray = body[1]
+    assert tray["title"] == "Tray" and tray["description"] == SCENES["tray"].describe()
+    assert tray["tasks"] == [{"name": t.name, "instruction": t.instruction} for t in SCENES["tray"].tasks.values()]
+
+
+def test_unknown_scene_is_404(tmp_path):
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        assert c.post("/api/run", json={"instruction": REACH, "scene": "nope"}).status_code == 404
+        assert c.get("/api/state").json()["running"] is False
+
+
+def test_tray_example_checks_only_in_the_tray_scene(tmp_path):
+    text = SCENES["tray"].tasks["red_in_tray"].instruction
+    start = _run_start(tmp_path / "a", text, scene="tray")
+    assert start["check"] == "red_in_tray" and start["scene"] == "tray"
+    start = _run_start(tmp_path / "b", text, scene="cubes")
+    assert start["check"] is None and start["scene"] == "cubes"
+
+
+def test_run_defaults_to_the_cubes_scene(tmp_path):
+    assert _run_start(tmp_path, REACH)["scene"] == "cubes"

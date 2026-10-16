@@ -17,16 +17,17 @@ from armmind.agent.loop import Agent, AgentConfig
 from armmind.agent.prompts import SYSTEM, example_step_text
 from armmind.env import Env, SimThread
 from armmind.llm.protocol import LLMBackend
-from armmind.scenes import SCENES, Task
+from armmind.scenes import SCENES, Scene, Task
 from armmind.store.runlog import RunLog
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
-EnvFactory = Callable[[Task | None, str, int, bool, Callable[[str, bytes], None]], Env]
-Preview = Callable[[int], dict]
+EnvFactory = Callable[[Scene, Task | None, str, int, bool, Callable[[str, bytes], None]], Env]
+Preview = Callable[[Scene, int], dict]
 
 
 class RunRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
+    scene: str = "cubes"
     seed: int = Field(0, ge=0)
     max_steps: int = Field(30, ge=1, le=200)
     show_positions: bool = False
@@ -77,21 +78,27 @@ class Pacer:
         self._last = now
 
 
-def default_env_factory(task: Task | None, instruction: str, seed: int, show_positions: bool,
+def default_env_factory(scene: Scene, task: Task | None, instruction: str, seed: int, show_positions: bool,
                         on_frame: Callable[[str, bytes], None]) -> Env:
     from armmind.env import MujocoEnv
-    return MujocoEnv(SCENES["cubes"], task, seed, instruction, show_positions=show_positions, on_frame=on_frame)
+    return MujocoEnv(scene, task, seed, instruction, show_positions=show_positions, on_frame=on_frame)
 
 
-def default_preview(seed: int) -> dict:
+def default_preview(scene: Scene, seed: int) -> dict:
     from armmind.env import render_preview
-    return render_preview(SCENES["cubes"], seed)
+    return render_preview(scene, seed)
 
 
 def _same_origin(headers) -> bool:
     """True when the request has no Origin header, or the Origin host:port equals the Host header."""
     origin = headers.get("origin")
     return origin is None or urlsplit(origin).netloc == headers.get("host")
+
+
+def _scene(name: str) -> Scene:
+    if name not in SCENES:
+        raise HTTPException(404, f"unknown scene {name!r}")
+    return SCENES[name]
 
 
 def _b64(b: bytes) -> str:
@@ -109,7 +116,7 @@ class Runner:
     def running(self) -> bool:
         return self.task is not None and not self.task.done()
 
-    async def start(self, req: RunRequest, task: Task | None) -> Path:
+    async def start(self, req: RunRequest, scene: Scene, task: Task | None) -> Path:
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog(self.runs_dir)
@@ -134,7 +141,7 @@ class Runner:
         async def go() -> None:
             sim, env = SimThread(), None
             try:
-                env = await sim.call(self.env_factory, task, req.instruction, req.seed, req.show_positions, on_frame)
+                env = await sim.call(self.env_factory, scene, task, req.instruction, req.seed, req.show_positions, on_frame)
                 await agent.run(env, sim.call, emit)
             except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
                 emit("run_end", {"status": "error", "message": f"{type(e).__name__}: {e}"})
@@ -173,9 +180,17 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     app = FastAPI(lifespan=lifespan)
 
+    def task_list(scene: Scene) -> list[dict]:
+        return [{"name": t.name, "instruction": t.instruction} for t in scene.tasks.values()]
+
     @app.get("/api/tasks")
     def tasks() -> list[dict]:
-        return [{"name": t.name, "instruction": t.instruction} for t in SCENES["cubes"].tasks.values()]
+        return task_list(SCENES["cubes"])  # kept for old pages: the cubes scene
+
+    @app.get("/api/scenes")
+    def scenes() -> list[dict]:
+        return [{"name": s.name, "title": s.title, "description": s.describe(), "tasks": task_list(s)}
+                for s in SCENES.values()]
 
     @app.get("/api/state")
     def state() -> dict:
@@ -187,20 +202,22 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.post("/api/run", dependencies=[Depends(same_origin)])
     async def run(req: RunRequest) -> dict:
-        task = next((t for t in SCENES["cubes"].tasks.values() if t.instruction == req.instruction), None)
-        return {"run_dir": str(await runner.start(req, task))}
+        scene = _scene(req.scene)
+        task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
+        return {"run_dir": str(await runner.start(req, scene, task))}
 
     @app.get("/api/prompt")
     def prompt() -> dict:
         return {"system": SYSTEM, "step_example": example_step_text()}
 
     @app.get("/api/preview")
-    async def scene_preview(seed: int = Query(0, ge=0)) -> dict:
+    async def scene_preview(scene: str = "cubes", seed: int = Query(0, ge=0)) -> dict:
+        chosen = _scene(scene)
         if runner.running:
             raise HTTPException(409, "a run is active")
         sim = SimThread()  # a fresh thread, because the EGL context belongs to the thread that made it
         try:
-            return await sim.call(preview or default_preview, seed)
+            return await sim.call(preview or default_preview, chosen, seed)
         finally:
             sim.shutdown()
 

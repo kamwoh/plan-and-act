@@ -6,8 +6,8 @@ import numpy as np
 from armmind.scenes.base import ObjSpec, Scene, Task
 from armmind.scenes.common import above, free, grasp, put
 
-BIG = ObjSpec("big_cube", "box", (0.03, 0.03, 0.03), "0.95 0.55 0.1 1", "big orange cube, 6 cm", mass=0.08)
-SMALL = ObjSpec("small_cube", "box", (0.015, 0.015, 0.015), "0.6 0.3 0.85 1", "small purple cube, 3 cm", mass=0.03)
+BIG = ObjSpec("big_cube", "box", (0.03, 0.03, 0.03), "0.85 0.3 0.02 1", "big orange cube, 6 cm", mass=0.08)
+SMALL = ObjSpec("small_cube", "box", (0.015, 0.015, 0.015), "0.5 0.2 0.75 1", "small purple cube, 3 cm", mass=0.03)
 CYL = ObjSpec("cylinder", "cylinder", (0.02, 0.03), "0.95 0.85 0.1 1",
               "yellow cylinder, standing, 4 cm wide and 6 cm tall", mass=0.05)
 

@@ -1,5 +1,7 @@
 const $ = (id) => document.getElementById(id);
-let tasks = [];
+let tasks = [];       // the tasks of the chosen scene
+let scenes = [];
+let sceneName = "cubes";
 
 function el(tag, text = "", cls = "") {
   const e = document.createElement(tag);
@@ -47,10 +49,54 @@ function chip(label, name, instruction) {
   return b;
 }
 
-async function loadTasks() {
-  tasks = await (await fetch("/api/tasks")).json();
+// ---- Scenes: the chosen scene sets the examples, the auto-check and the preview ----
+const SCENE_KEY = "armmind.scene";
+
+function readScene() {
+  try {
+    return localStorage.getItem(SCENE_KEY);
+  } catch (err) {
+    return null;
+  }
+}
+
+function writeScene(name) {
+  try {
+    localStorage.setItem(SCENE_KEY, name);
+  } catch (err) {
+    // storage is blocked: the choice lasts until the page closes
+  }
+}
+
+function chooseScene(name) {
+  const scene = scenes.find((s) => s.name === name) || scenes[0];
+  const text = $("instruction").value.trim();
+  if (tasks.some((t) => t.instruction === text)) $("instruction").value = "";  // an example of the old scene
+  sceneName = scene.name;
+  tasks = scene.tasks;
+  writeScene(sceneName);
+  for (const c of $("scenes").children) c.classList.toggle("active", c.dataset.name === sceneName);
   $("examples").replaceChildren(chip("Your own", "", ""), ...tasks.map((t) => chip(t.name, t.name, t.instruction)));
   showMode();
+}
+
+function sceneChip(s) {
+  const b = el("button", s.title, "chip");
+  b.type = "button";
+  b.dataset.name = s.name;
+  b.title = s.description;
+  b.addEventListener("click", () => {
+    if (s.name === sceneName) return;
+    chooseScene(s.name);
+    loadPreview();
+  });
+  return b;
+}
+
+async function loadScenes() {
+  scenes = await (await fetch("/api/scenes")).json();
+  $("scenes").replaceChildren(...scenes.map(sceneChip));
+  chooseScene(readScene() || "cubes");
 }
 
 $("instruction").addEventListener("input", showMode);
@@ -324,7 +370,8 @@ async function loadPreview() {
     const state = await (await fetch("/api/state")).json();
     running = state.running;
     if (running) return;
-    const r = await fetch(`/api/preview?seed=${encodeURIComponent($("seed").value || 0)}`);
+    const q = `scene=${encodeURIComponent(sceneName)}&seed=${encodeURIComponent($("seed").value || 0)}`;
+    const r = await fetch(`/api/preview?${q}`);
     if (!r.ok || seq !== previewSeq || running) return;
     const p = await r.json();
     if (seq !== previewSeq || running) return;
@@ -350,6 +397,7 @@ $("run").addEventListener("submit", async (e) => {
     return;
   }
   const body = {
+    scene: sceneName,
     instruction: $("instruction").value.trim(),
     seed: Number($("seed").value),
     max_steps: Number($("max_steps").value),
@@ -427,7 +475,6 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 1000);
 }
 
-loadTasks();
+loadScenes().catch(() => {}).finally(loadPreview);  // the preview needs the chosen scene
 loadPrompt();
-loadPreview();
 connect();
