@@ -21,6 +21,8 @@ class RunLog:
         self._f = (folder / "events.jsonl").open("a", encoding="utf-8")
 
     def event(self, kind: str, data: dict) -> dict:
+        if clash := {"t", "kind", "type"} & data.keys():
+            raise ValueError(f"reserved event keys: {sorted(clash)}")
         record: dict = {"t": round(time.time(), 3), "kind": kind}
         for key, value in data.items():
             if isinstance(value, bytes) and key.endswith("_png"):

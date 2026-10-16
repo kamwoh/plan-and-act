@@ -1,3 +1,4 @@
+import pytest
 import json
 
 from armmind.store.runlog import RunLog
@@ -18,3 +19,11 @@ def test_two_logs_in_the_same_second_get_different_folders(tmp_path):
     assert a.dir != b.dir
     a.close()
     b.close()
+
+
+def test_reserved_keys_are_refused(tmp_path):
+    log = RunLog(tmp_path)
+    for key in ("t", "kind", "type"):
+        with pytest.raises(ValueError):
+            log.event("x", {key: 1})
+    log.close()

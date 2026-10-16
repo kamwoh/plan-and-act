@@ -4,8 +4,9 @@ import time
 from fastapi.testclient import TestClient
 
 from armmind.llm.fake import FakeBackend
+from armmind.llm.protocol import LLMError
 from armmind.server.app import Hub, create_app
-from tests.fakes import FakeEnv, HangingBackend, good
+from tests.fakes import FakeEnv, HangingBackend, bad, good
 
 
 def fake_factory(task, seed, show_positions, on_frame):
@@ -32,15 +33,37 @@ def test_run_writes_log_and_sends_events(tmp_path):
         with c.websocket_connect("/ws") as ws:
             r = c.post("/api/run", json={"task": "reach", "instruction": "  Tap the red block.  "})
             assert r.status_code == 200
-            kinds = []
+            types, kinds = [], []
             while "run_end" not in kinds:
                 msg = ws.receive_json()
-                kinds.append(msg.get("kind", msg["type"]))
+                assert msg["type"] in ("frame", "event")
+                types.append(msg["type"])
+                if msg["type"] == "event":
+                    kinds.append(msg["kind"])
         wait_idle(c)
-    assert "frame" in kinds and "step" in kinds
+    assert "frame" in types and "step" in kinds
     events = [json.loads(x) for x in (next(tmp_path.iterdir()) / "events.jsonl").read_text().splitlines()]
     assert events[0]["kind"] == "run_start" and events[0]["instruction"] == "Tap the red block."
     assert events[-1]["kind"] == "run_end" and events[-1]["status"] == "success"
+
+
+def test_bad_reply_and_auth_error_reach_the_page(tmp_path):
+    replies = [bad(), bad(), [LLMError("auth", "please log in")]]
+    with TestClient(create_app(FakeBackend(replies), fake_factory, tmp_path)) as c:
+        with c.websocket_connect("/ws") as ws:
+            assert c.post("/api/run", json={"task": "reach", "max_steps": 2}).status_code == 200
+            events = []
+            while not events or events[-1]["kind"] != "run_end":
+                msg = ws.receive_json()
+                if msg["type"] == "event":
+                    events.append(msg)
+        wait_idle(c)
+    assert all(e["type"] == "event" for e in events)
+    by_kind = {e["kind"]: e for e in events}
+    assert by_kind["bad_reply"]["step"] == 1 and by_kind["bad_reply"]["error"]
+    err = by_kind["llm_error"]
+    assert err["step"] == 2 and err["error_kind"] == "auth" and err["message"] == "please log in"
+    assert events[-1]["kind"] == "run_end"
 
 
 def test_unknown_task_is_404(tmp_path):
