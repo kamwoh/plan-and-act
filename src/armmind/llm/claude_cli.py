@@ -25,6 +25,14 @@ BASE_ARGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-j
 PROGRESS_INTERVAL_S = 0.3  # at most one "receiving" update per this many seconds
 
 
+def usage_from_result(ev: dict, default_model: str, latency_s: float) -> Usage:
+    """Map the `result` event of the CLI to a Usage, keeping the cache token counts."""
+    usage = ev.get("usage") or {}
+    model = next(iter(ev.get("modelUsage") or {}), default_model)
+    return Usage(model, latency_s, usage.get("input_tokens"), usage.get("output_tokens"), ev.get("total_cost_usd"),
+                 usage.get("cache_creation_input_tokens"), usage.get("cache_read_input_tokens"))
+
+
 def classify(text: str) -> str:
     t = text.lower()
     if "limit" in t or "429" in t:
@@ -171,10 +179,7 @@ class ClaudeCLIConversation:
                     yield LLMError("schema", f"answer did not match the requested format: {text[:300]}")
                     return
                 yield Final(text, parsed if schema else None)
-                usage = ev.get("usage") or {}
-                model = next(iter(ev.get("modelUsage") or {}), self.b.model or "claude")
-                yield Usage(model, time.monotonic() - t0, usage.get("input_tokens"), usage.get("output_tokens"),
-                            ev.get("total_cost_usd"))
+                yield usage_from_result(ev, self.b.model or "claude", time.monotonic() - t0)
                 return
 
     async def cancel(self) -> None:

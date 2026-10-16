@@ -138,3 +138,69 @@ async def test_stop_during_actions_wins_over_done():
     env.act = lambda action: (agent._stop.set(), act(action))[1]  # Stop arrives during the first action
     status = await agent.run(env, direct, Recorder())
     assert status == "stopped" and len(env.acts) == 1
+
+
+def usage(**kw):
+    from armmind.llm.protocol import Usage
+    return Usage("fake", kw.pop("latency_s", 1.0), kw.pop("in_tokens", 10), kw.pop("out_tokens", 5),
+                 kw.pop("cost_usd", 0.01), **kw)
+
+
+async def test_step_records_both_attempts_of_a_retry():
+    rec = Recorder()
+    first = [LLMError("schema", "answer did not match"), usage(in_tokens=100, out_tokens=7, cache_write_tokens=50,
+                                                              cache_read_tokens=0, cost_usd=0.02, latency_s=2.0)]
+    second = [*good()[:1], usage(in_tokens=3, out_tokens=4, cache_write_tokens=0, cache_read_tokens=40,
+                                 cost_usd=0.005, latency_s=0.5)]
+    backend = FakeBackend([first, second])
+    await Agent(backend, AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
+    step = dict(rec.events)["step"]
+    a1, a2 = step["attempts"]
+    assert a1["images"] == 2 and a2["images"] == 0
+    assert a1["error"] == "answer did not match" and a1["reply"] is None
+    assert a2["error"] is None and '"plan": "p"' in a2["reply"]
+    assert a1["message"] == step["prompt"] and "not valid" in a2["message"]
+    assert a1["usage"] == {"in": 100, "cache_write": 50, "cache_read": 0, "out": 7, "cost_usd": 0.02,
+                           "latency_s": 2.0}
+    assert step["usage"] == {"in": 103, "cache_write": 50, "cache_read": 40, "out": 11, "cost_usd": 0.025,
+                             "latency_s": 2.5}
+    assert step["latency_s"] == 0.5 and step["cost_usd"] == 0.005  # kept as before: the last attempt
+
+
+async def test_usage_is_null_when_no_attempt_has_usage():
+    rec = Recorder()
+    await Agent(FakeBackend([[*good()[:1]]]), AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
+    step = dict(rec.events)["step"]
+    assert step["usage"] is None and step["attempts"][0]["usage"] is None
+
+
+async def test_bad_reply_and_llm_error_carry_prompt_and_attempts():
+    rec = Recorder()
+    backend = FakeBackend([bad(), bad(), [LLMError("auth", "please log in")]])
+    await Agent(backend, AgentConfig(max_steps=2)).run(FakeEnv(), direct, rec)
+    events = dict(rec.events)
+    for kind in ("bad_reply", "llm_error"):
+        assert events[kind]["prompt"].startswith("Task: ")
+        assert "usage" in events[kind]
+    assert len(events["bad_reply"]["attempts"]) == 2
+    assert events["llm_error"]["attempts"][0]["error"] == "please log in"
+
+
+async def test_run_start_has_the_system_prompt():
+    from armmind.agent.prompts import SYSTEM
+    rec = Recorder()
+    await Agent(FakeBackend([good()]), AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
+    assert dict(rec.events)["run_start"]["system_prompt"] == SYSTEM
+
+
+async def test_custom_system_prompt_reaches_the_backend():
+    backend, rec = FakeBackend([good()]), Recorder()
+    await Agent(backend, AgentConfig(max_steps=1), system="Be brief.").run(FakeEnv(), direct, rec)
+    assert backend.systems == ["Be brief."] and dict(rec.events)["run_start"]["system_prompt"] == "Be brief."
+
+
+async def test_empty_system_prompt_falls_back_to_the_default():
+    from armmind.agent.prompts import SYSTEM
+    backend = FakeBackend([good()])
+    await Agent(backend, AgentConfig(max_steps=1), system="").run(FakeEnv(), direct, Recorder())
+    assert backend.systems == [SYSTEM]

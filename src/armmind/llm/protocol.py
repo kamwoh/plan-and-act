@@ -31,6 +31,8 @@ class Usage:
     in_tokens: int | None = None
     out_tokens: int | None = None
     cost_usd: float | None = None
+    cache_write_tokens: int | None = None
+    cache_read_tokens: int | None = None
 
 
 @dataclass(frozen=True)
