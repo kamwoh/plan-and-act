@@ -12,9 +12,18 @@ The second command downloads the Panda model from MuJoCo Menagerie (Apache 2.0).
 
 You also need the Claude Code CLI, logged in. arm-mind uses it as the model backend. No API key is necessary.
 
+MuJoCo renders through EGL. If EGL fails, run with `MUJOCO_GL=osmesa`. This uses the CPU and needs the OSMesa system library.
+
 ## Run
 
     uv run armmind serve          # then open http://127.0.0.1:8780
+
+The `serve` command takes these options:
+
+- `--model`: the model name for the Claude CLI.
+- `--host`: the address to listen on (default 127.0.0.1).
+- `--port`: the port (default 8780). The command refuses 8765, because ps1-mind uses it.
+- `--runs`: the folder for run logs (default `runs`).
 
 Pick a task (reach, pick or stack), a seed and a step limit, then press Start. You can change the instruction text. The success check of the task stays the same. The left side shows the front camera live and the top camera from the last step. The right side shows Claude's to-do list, notes and each step.
 
