@@ -45,6 +45,10 @@ A scene sets the objects on the table, the fixed items and the example tasks. Th
 | tray | The three cubes and a grey tray with low walls | `red_in_tray`, `all_in_tray` |
 | zones | The three cubes and three flat squares: red, blue and green | `red_on_green`, `sort` |
 | shapes | A big orange cube (6 cm), a small purple cube (3 cm) and a yellow cylinder | `pick_cylinder`, `small_on_big` |
+| drawer | A cabinet with a drawer that slides out toward the robot, and a red cube | `open_drawer`, `close_drawer`, `cube_in_drawer` |
+| buttons | A low panel with three spring buttons: red, green and blue | `press_green`, `press_sequence` |
+
+Some scenes have parts that move, such as the drawer and the buttons. A brief change, such as a button press, gives an event. The next step message lists the new events, for example "Events: red button pressed". With the debug switch on, Claude also gets the positions of these parts.
 
 The page keeps your choice of scene in the browser. When you change the scene, the examples, the auto-check line and the preview change too. The text box keeps your own text. It becomes empty only when it holds an example of the old scene.
 
@@ -72,7 +76,9 @@ Each run log also holds this data. The `run_start` event has the system prompt. 
 
 ## How it works
 
-Each step: the app renders a front and a top camera image with a grid on the table. Claude gets the images and the gripper position, and replies with up to 8 actions: `move_to [x, y, z]`, `open`, `close`, `wait`. Code finds the joint angles (IK) and moves the arm. Each result (reached, blocked or unreachable) goes into the next prompt.
+Each step: the app renders a front and a top camera image with a grid on the table. Claude gets the images, the gripper position and the gripper yaw. It replies with up to 8 actions: `move_to [x, y, z]`, `open`, `close`, `wait`.
+
+`move_to` moves the gripper in a straight line. It also takes an optional `yaw` in degrees, from -90 to 90. The yaw turns the gripper about the vertical axis. At yaw 0, the fingers close along x. Code finds the joint angles (IK) for each point of the path and moves the arm. If the path leaves the reachable area, the arm stops there. Each result (reached, blocked or unreachable) goes into the next prompt.
 
 Each run writes `runs/<time>/events.jsonl` and the observation images.
 
