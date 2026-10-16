@@ -129,11 +129,48 @@ def test_yaw_outside_the_range_is_clamped(arm):
 
 
 def test_path_that_leaves_the_reach_stops_as_unreachable(arm):
-    assert arm.act(Action("move_to", (0.25, -0.2, 0.1))).status == "reached"
-    res = arm.act(Action("move_to", (0.25, 0.2, 0.1)))
+    # At yaw 90 the wrist cannot follow the whole sweep around the base: joint 7 runs out of range.
+    assert arm.act(Action("move_to", (0.25, 0.4, 0.01), yaw=90.0)).status == "reached"
+    res = arm.act(Action("move_to", (0.25, -0.3, 0.3), yaw=150.0))
     assert res.status == "unreachable"
-    assert res.note == "path leaves the reachable area"
-    assert res.tcp[1] < 0.15  # it stopped on the way
+    assert res.note == "yaw clamped to 90, path leaves the reachable area"
+    assert -0.25 < res.tcp[1] < 0.35  # it stopped on the way
+    assert arm._yaw == pytest.approx(90.0)  # the yaw of the last good point
     held = arm.w.tcp().copy()
     arm.act(Action("wait", seconds=0.5))
     np.testing.assert_allclose(arm.w.tcp(), held, atol=0.005)
+
+
+FLIP_POINTS = [(0.6, 0.0, 0.02), (0.4, 0.2, 0.3), (0.35, -0.3, 0.1), (0.65, 0.25, 0.05), (0.5, -0.2, 0.4)]
+
+
+def test_yaw_flip_with_a_long_move_is_reached():
+    """+-90 to -+90 together with a long move: the IK must not give up near a 180 degree turn."""
+    import itertools
+    w = World(SCENES["cubes"])
+    failed = []
+    for a, b in itertools.permutations(FLIP_POINTS, 2):
+        for yaw in (90.0, -90.0):
+            w.reset(LAYOUT)
+            arm = Arm(w)
+            arm.reset_ready()
+            first = arm.act(Action("move_to", a, yaw=yaw)).status
+            second = arm.act(Action("move_to", b, yaw=-yaw))
+            if (first, second.status) != ("reached", "reached") or abs(w.gripper_yaw() + yaw) > 3:
+                failed.append((a, yaw, b, first, second.status, second.note))
+    assert failed == []
+
+
+def test_reviewer_flip_example(arm):
+    assert arm.act(Action("move_to", (0.6, 0.0, 0.02), yaw=90.0)).status == "reached"
+    res = arm.act(Action("move_to", (0.4, 0.2, 0.3), yaw=-90.0))
+    assert res.status == "reached"
+    assert res.gripper_yaw == pytest.approx(-90.0, abs=3.0)
+
+
+def test_a_stopped_turn_keeps_the_yaw_it_holds(arm):
+    assert arm.act(Action("move_to", (0.25, 0.3, 0.3), yaw=-90.0)).status == "reached"
+    res = arm.act(Action("move_to", (0.25, -0.4, 0.01), yaw=90.0))
+    assert res.status == "unreachable" and res.note == "path leaves the reachable area"
+    assert -60 < arm.w.gripper_yaw() < 60  # it stopped part way through the turn
+    assert arm.act(Action("wait", seconds=0.3)).gripper_yaw == pytest.approx(arm._yaw, abs=3.0)
