@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from armmind.agent.loop import Agent, AgentConfig
+from armmind.agent.prompts import SYSTEM, example_step_text
 from armmind.env import Env, SimThread
 from armmind.llm.protocol import LLMBackend
 from armmind.store.runlog import RunLog
@@ -29,6 +30,7 @@ class RunRequest(BaseModel):
     seed: int = Field(0, ge=0)
     max_steps: int = Field(30, ge=1, le=200)
     show_positions: bool = False
+    system_prompt: str | None = Field(None, max_length=10000)
 
     @field_validator("instruction")
     @classmethod
@@ -37,6 +39,11 @@ class RunRequest(BaseModel):
         if not v:
             raise ValueError("the instruction is empty")
         return v
+
+    @field_validator("system_prompt")
+    @classmethod
+    def _strip_prompt(cls, v: str | None) -> str | None:
+        return (v or "").strip() or None  # empty means: use the default
 
 
 class Hub:
@@ -120,7 +127,7 @@ class Runner:
                     msg[key] = _b64(value)
             self.hub.publish_threadsafe(msg)
 
-        self.agent = Agent(self.backend, AgentConfig(max_steps=req.max_steps))
+        self.agent = Agent(self.backend, AgentConfig(max_steps=req.max_steps), system=req.system_prompt)
         agent = self.agent
 
         async def go() -> None:
@@ -181,6 +188,10 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
     async def run(req: RunRequest) -> dict:
         task = next((t for t in TASKS.values() if t.instruction == req.instruction), None)
         return {"run_dir": str(await runner.start(req, task))}
+
+    @app.get("/api/prompt")
+    def prompt() -> dict:
+        return {"system": SYSTEM, "step_example": example_step_text()}
 
     @app.get("/api/preview")
     async def scene_preview(seed: int = Query(0, ge=0)) -> dict:

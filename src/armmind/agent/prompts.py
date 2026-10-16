@@ -89,3 +89,10 @@ def build_user_text(instruction: str, step: int, max_steps: int, obs: Observatio
         lines.append("The automatic check says the task is not finished yet.")
     lines.append("Image 1: front camera. Image 2: top camera.")
     return "\n".join(lines)
+
+
+def example_step_text() -> str:
+    """A sample step message with invented values, so that the page can show how the code fills it in."""
+    from armmind.tasks import TASKS
+    obs = Observation(b"", b"", (0.3, 0.0, 0.4), 0.08, ())
+    return build_user_text(TASKS["stack"].instruction, 1, 30, obs, "", (), [])

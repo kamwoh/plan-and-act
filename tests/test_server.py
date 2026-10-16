@@ -212,3 +212,40 @@ def test_real_preview_returns_decodable_images(tmp_path):
     front = Image.open(io.BytesIO(base64.b64decode(body["front"])))
     top = Image.open(io.BytesIO(base64.b64decode(body["top"])))
     assert front.format == "JPEG" and top.format == "PNG" and front.size == top.size == (640, 480)
+
+
+def test_custom_system_prompt_reaches_the_backend_and_the_log(tmp_path):
+    backend = FakeBackend([good()])
+    with TestClient(create_app(backend, fake_factory, tmp_path)) as c:
+        assert c.post("/api/run", json={"instruction": REACH, "system_prompt": "  Be brief.  "}).status_code == 200
+        wait_idle(c)
+    assert backend.systems == ["Be brief."]
+    assert _events(tmp_path)[0]["system_prompt"] == backend.systems[0]
+
+
+@pytest.mark.parametrize("value", [None, "", "   \n"])
+def test_empty_system_prompt_uses_the_default(tmp_path, value):
+    from armmind.agent.prompts import SYSTEM
+    backend = FakeBackend([good()])
+    with TestClient(create_app(backend, fake_factory, tmp_path)) as c:
+        assert c.post("/api/run", json={"instruction": REACH, "system_prompt": value}).status_code == 200
+        wait_idle(c)
+    assert backend.systems == [SYSTEM] and _events(tmp_path)[0]["system_prompt"] == SYSTEM
+
+
+def test_system_prompt_over_10000_chars_is_422(tmp_path):
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        assert c.post("/api/run", json={"instruction": REACH, "system_prompt": "x" * 10001}).status_code == 422
+        assert c.post("/api/run", json={"instruction": REACH, "system_prompt": "x" * 10000}).status_code == 200
+        c.post("/api/stop")
+        wait_idle(c)
+
+
+def test_prompt_endpoint_returns_system_and_an_example(tmp_path):
+    from armmind.agent.prompts import SYSTEM
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        body = c.get("/api/prompt").json()
+    assert body["system"] == SYSTEM
+    ex = body["step_example"]
+    assert TASKS["stack"].instruction in ex and "Step 1 of 30." in ex
+    assert "(0.300, 0.000, 0.400)" in ex and "touching: nothing" in ex
