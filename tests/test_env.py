@@ -50,7 +50,7 @@ def test_act_sends_front_and_top_jpeg_frames():
         front = [j for c, j in frames if c == "front"]
         top = [j for c, j in frames if c == "top"]
         assert 28 <= len(front) <= 32
-        assert 13 <= len(top) <= 17
+        assert 8 <= len(top) <= 12
         assert len(front) + len(top) == len(frames)
         assert all(j[:2] == b"\xff\xd8" for _, j in frames)
         assert env.success() is False

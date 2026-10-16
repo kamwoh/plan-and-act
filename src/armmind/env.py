@@ -46,9 +46,9 @@ class MujocoEnv:
         self.arm.reset_ready()
 
     def _frame(self) -> None:
-        """Send the front camera on every frame and the top camera on every second frame. No shadows, for speed."""
+        """Send the front camera on every frame and the top camera on every third frame. No shadows, for speed."""
         self._on_frame("front", jpeg(self.cams.render("front", shadows=False)))
-        if self._n_frames % 2 == 1:
+        if self._n_frames % 3 == 2:
             self._on_frame("top", jpeg(np.asarray(self.cams.with_grid("top", shadows=False))))
         self._n_frames += 1
 
