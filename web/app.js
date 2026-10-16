@@ -242,6 +242,10 @@ $("seed").addEventListener("input", () => {
 
 $("run").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (running) {  // keep the steps of the active run on screen
+    setStatus("error: a run is already active", "bad");
+    return;
+  }
   const body = {
     instruction: $("instruction").value.trim(),
     seed: Number($("seed").value),
