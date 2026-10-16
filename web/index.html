@@ -10,13 +10,14 @@
   <header><h1>arm-mind</h1><span id="status">idle</span></header>
   <main>
     <section class="views">
-      <figure><img id="live" alt="Front camera, live"><figcaption>Front camera (live)</figcaption></figure>
-      <figure><img id="top" alt="Top camera at the last step"><figcaption>Top camera with grid (last step)</figcaption></figure>
+      <figure><img id="live" alt="Front camera, live" hidden><figcaption>Front camera (live, or the starting scene)</figcaption></figure>
+      <figure><img id="top" alt="Top camera at the last step" hidden><figcaption>Top camera with grid (last step)</figcaption></figure>
     </section>
     <section class="side">
       <form id="run">
-        <label>Task <select id="task"></select></label>
-        <label>Instruction <textarea id="instruction" rows="2" maxlength="500"></textarea></label>
+        <label>Examples <select id="examples"><option value="">Write your own…</option></select></label>
+        <label>Instruction <textarea id="instruction" rows="3" maxlength="500" required></textarea></label>
+        <p id="mode" class="muted"></p>
         <label>Seed <input id="seed" type="number" value="0" min="0"></label>
         <label>Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
         <label class="check"><input id="show_positions" type="checkbox"> Debug: give cube positions to the model</label>
