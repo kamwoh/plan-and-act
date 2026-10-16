@@ -43,3 +43,14 @@ def test_parse_clamps_wait():
 def test_parse_rejects_non_list_actions():
     with pytest.raises(ReplyError, match="actions"):
         parse_reply({"observation": "o", "plan": "p", "actions": "move"})
+
+
+def test_parse_done_flag():
+    assert parse_reply(reply([], done=True)).done is True
+    assert parse_reply(reply([])).done is False
+
+
+@pytest.mark.parametrize("done", ["yes", 1, None])
+def test_parse_rejects_non_bool_done(done):
+    with pytest.raises(ReplyError, match="done"):
+        parse_reply(reply([], done=done))

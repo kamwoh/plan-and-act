@@ -9,9 +9,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from armmind.agent.loop import Agent, AgentConfig
 from armmind.env import Env, SimThread
@@ -20,15 +20,23 @@ from armmind.store.runlog import RunLog
 from armmind.tasks import TASKS, Task
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
-EnvFactory = Callable[[Task, int, bool, Callable[[bytes], None]], Env]
+EnvFactory = Callable[[Task | None, str, int, bool, Callable[[bytes], None]], Env]
+Preview = Callable[[int], dict]
 
 
 class RunRequest(BaseModel):
-    task: str
+    instruction: str = Field(min_length=1, max_length=500)
     seed: int = Field(0, ge=0)
     max_steps: int = Field(30, ge=1, le=200)
     show_positions: bool = False
-    instruction: str | None = Field(None, max_length=500)  # replaces the task's text, the success check stays
+
+    @field_validator("instruction")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("the instruction is empty")
+        return v
 
 
 class Hub:
@@ -62,9 +70,15 @@ class Pacer:
         self._last = now
 
 
-def default_env_factory(task: Task, seed: int, show_positions: bool, on_frame: Callable[[bytes], None]) -> Env:
+def default_env_factory(task: Task | None, instruction: str, seed: int, show_positions: bool,
+                        on_frame: Callable[[bytes], None]) -> Env:
     from armmind.env import MujocoEnv
-    return MujocoEnv(task, seed, show_positions=show_positions, on_frame=on_frame)
+    return MujocoEnv(task, seed, instruction, show_positions=show_positions, on_frame=on_frame)
+
+
+def default_preview(seed: int) -> dict:
+    from armmind.env import render_preview
+    return render_preview(seed)
 
 
 def _same_origin(headers) -> bool:
@@ -88,7 +102,7 @@ class Runner:
     def running(self) -> bool:
         return self.task is not None and not self.task.done()
 
-    async def start(self, req: RunRequest, task: Task) -> Path:
+    async def start(self, req: RunRequest, task: Task | None) -> Path:
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog(self.runs_dir)
@@ -112,9 +126,7 @@ class Runner:
         async def go() -> None:
             sim, env = SimThread(), None
             try:
-                env = await sim.call(self.env_factory, task, req.seed, req.show_positions, on_frame)
-                if req.instruction and req.instruction.strip():
-                    env.instruction = req.instruction.strip()
+                env = await sim.call(self.env_factory, task, req.instruction, req.seed, req.show_positions, on_frame)
                 await agent.run(env, sim.call, emit)
             except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
                 emit("run_end", {"status": "error", "message": f"{type(e).__name__}: {e}"})
@@ -141,7 +153,7 @@ class Runner:
 
 
 def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_dir: Path = Path("runs"),
-               web_dir: Path = WEB_DIR) -> FastAPI:
+               web_dir: Path = WEB_DIR, preview: Preview | None = None) -> FastAPI:
     hub = Hub()
     runner = Runner(backend, env_factory or default_env_factory, Path(runs_dir), hub)
 
@@ -167,10 +179,18 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.post("/api/run", dependencies=[Depends(same_origin)])
     async def run(req: RunRequest) -> dict:
-        task = TASKS.get(req.task)
-        if task is None:
-            raise HTTPException(404, f"unknown task {req.task!r}")
+        task = next((t for t in TASKS.values() if t.instruction == req.instruction), None)
         return {"run_dir": str(await runner.start(req, task))}
+
+    @app.get("/api/preview")
+    async def scene_preview(seed: int = Query(0, ge=0)) -> dict:
+        if runner.running:
+            raise HTTPException(409, "a run is active")
+        sim = SimThread()  # a fresh thread, because the EGL context belongs to the thread that made it
+        try:
+            return await sim.call(preview or default_preview, seed)
+        finally:
+            sim.shutdown()
 
     @app.post("/api/stop", dependencies=[Depends(same_origin)])
     async def stop() -> dict:

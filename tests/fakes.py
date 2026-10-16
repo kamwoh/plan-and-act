@@ -10,7 +10,9 @@ from armmind.types import Action, ActionResult, Observation
 class FakeEnv:
     instruction = "Touch the red cube with the gripper."
 
-    def __init__(self, succeed_after: int | None = None):
+    def __init__(self, succeed_after: int | None = None, has_check: bool = True):
+        self.has_check = has_check
+        self.check_name = "reach" if has_check else None
         self.acts: list[Action] = []
         self.succeed_after = succeed_after
         self.closed = False

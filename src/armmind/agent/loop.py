@@ -36,15 +36,16 @@ class Agent:
 
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
         history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
-        notes, todo, status = "", (), "step_limit"
-        emit("run_start", {"instruction": env.instruction, "max_steps": self.cfg.max_steps})
+        notes, todo, status, check_failed = "", (), "step_limit", False
+        emit("run_start", {"instruction": env.instruction, "max_steps": self.cfg.max_steps,
+                           "check": env.check_name})
         for n in range(1, self.cfg.max_steps + 1):
             if self._stop.is_set():
                 status = "stopped"
                 break
             obs = await call(env.observe)
             emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
-            text = build_user_text(env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history))
+            text = build_user_text(env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history), check_failed)
             self._conv = await self.backend.open(SYSTEM)
             try:
                 reply, error, usage = await self._ask(Message("user", text, (obs.front_png, obs.top_png)))
@@ -73,16 +74,20 @@ class Agent:
                 notes = reply.notes
             todo = reply.todo or todo
             history.append(StepSummary(n, reply.plan, tuple(r.summary() for r in results)))
-            done = await call(env.success)
+            solved = await call(env.success) if env.has_check else False
             emit("step", {
                 "step": n, "observation": reply.observation, "plan": reply.plan,
                 "actions": [a.describe() for a in reply.actions], "results": [r.summary() for r in results],
-                "truncated": reply.truncated, "notes": notes, "todo": list(todo), "success": done,
+                "truncated": reply.truncated, "notes": notes, "todo": list(todo), "success": solved, "done": reply.done,
                 "latency_s": usage.latency_s if usage else None, "cost_usd": usage.cost_usd if usage else None,
             })
-            if done:
+            if solved:
                 status = "success"
                 break
+            if reply.done and not env.has_check:
+                status = "done"
+                break
+            check_failed = reply.done  # the model says it is done, but the check disagrees
         else:
             if self._stop.is_set():
                 status = "stopped"

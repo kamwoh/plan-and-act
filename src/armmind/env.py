@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Protocol
@@ -9,12 +10,14 @@ from typing import Protocol
 from armmind.sim.arm import Arm
 from armmind.sim.render import Cameras, jpeg, png
 from armmind.sim.world import CUBES, World
-from armmind.tasks import Task
+from armmind.tasks import Task, random_layout
 from armmind.types import Action, ActionResult, Observation
 
 
 class Env(Protocol):
     instruction: str
+    has_check: bool
+    check_name: str | None
 
     def observe(self) -> Observation: ...
     def act(self, action: Action) -> ActionResult: ...
@@ -29,11 +32,12 @@ def _r3(p) -> tuple[float, float, float]:
 class MujocoEnv:
     """Make it and use it on one thread only (see SimThread)."""
 
-    def __init__(self, task: Task, seed: int, show_positions: bool = False,
+    def __init__(self, task: Task | None, seed: int, instruction: str, show_positions: bool = False,
                  on_frame: Callable[[bytes], None] | None = None):
-        self.task, self.instruction, self.show_positions = task, task.instruction, show_positions
+        self.task, self.instruction, self.show_positions = task, instruction, show_positions
+        self.has_check, self.check_name = task is not None, task.name if task else None
         self.world = World()
-        self.world.reset(task.layout(seed))
+        self.world.reset(random_layout(seed))
         self.cams = Cameras(self.world)
         self._on_frame = on_frame
         self.arm = Arm(self.world, on_frame=self._frame if on_frame else None)
@@ -53,10 +57,20 @@ class MujocoEnv:
         return self.arm.act(action)
 
     def success(self) -> bool:
-        return bool(self.task.success(self.world))
+        return self.task is not None and bool(self.task.success(self.world))
 
     def close(self) -> None:
         self.cams.close()
+
+
+def render_preview(seed: int) -> dict:
+    """The starting scene of a seed as base64 images. Call it on a fresh SimThread."""
+    env = MujocoEnv(None, seed, "")
+    try:
+        return {"front": base64.b64encode(jpeg(env.cams.render("front"))).decode(),
+                "top": base64.b64encode(png(env.cams.with_grid("top"))).decode()}
+    finally:
+        env.close()
 
 
 class SimThread:

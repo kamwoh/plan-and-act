@@ -8,12 +8,21 @@ from starlette.websockets import WebSocketDisconnect
 from armmind.llm.fake import FakeBackend
 from armmind.llm.protocol import LLMError
 from armmind.server.app import Hub, create_app
+from armmind.tasks import TASKS
 from tests.fakes import FakeEnv, HangingBackend, bad, good
 
+REACH = TASKS["reach"].instruction
 
-def fake_factory(task, seed, show_positions, on_frame):
+
+def make_env(task, instruction, succeed_after=1, cls=FakeEnv):
+    env = cls(succeed_after=succeed_after, has_check=task is not None)
+    env.instruction, env.check_name = instruction, task.name if task else None
+    return env
+
+
+def fake_factory(task, instruction, seed, show_positions, on_frame):
     on_frame(b"\xff\xd8jpeg")
-    return FakeEnv(succeed_after=1)
+    return make_env(task, instruction)
 
 
 def wait_idle(client, timeout=5.0):
@@ -33,7 +42,7 @@ def test_tasks_and_index(tmp_path):
 def test_run_writes_log_and_sends_events(tmp_path):
     with TestClient(create_app(FakeBackend([good()]), fake_factory, tmp_path)) as c:
         with c.websocket_connect("/ws") as ws:
-            r = c.post("/api/run", json={"task": "reach", "instruction": "  Tap the red block.  "})
+            r = c.post("/api/run", json={"instruction": f"  {REACH}  "})
             assert r.status_code == 200
             types, kinds = [], []
             while "run_end" not in kinds:
@@ -45,7 +54,7 @@ def test_run_writes_log_and_sends_events(tmp_path):
         wait_idle(c)
     assert "frame" in types and "step" in kinds
     events = [json.loads(x) for x in (next(tmp_path.iterdir()) / "events.jsonl").read_text().splitlines()]
-    assert events[0]["kind"] == "run_start" and events[0]["instruction"] == "Tap the red block."
+    assert events[0]["kind"] == "run_start" and events[0]["instruction"] == REACH
     assert events[-1]["kind"] == "run_end" and events[-1]["status"] == "success"
 
 
@@ -53,7 +62,7 @@ def test_bad_reply_and_auth_error_reach_the_page(tmp_path):
     replies = [bad(), bad(), [LLMError("auth", "please log in")]]
     with TestClient(create_app(FakeBackend(replies), fake_factory, tmp_path)) as c:
         with c.websocket_connect("/ws") as ws:
-            assert c.post("/api/run", json={"task": "reach", "max_steps": 2}).status_code == 200
+            assert c.post("/api/run", json={"instruction": REACH, "max_steps": 2}).status_code == 200
             events = []
             while not events or events[-1]["kind"] != "run_end":
                 msg = ws.receive_json()
@@ -68,15 +77,55 @@ def test_bad_reply_and_auth_error_reach_the_page(tmp_path):
     assert events[-1]["kind"] == "run_end"
 
 
-def test_unknown_task_is_404(tmp_path):
+@pytest.mark.parametrize("body", [{}, {"instruction": ""}, {"instruction": "   "}, {"instruction": "x" * 501}])
+def test_bad_instruction_is_422(tmp_path, body):
     with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
-        assert c.post("/api/run", json={"task": "fly"}).status_code == 404
+        assert c.post("/api/run", json=body).status_code == 422
+
+
+def _run_start(tmp_path, instruction):
+    with TestClient(create_app(FakeBackend([good(done=True)]), fake_factory, tmp_path)) as c:
+        assert c.post("/api/run", json={"instruction": instruction}).status_code == 200
+        wait_idle(c)
+    return _events(tmp_path)[0]
+
+
+def test_example_instruction_turns_the_check_on(tmp_path):
+    start = _run_start(tmp_path, f"  {REACH}  ")
+    assert start["kind"] == "run_start" and start["check"] == "reach"
+
+
+def test_custom_instruction_has_no_check(tmp_path):
+    start = _run_start(tmp_path, "Touch the blue cube.")
+    assert start["check"] is None and start["instruction"] == "Touch the blue cube."
+    assert _events(tmp_path)[-1]["status"] == "done"
+
+
+def test_preview_returns_both_images(tmp_path):
+    calls = []
+
+    def preview(seed):
+        calls.append(seed)
+        return {"front": "ZnJvbnQ=", "top": "dG9w"}
+
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path, preview=preview)) as c:
+        r = c.get("/api/preview", params={"seed": 3})
+        assert r.status_code == 200 and r.json() == {"front": "ZnJvbnQ=", "top": "dG9w"} and calls == [3]
+        assert c.get("/api/preview", params={"seed": -1}).status_code == 422
+
+
+def test_preview_is_refused_while_running(tmp_path):
+    with TestClient(create_app(HangingBackend(), fake_factory, tmp_path, preview=lambda s: {})) as c:
+        assert c.post("/api/run", json={"instruction": REACH}).status_code == 200
+        assert c.get("/api/preview", params={"seed": 0}).status_code == 409
+        c.post("/api/stop")
+        wait_idle(c)
 
 
 def test_second_run_is_rejected(tmp_path):
     with TestClient(create_app(HangingBackend(), fake_factory, tmp_path)) as c:
-        assert c.post("/api/run", json={"task": "reach"}).status_code == 200
-        assert c.post("/api/run", json={"task": "pick"}).status_code == 409
+        assert c.post("/api/run", json={"instruction": REACH}).status_code == 200
+        assert c.post("/api/run", json={"instruction": TASKS["pick"].instruction}).status_code == 409
         c.post("/api/stop")
         wait_idle(c)
         assert c.get("/api/state").json()["running"] is False
@@ -106,11 +155,11 @@ def _events(tmp_path):
 
 
 def test_factory_error_ends_run_with_error(tmp_path):
-    def broken(task, seed, show_positions, on_frame):
+    def broken(task, instruction, seed, show_positions, on_frame):
         raise ValueError("no renderer")
 
     with TestClient(create_app(FakeBackend([]), broken, tmp_path)) as c:
-        assert c.post("/api/run", json={"task": "reach"}).status_code == 200
+        assert c.post("/api/run", json={"instruction": REACH}).status_code == 200
         wait_idle(c)
         assert c.get("/api/state").json()["running"] is False
     last = _events(tmp_path)[-1]
@@ -124,11 +173,11 @@ class CloseFails(FakeEnv):
 
 
 def test_close_error_is_logged_and_log_is_closed(tmp_path):
-    def factory(task, seed, show_positions, on_frame):
-        return CloseFails(succeed_after=1)
+    def factory(task, instruction, seed, show_positions, on_frame):
+        return make_env(task, instruction, cls=CloseFails)
 
     with TestClient(create_app(FakeBackend([good()]), factory, tmp_path)) as c:
-        assert c.post("/api/run", json={"task": "reach"}).status_code == 200
+        assert c.post("/api/run", json={"instruction": REACH}).status_code == 200
         wait_idle(c)
         assert c.get("/api/state").json()["running"] is False
     events = _events(tmp_path)
@@ -141,11 +190,25 @@ def test_close_error_is_logged_and_log_is_closed(tmp_path):
 def test_cross_site_requests_are_refused(tmp_path):
     with TestClient(create_app(FakeBackend([good()]), fake_factory, tmp_path)) as c:
         evil = {"Origin": "http://evil.example"}
-        assert c.post("/api/run", json={"task": "reach"}, headers=evil).status_code == 403
+        assert c.post("/api/run", json={"instruction": REACH}, headers=evil).status_code == 403
         assert c.post("/api/stop", headers=evil).status_code == 403
         with pytest.raises(WebSocketDisconnect) as info, c.websocket_connect("/ws", headers=evil):
             pass
         assert info.value.code == 1008
-        ok = c.post("/api/run", json={"task": "reach"}, headers={"Origin": "http://testserver"})
+        ok = c.post("/api/run", json={"instruction": REACH}, headers={"Origin": "http://testserver"})
         assert ok.status_code == 200
         wait_idle(c)
+
+
+@pytest.mark.assets
+def test_real_preview_returns_decodable_images(tmp_path):
+    import base64
+    import io
+
+    from PIL import Image
+
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        body = c.get("/api/preview", params={"seed": 1}).json()
+    front = Image.open(io.BytesIO(base64.b64decode(body["front"])))
+    top = Image.open(io.BytesIO(base64.b64decode(body["top"])))
+    assert front.format == "JPEG" and top.format == "PNG" and front.size == top.size == (640, 480)

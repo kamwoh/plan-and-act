@@ -21,6 +21,7 @@ class Reply:
     notes: str | None
     todo: tuple[str, ...]
     truncated: bool = False
+    done: bool = False
 
 
 def _number(v) -> bool:
@@ -64,5 +65,8 @@ def parse_reply(obj, max_actions: int = 8) -> Reply:
     notes = obj.get("notes")
     if notes is not None and not isinstance(notes, str):
         raise ReplyError("'notes' must be a string")
+    done = obj.get("done", False)
+    if not isinstance(done, bool):
+        raise ReplyError("'done' must be true or false")
     return Reply(str(obj.get("observation", "")), str(obj.get("plan", "")), tuple(actions[:max_actions]),
-                 notes, tuple(todo[:5]), len(actions) > max_actions)
+                 notes, tuple(todo[:5]), len(actions) > max_actions, done)

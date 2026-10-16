@@ -17,20 +17,20 @@ async def test_sim_thread_uses_one_thread():
 
 @pytest.mark.assets
 def test_observe_has_two_images_and_no_positions():
-    env = MujocoEnv(TASKS["reach"], seed=0)
+    env = MujocoEnv(TASKS["reach"], seed=0, instruction="Touch it.")
     try:
         obs = env.observe()
         assert obs.front_png[:4] == b"\x89PNG" and obs.top_png[:4] == b"\x89PNG"
         assert obs.objects is None
         assert obs.gripper_width == pytest.approx(0.08, abs=0.005)
-        assert env.instruction == TASKS["reach"].instruction
+        assert env.instruction == "Touch it." and env.has_check and env.check_name == "reach"
     finally:
         env.close()
 
 
 @pytest.mark.assets
 def test_debug_switch_shows_positions():
-    env = MujocoEnv(TASKS["reach"], seed=0, show_positions=True)
+    env = MujocoEnv(TASKS["reach"], seed=0, instruction="Touch it.", show_positions=True)
     try:
         objects = env.observe().objects
         assert set(objects) == {"red_cube", "blue_cube", "green_cube"}
@@ -42,7 +42,7 @@ def test_debug_switch_shows_positions():
 @pytest.mark.assets
 def test_act_sends_jpeg_frames():
     frames: list[bytes] = []
-    env = MujocoEnv(TASKS["reach"], seed=0, on_frame=frames.append)
+    env = MujocoEnv(TASKS["reach"], seed=0, instruction="Touch it.", on_frame=frames.append)
     try:
         frames.clear()
         res = env.act(Action("wait", seconds=1.0))
@@ -57,9 +57,20 @@ def test_act_sends_jpeg_frames():
 @pytest.mark.assets
 async def test_env_works_through_sim_thread():
     sim = SimThread()
-    env = await sim.call(MujocoEnv, TASKS["reach"], 0)
+    env = await sim.call(MujocoEnv, TASKS["reach"], 0, "Touch it.")
     for _ in range(3):
         obs = await sim.call(env.observe)
         assert len(obs.front_png) > 1000
     await sim.call(env.close)
     sim.shutdown()
+
+
+@pytest.mark.assets
+def test_custom_env_has_no_check():
+    env = MujocoEnv(None, seed=0, instruction="Wave at the blue cube.")
+    try:
+        assert env.has_check is False and env.check_name is None
+        assert env.success() is False
+        assert env.instruction == "Wave at the blue cube."
+    finally:
+        env.close()

@@ -21,3 +21,8 @@ def test_user_text_shows_positions_only_with_debug():
 def test_system_and_schema_agree_on_limits():
     assert "0.25" in SYSTEM and "0.75" in SYSTEM and "8 actions" in SYSTEM
     assert REPLY_SCHEMA["properties"]["actions"]["maxItems"] == 8
+
+
+def test_schema_and_system_know_done():
+    assert REPLY_SCHEMA["properties"]["done"] == {"type": "boolean"}
+    assert "done" in SYSTEM and "true" in SYSTEM

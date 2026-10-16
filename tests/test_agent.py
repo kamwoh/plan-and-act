@@ -98,3 +98,34 @@ async def test_retry_uses_the_same_conversation():
     backend = Spy([bad(), good()])
     await Agent(backend, AgentConfig(max_steps=1)).run(FakeEnv(), direct, Recorder())
     assert len(convs) == 1 and len(backend.sent) == 2 and backend.closed == 1
+
+
+async def test_done_without_check_ends_run():
+    env, rec = FakeEnv(has_check=False), Recorder()
+    backend = FakeBackend([good(done=True), good()])
+    status = await Agent(backend).run(env, direct, rec)
+    assert status == "done" and len(env.acts) == 1  # the actions of the same reply still run
+    events = dict(rec.events)
+    assert events["step"]["done"] is True and events["run_end"]["status"] == "done"
+    assert events["run_start"]["check"] is None
+
+
+async def test_done_with_check_continues_and_tells_the_model():
+    env, rec = FakeEnv(), Recorder()  # a check that never passes
+    backend = FakeBackend([good(done=True), good()])
+    status = await Agent(backend, AgentConfig(max_steps=2)).run(env, direct, rec)
+    assert status == "step_limit"
+    assert "The automatic check says the task is not finished yet." in backend.sent[1][0].text
+    assert "not finished yet" not in backend.sent[0][0].text
+
+
+async def test_run_start_names_the_check():
+    rec = Recorder()
+    await Agent(FakeBackend([good()]), AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
+    assert dict(rec.events)["run_start"]["check"] == "reach"
+
+
+async def test_check_still_ends_with_success_when_done():
+    env = FakeEnv(succeed_after=1)
+    status = await Agent(FakeBackend([good(done=True)])).run(env, direct, Recorder())
+    assert status == "success"
