@@ -141,8 +141,8 @@ function clickable(item, ev) {
   item.setAttribute("role", "button");
   item.addEventListener("click", () => openStepDetails(ev));
   item.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && e.target === item) {
-      e.preventDefault();  // the focus moves to the dialog: Enter must not press its Close button
+    if ((e.key === "Enter" || e.key === " ") && e.target === item) {
+      e.preventDefault();  // the focus moves to the dialog: the key must not press its Close button
       openStepDetails(ev);
     }
   });
@@ -250,6 +250,14 @@ $("run").addEventListener("submit", async (e) => {
   };
   if (savedPrompt !== null) body.system_prompt = savedPrompt;
   previewSeq++;  // drop a preview that is still on its way
+  // Reset before the POST: events of the new run can arrive before the response.
+  stepImages = {};
+  runSystemPrompt = "";
+  resetTotals();
+  $("steps").replaceChildren();
+  $("todo").replaceChildren();
+  $("notes").textContent = "";
+  setStatus("starting");
   try {
     const r = await fetch("/api/run", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -265,13 +273,6 @@ $("run").addEventListener("submit", async (e) => {
     return;
   }
   running = true;
-  stepImages = {};
-  runSystemPrompt = "";
-  resetTotals();
-  $("steps").replaceChildren();
-  $("todo").replaceChildren();
-  $("notes").textContent = "";
-  setStatus("starting");
 });
 
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
