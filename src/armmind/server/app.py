@@ -112,10 +112,16 @@ class Runner:
             except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
                 emit("run_end", {"status": "error", "message": f"{type(e).__name__}: {e}"})
             finally:
-                if env is not None:
-                    await sim.call(env.close)
-                sim.shutdown()
-                log.close()
+                try:
+                    if env is not None:
+                        await sim.call(env.close)
+                except Exception as e:  # noqa: BLE001  record it, then finish the cleanup
+                    log.event("cleanup_error", {"message": f"{type(e).__name__}: {e}"})
+                finally:
+                    try:
+                        sim.shutdown()
+                    finally:
+                        log.close()
 
         self.task = asyncio.create_task(go())
         return log.dir

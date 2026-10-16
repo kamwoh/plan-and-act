@@ -73,3 +73,41 @@ async def test_hub_drops_dead_socket():
     hub.clients |= {dead, live}
     await hub.publish({"type": "event"})
     assert dead not in hub.clients and live.got == [{"type": "event"}]
+
+
+def _events(tmp_path):
+    folder = next(tmp_path.iterdir())
+    return [json.loads(x) for x in (folder / "events.jsonl").read_text().splitlines()]
+
+
+def test_factory_error_ends_run_with_error(tmp_path):
+    def broken(task, seed, show_positions, on_frame):
+        raise ValueError("no renderer")
+
+    with TestClient(create_app(FakeBackend([]), broken, tmp_path)) as c:
+        assert c.post("/api/run", json={"task": "reach"}).status_code == 200
+        wait_idle(c)
+        assert c.get("/api/state").json()["running"] is False
+    last = _events(tmp_path)[-1]
+    assert last["kind"] == "run_end" and last["status"] == "error"
+    assert "ValueError: no renderer" in last["message"]
+
+
+class CloseFails(FakeEnv):
+    def close(self):
+        raise RuntimeError("teardown failed")
+
+
+def test_close_error_is_logged_and_log_is_closed(tmp_path):
+    def factory(task, seed, show_positions, on_frame):
+        return CloseFails(succeed_after=1)
+
+    with TestClient(create_app(FakeBackend([good()]), factory, tmp_path)) as c:
+        assert c.post("/api/run", json={"task": "reach"}).status_code == 200
+        wait_idle(c)
+        assert c.get("/api/state").json()["running"] is False
+    events = _events(tmp_path)
+    assert events[-1]["kind"] == "cleanup_error" and "teardown failed" in events[-1]["message"]
+    assert any(e["kind"] == "run_end" and e["status"] == "success" for e in events)
+    runner = c.app.state.runner
+    assert runner.task.done() and runner.task.exception() is None
