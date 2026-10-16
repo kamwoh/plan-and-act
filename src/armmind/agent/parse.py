@@ -24,7 +24,12 @@ class Reply:
 
 
 def _number(v) -> bool:
-    return isinstance(v, int | float) and not isinstance(v, bool) and math.isfinite(v)
+    if not isinstance(v, int | float) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(v)
+    except OverflowError:
+        return False
 
 
 def _action(i: int, a) -> Action:

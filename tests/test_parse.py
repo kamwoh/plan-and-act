@@ -24,7 +24,7 @@ def test_parse_truncates_long_plans():
     assert len(r.actions) == 8 and r.truncated
 
 
-@pytest.mark.parametrize("xyz", [None, [0.5, 0.1], [0.5, "a", 0.1], [0.5, float("nan"), 0.1], [True, 0, 0]])
+@pytest.mark.parametrize("xyz", [None, [0.5, 0.1], [0.5, "a", 0.1], [0.5, float("nan"), 0.1], [True, 0, 0], [0.5, 10**400, 0.1]])
 def test_parse_rejects_bad_move_to(xyz):
     with pytest.raises(ReplyError, match="xyz"):
         parse_reply(reply([{"type": "move_to", "xyz": xyz}]))
