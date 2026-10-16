@@ -7,25 +7,38 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header><h1>arm-mind</h1><span id="status">idle</span></header>
+  <header><h1>arm-mind</h1><span id="status" aria-live="polite">idle</span></header>
   <main>
     <section class="views">
-      <figure><img id="live" alt="Front camera, live" hidden><figcaption>Front camera (live, or the starting scene)</figcaption></figure>
-      <figure><img id="top" alt="Top camera at the last step" hidden><figcaption>Top camera with grid (last step)</figcaption></figure>
+      <figure>
+        <div class="frame"><span>Loading scene…</span><img id="live" alt="Front camera, live" hidden></div>
+        <figcaption>Front camera (live, or the starting scene)</figcaption>
+      </figure>
+      <figure>
+        <div class="frame"><span>Loading scene…</span><img id="top" alt="Top camera at the last step" hidden></div>
+        <figcaption>Top camera with grid (last step)</figcaption>
+      </figure>
     </section>
-    <section class="side">
+    <section class="panel controls">
       <form id="run">
         <label>Examples <select id="examples"><option value="">Write your own…</option></select></label>
         <label>Instruction <textarea id="instruction" rows="3" maxlength="500" required></textarea></label>
         <p id="mode" class="muted"></p>
-        <label>Seed <input id="seed" type="number" value="0" min="0"></label>
-        <label>Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
+        <div class="row">
+          <label>Seed <input id="seed" type="number" value="0" min="0"></label>
+          <label>Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
+        </div>
         <label class="check"><input id="show_positions" type="checkbox"> Debug: give cube positions to the model</label>
         <div class="buttons"><button type="submit">Start</button><button type="button" id="stop">Stop</button></div>
       </form>
-      <h2>To-do</h2><ul id="todo"></ul>
-      <h2>Notes</h2><p id="notes"></p>
-      <h2>Steps</h2><ul id="steps"></ul>
+    </section>
+    <section class="panel log">
+      <div class="memo">
+        <div><h2>To-do</h2><ul id="todo"></ul></div>
+        <div><h2>Notes</h2><p id="notes"></p></div>
+      </div>
+      <h2>Steps</h2>
+      <ul id="steps"></ul>
     </section>
   </main>
   <script src="app.js"></script>

@@ -1,27 +1,55 @@
-:root { --bg: #f6f5f2; --fg: #1d1d1f; --muted: #6b6b70; --line: #d9d7d0; --ok: #1e7d3a; --bad: #b3261e; }
+:root { --bg: #f6f5f2; --panel: #fff; --fg: #1d1d1f; --muted: #6b6b70; --line: #d9d7d0; --ok: #1e7d3a; --bad: #b3261e; }
 * { box-sizing: border-box; }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
-header { display: flex; align-items: baseline; gap: 16px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
-h1 { font-size: 18px; margin: 0; }
-h2 { font-size: 13px; text-transform: uppercase; color: var(--muted); margin: 16px 0 4px; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif;
+       display: flex; flex-direction: column; overflow: hidden; }
+header { display: flex; align-items: baseline; gap: 16px; padding: 8px 16px; border-bottom: 1px solid var(--line); flex: none; }
+h1 { font-size: 17px; margin: 0; }
+h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin: 0 0 4px; }
 #status.success { color: var(--ok); font-weight: 600; }
 #status.bad, li.bad { color: var(--bad); }
-main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 16px; padding: 16px; }
-.views { display: grid; gap: 12px; }
-figure { margin: 0; }
-img { width: 100%; aspect-ratio: 4 / 3; background: #222; display: block; border-radius: 4px; }
+
+/* One screen: cameras on top, controls and log below. Only the step list scrolls. */
+main { flex: 1; min-height: 0; display: grid; gap: 12px; padding: 12px 16px;
+       grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+       grid-template-rows: minmax(0, 1.25fr) minmax(0, 1fr);
+       grid-template-areas: "views views" "controls log"; }
+.views { grid-area: views; display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
+figure { margin: 0; display: flex; flex-direction: column; min-height: 0; }
+.frame { position: relative; flex: 1; min-height: 0; background: #222; border-radius: 4px;
+         display: flex; align-items: center; justify-content: center; color: #9a9a9f; font-size: 12px; }
+.frame img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 img[hidden] { display: none; }
-.muted { color: var(--muted); margin: 0; font-size: 12px; }
-li.done { color: var(--muted); }
-figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; }
-form { display: grid; gap: 8px; }
+figcaption { color: var(--muted); font-size: 12px; margin-top: 4px; flex: none; }
+
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; min-height: 0; }
+.controls { grid-area: controls; overflow: auto; }
+.log { grid-area: log; display: flex; flex-direction: column; }
+.memo { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; flex: none; max-height: 35%; overflow: auto; }
+#notes { margin: 0; }
+#steps { flex: 1; min-height: 0; overflow-y: auto; list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--line); }
+#steps > li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+#steps > li > ul { padding-left: 16px; }
+#steps > li.success { color: var(--ok); }
+
+form { display: grid; gap: 6px; }
 label { display: grid; gap: 2px; }
 label.check { display: flex; gap: 6px; align-items: center; }
-textarea { font: inherit; resize: vertical; }
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+input, select, textarea { font: inherit; }
+textarea { resize: vertical; }
 .buttons { display: flex; gap: 8px; }
-button { padding: 6px 14px; }
-ol, ul { padding-left: 18px; margin: 0; }
-#steps > li { margin-bottom: 8px; }
-#steps > li.success { color: var(--ok); }
+button { padding: 6px 16px; }
+.muted { color: var(--muted); margin: 0; font-size: 12px; }
+ul { padding-left: 18px; margin: 0; }
+li.done { color: var(--muted); }
 li.result { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
-@media (max-width: 800px) { main { grid-template-columns: 1fr; } }
+
+/* Narrow screens: stack everything and let the page scroll. */
+@media (max-width: 800px) {
+  body { overflow: auto; height: auto; }
+  main { grid-template-columns: 1fr; grid-template-rows: auto; grid-template-areas: "views" "controls" "log"; }
+  .views { grid-template-columns: 1fr; }
+  .frame { aspect-ratio: 4 / 3; flex: none; }
+  #steps { max-height: 60vh; }
+}
