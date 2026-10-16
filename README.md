@@ -35,6 +35,20 @@ Set a seed and a step limit, then press Start. The left side shows the front cam
 
 The debug switch gives Claude the true cube positions. Use it to find out if a failure comes from vision or from planning.
 
+## See and change what Claude gets
+
+The header shows the totals of the run. They list the steps, the input and output tokens, the cost and the average time per step.
+
+Click a step in the list to open its details. The window shows the exact token counts from the API. It also shows an estimate of how many input tokens the two images use. The estimate is not exact.
+
+The window shows the system prompt, the message of the step and both images. It also lists every model call of the step. A retry after a bad reply appears as a second call. Each call shows the raw reply or the error and its token counts.
+
+Press the Prompt button to read or edit the system prompt. The tag on the button says "default" or "edited". Press Save to keep your text in the browser. Press Reset to default to go back.
+
+Start sends the edited prompt with the run. If you did not edit it, the app uses the built-in prompt. The reply format is fixed by a JSON schema, so a prompt edit cannot break parsing.
+
+Each run log also holds this data. The `run_start` event has the system prompt. Each step event has the message and the list of calls.
+
 ## How it works
 
 Each step: the app renders a front and a top camera image with a grid on the table. Claude gets the images and the gripper position, and replies with up to 8 actions: `move_to [x, y, z]`, `open`, `close`, `wait`. Code finds the joint angles (IK) and moves the arm. Each result (reached, blocked or unreachable) goes into the next prompt.
