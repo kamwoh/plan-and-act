@@ -3,7 +3,7 @@ import asyncio
 from armmind.agent.loop import Agent, AgentConfig
 from armmind.llm.fake import FakeBackend
 from armmind.llm.protocol import LLMError
-from tests.fakes import FakeEnv, HangingBackend, Recorder, bad, direct, good
+from tests.fakes import DeafBackend, FakeEnv, HangingBackend, Recorder, bad, direct, good
 
 
 async def test_success_ends_run():
@@ -64,6 +64,15 @@ async def test_notes_persist_when_omitted():
 
 async def test_stop_while_model_thinks():
     agent, rec = Agent(HangingBackend()), Recorder()
+    task = asyncio.create_task(agent.run(FakeEnv(), direct, rec))
+    await asyncio.sleep(0.05)
+    await agent.stop()
+    status = await asyncio.wait_for(task, 1.0)
+    assert status == "stopped" and rec.kinds()[-1] == "run_end"
+
+
+async def test_stop_wins_over_a_model_call_that_ignores_cancel():
+    agent, rec = Agent(DeafBackend()), Recorder()
     task = asyncio.create_task(agent.run(FakeEnv(), direct, rec))
     await asyncio.sleep(0.05)
     await agent.stop()

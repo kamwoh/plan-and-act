@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -96,14 +97,33 @@ class Agent:
         return reply, error, usage
 
     async def _send(self, msg: Message) -> tuple[Reply | None, LLMError | None, Usage | None]:
+        if self._stop.is_set():
+            return None, LLMError("cancelled", "stopped"), None
         final, usage, error = None, None, None
-        async for ev in self._conv.send(msg, REPLY_SCHEMA):
-            if isinstance(ev, Final):
-                final = ev
-            elif isinstance(ev, Usage):
-                usage = ev
-            elif isinstance(ev, LLMError):
-                error = ev
+
+        async def consume() -> None:
+            nonlocal final, usage, error
+            async for ev in self._conv.send(msg, REPLY_SCHEMA):
+                if isinstance(ev, Final):
+                    final = ev
+                elif isinstance(ev, Usage):
+                    usage = ev
+                elif isinstance(ev, LLMError):
+                    error = ev
+
+        stream = asyncio.create_task(consume())
+        stopper = asyncio.create_task(self._stop.wait())
+        try:
+            await asyncio.wait({stream, stopper}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            stopper.cancel()
+            if not stream.done():
+                stream.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stream
+        if not stream.done() or stream.cancelled():
+            return None, LLMError("cancelled", "stopped"), usage
+        stream.result()
         if error is not None:
             return None, error, usage
         if final is None or final.parsed is None:

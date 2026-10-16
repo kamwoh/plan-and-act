@@ -74,3 +74,16 @@ class HangingBackend:
     async def open(self, system):
         self.conv = HangingConversation()
         return self.conv
+
+
+class DeafConversation(HangingConversation):
+    async def cancel(self):
+        pass
+
+
+class DeafBackend:
+    name = "deaf"
+
+    async def open(self, system):
+        self.conv = DeafConversation()
+        return self.conv
