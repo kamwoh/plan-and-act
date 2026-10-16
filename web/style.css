@@ -225,3 +225,13 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   .steps { max-height: 60vh; }
   .totals { display: none; }
 }
+
+/* Scene preview loading: dim the old image and show a spinner on top */
+.cam.loading .frame img { opacity: 0.35; filter: blur(2px); transition: opacity 0.2s, filter 0.2s; }
+.cam.loading .frame::after {
+  content: "Loading scene…"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: 34px 14px 8px; font-size: 12px; color: var(--fg); white-space: nowrap;
+  background: no-repeat center 8px / 22px 22px
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><circle cx='12' cy='12' r='9' fill='none' stroke='%235b8cff' stroke-width='3' stroke-dasharray='42 15' stroke-linecap='round'><animateTransform attributeName='transform' type='rotate' from='0 12 12' to='360 12 12' dur='0.8s' repeatCount='indefinite'/></circle></svg>");
+}
+.cam.loading .placeholder { visibility: hidden; }

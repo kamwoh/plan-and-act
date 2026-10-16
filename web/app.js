@@ -381,8 +381,21 @@ $("prompt_reset").addEventListener("click", () => {
 });
 
 // ---- Scene preview: the starting scene of the seed, unless a run is active ----
+function setLoading(on) {
+  for (const id of ["cam_front", "cam_top"]) $(id).classList.toggle("loading", on);
+}
+
 async function loadPreview() {
   const seq = ++previewSeq;
+  setLoading(true);
+  try {
+    await renderPreview(seq);
+  } finally {
+    if (seq === previewSeq) setLoading(false);  // a newer preview owns the spinner now
+  }
+}
+
+async function renderPreview(seq) {
   try {
     const state = await (await fetch("/api/state")).json();
     setRunning(state.running);
@@ -422,6 +435,7 @@ $("run").addEventListener("submit", async (e) => {
   };
   if (savedPrompt !== null) body.system_prompt = savedPrompt;
   previewSeq++;  // drop a preview that is still on its way
+  setLoading(false);
   // Reset before the POST: events of the new run can arrive before the response.
   stepImages = {};
   runSystemPrompt = "";
