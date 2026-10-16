@@ -4,54 +4,80 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>arm-mind</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header><h1>arm-mind</h1><span id="status" aria-live="polite">idle</span><span id="totals" class="muted"></span></header>
+  <header>
+    <div class="brand">
+      <svg class="logo" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16M7 20v-3l4-7 5 2 3-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><circle cx="11" cy="10" r="1.6" fill="currentColor"/><circle cx="16" cy="12" r="1.6" fill="currentColor"/></svg>
+      <h1>arm-mind</h1>
+    </div>
+    <span id="status" class="pill" aria-live="polite">idle</span>
+    <div id="totals" class="totals"></div>
+  </header>
+
   <main>
     <section class="views">
-      <figure>
-        <div class="frame"><span>Loading scene…</span><img id="live" alt="Front camera, live" hidden></div>
-        <figcaption>Front camera (live, or the starting scene)</figcaption>
+      <figure class="cam" id="cam_front">
+        <div class="frame">
+          <span class="placeholder">Loading scene…</span>
+          <img id="live" alt="Front camera" hidden>
+          <span class="cam-label">Front</span>
+          <span class="cam-badge">Preview</span>
+        </div>
       </figure>
-      <figure>
-        <div class="frame"><span>Loading scene…</span><img id="top" alt="Top camera with grid, live" hidden></div>
-        <figcaption>Top camera with grid (live)</figcaption>
+      <figure class="cam" id="cam_top">
+        <div class="frame">
+          <span class="placeholder">Loading scene…</span>
+          <img id="top" alt="Top camera with grid" hidden>
+          <span class="cam-label">Top · grid</span>
+          <span class="cam-badge">Preview</span>
+        </div>
       </figure>
     </section>
-    <section class="panel controls">
+
+    <section class="card controls">
       <form id="run">
-        <label>Examples <select id="examples"><option value="">Write your own…</option></select></label>
-        <label>Instruction <textarea id="instruction" rows="3" maxlength="500" required></textarea></label>
-        <p id="mode" class="muted"></p>
-        <div class="row">
-          <label>Seed <input id="seed" type="number" value="0" min="0"></label>
-          <label>Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
+        <div class="card-head"><h2>Instruction</h2><div id="examples" class="chips" role="group" aria-label="Examples"></div></div>
+        <textarea id="instruction" rows="3" maxlength="500" required placeholder="Tell the arm what to do, or pick an example above"></textarea>
+        <div id="mode" class="mode"></div>
+        <div class="settings">
+          <label class="field">Seed <input id="seed" type="number" value="0" min="0"></label>
+          <label class="field">Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
+          <label class="switch"><input id="show_positions" type="checkbox"><span class="track"></span>Debug: true cube positions</label>
         </div>
-        <label class="check"><input id="show_positions" type="checkbox"> Debug: give cube positions to the model</label>
-        <div class="buttons"><button type="submit">Start</button><button type="button" id="stop">Stop</button><button type="button" id="prompt_btn">Prompt <small id="prompt_tag">default</small></button></div>
+        <div class="buttons">
+          <button type="submit" class="btn primary" id="start_btn"><span aria-hidden="true">▶</span> Start</button>
+          <button type="button" class="btn" id="stop"><span aria-hidden="true">■</span> Stop</button>
+          <button type="button" class="btn ghost" id="prompt_btn">System prompt <small id="prompt_tag" class="tag">default</small></button>
+        </div>
       </form>
     </section>
-    <section class="panel log">
+
+    <section class="card log">
       <div class="memo">
-        <div><h2>To-do</h2><ul id="todo"></ul></div>
-        <div><h2>Notes</h2><p id="notes"></p></div>
+        <div class="memo-col"><h2>To-do</h2><ul id="todo" class="todo"><li class="empty">Claude writes its plan here</li></ul></div>
+        <div class="memo-col"><h2>Notes</h2><p id="notes" class="notes"><span class="empty">Nothing yet</span></p></div>
       </div>
-      <h2>Steps</h2>
-      <ul id="steps"></ul>
+      <div class="card-head"><h2>Steps</h2><span class="hint">click a step to see exactly what Claude got</span></div>
+      <ol id="steps" class="steps"></ol>
     </section>
   </main>
+
   <dialog id="step_dialog" aria-labelledby="step_title">
-    <div class="dlg-head"><h2 id="step_title">Step</h2><button type="button" id="step_close">Close</button></div>
+    <div class="dlg-head"><h2 id="step_title">Step</h2><button type="button" class="btn ghost" id="step_close">Close</button></div>
     <div id="step_body" class="dlg-body"></div>
   </dialog>
   <dialog id="prompt_dialog" aria-labelledby="prompt_title">
-    <div class="dlg-head"><h2 id="prompt_title">System prompt</h2><button type="button" id="prompt_close">Close</button></div>
+    <div class="dlg-head"><h2 id="prompt_title">System prompt</h2><button type="button" class="btn ghost" id="prompt_close">Close</button></div>
     <div class="dlg-body">
       <textarea id="prompt_text" rows="14" maxlength="10000" spellcheck="false" aria-label="System prompt"></textarea>
-      <div class="buttons"><button type="button" id="prompt_save">Save</button><button type="button" id="prompt_reset">Reset to default</button><span id="prompt_msg" class="muted"></span></div>
-      <p class="muted">The reply format is fixed by a JSON schema, so a prompt edit cannot break parsing.</p>
-      <h2>Example step message (filled in by code each step)</h2>
+      <div class="buttons"><button type="button" class="btn primary" id="prompt_save">Save</button><button type="button" class="btn" id="prompt_reset">Reset to default</button><span id="prompt_msg" class="muted"></span></div>
+      <p class="muted">A JSON schema fixes the reply format, so a prompt edit cannot break parsing.</p>
+      <h3>Example step message (code fills this in each step)</h3>
       <pre id="prompt_example"></pre>
     </div>
   </dialog>

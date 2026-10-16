@@ -1,44 +1,64 @@
 const $ = (id) => document.getElementById(id);
 let tasks = [];
 
-function setStatus(text, cls = "") {
-  $("status").textContent = text;
-  $("status").className = cls;
+function el(tag, text = "", cls = "") {
+  const e = document.createElement(tag);
+  if (text) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
 }
 
 function li(text, cls = "") {
-  const el = document.createElement("li");
-  el.textContent = text;
-  if (cls) el.className = cls;
-  return el;
+  return el("li", text, cls);
+}
+
+// The pill classes: "" (idle), "thinking", "moving", "success", "bad".
+function setStatus(text, cls = "") {
+  $("status").textContent = text;
+  $("status").className = `pill ${cls}`.trim();
+}
+
+function fmtTok(n) {
+  return n >= 10000 ? `${(n / 1000).toFixed(0)}k` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+}
+
+// ---- Examples and the auto-check line ----
+function matchTask() {
+  const text = $("instruction").value.trim();
+  return tasks.find((x) => x.instruction === text);
 }
 
 function showMode() {
-  const text = $("instruction").value.trim();
-  const t = tasks.find((x) => x.instruction === text);
+  const t = matchTask();
   $("mode").textContent = t ? `Auto-check: ${t.name}` : "No auto-check: Claude says when it is done";
+  $("mode").classList.toggle("check", Boolean(t));
+  for (const chip of $("examples").children) chip.classList.toggle("active", t ? chip.dataset.name === t.name : chip.dataset.name === "");
+}
+
+function chip(label, name, instruction) {
+  const b = el("button", label, "chip");
+  b.type = "button";
+  b.dataset.name = name;
+  b.addEventListener("click", () => {
+    $("instruction").value = instruction;
+    showMode();
+    $("instruction").focus();
+  });
+  return b;
 }
 
 async function loadTasks() {
   tasks = await (await fetch("/api/tasks")).json();
-  $("examples").append(...tasks.map((t) => new Option(t.name, t.instruction)));
+  $("examples").replaceChildren(chip("Your own", "", ""), ...tasks.map((t) => chip(t.name, t.name, t.instruction)));
   showMode();
 }
 
-$("examples").addEventListener("change", () => {
-  if ($("examples").value) $("instruction").value = $("examples").value;
-  showMode();
-});
-$("instruction").addEventListener("input", () => {
-  const match = tasks.find((x) => x.instruction === $("instruction").value.trim());
-  $("examples").value = match ? match.instruction : "";
-  showMode();
-});
+$("instruction").addEventListener("input", showMode);
 
 let running = false;
 let previewSeq = 0;
 
-// ---- Run totals and per-step details ----
+// ---- Run totals ----
 let stepImages = {};   // step number -> { front, top } (base64 PNG), from the observation events
 let runSystemPrompt = "";
 let totals;
@@ -50,32 +70,55 @@ function resetTotals() {
 
 function addTotals(u) {
   totals.steps += 1;
-  if (!u) return;
-  totals.input += (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0);
-  totals.out += u.out || 0;
-  totals.cost += u.cost_usd || 0;
-  totals.time += u.latency_s || 0;
+  if (u) {
+    totals.input += (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0);
+    totals.out += u.out || 0;
+    totals.cost += u.cost_usd || 0;
+    totals.time += u.latency_s || 0;
+  }
   showTotals();
 }
 
+function stat(value, label) {
+  const s = el("span", "", "stat");
+  s.append(el("b", value), el("span", label));
+  return s;
+}
+
 function showTotals() {
-  const avg = totals.steps ? `${(totals.time / totals.steps).toFixed(1)}s` : "-";
-  $("totals").textContent =
-    `steps ${totals.steps} · in ${totals.input} tok · out ${totals.out} tok · $${totals.cost.toFixed(4)} · avg ${avg}/step`;
+  const avg = totals.steps ? `${(totals.time / totals.steps).toFixed(1)}s` : "–";
+  $("totals").replaceChildren(
+    stat(String(totals.steps), "steps"),
+    stat(fmtTok(totals.input), "in"),
+    stat(fmtTok(totals.out), "out"),
+    stat(`$${totals.cost.toFixed(3)}`, "cost"),
+    stat(avg, "per step"),
+  );
 }
 resetTotals();
 
-function el(tag, text = "", cls = "") {
-  const e = document.createElement(tag);
-  if (text) e.textContent = text;
-  if (cls) e.className = cls;
-  return e;
+// ---- Camera badges ----
+function setCamState(state) {  // "preview" | "live" | "ended"
+  for (const id of ["cam_front", "cam_top"]) {
+    $(id).classList.toggle("live", state === "live");
+    $(id).querySelector(".cam-badge").textContent = state === "live" ? "Live" : state === "ended" ? "Last frame" : "Preview";
+  }
 }
 
-function kv(rows) {
-  const dl = el("dl", "", "kv");
-  for (const [k, v] of rows) dl.append(el("dt", k), el("dd", String(v)));
-  return dl;
+function showImage(id, src) {
+  $(id).src = src;
+  $(id).hidden = false;
+}
+
+// ---- Step details ----
+function kvTiles(rows) {
+  const box = el("div", "", "tiles");
+  for (const [k, v] of rows) {
+    const t = el("div", "", "tile");
+    t.append(el("span", k), el("b", String(v)));
+    box.append(t);
+  }
+  return box;
 }
 
 function usageLine(u) {
@@ -84,59 +127,65 @@ function usageLine(u) {
     `out ${u.out ?? "?"} · $${(u.cost_usd ?? 0).toFixed(4)} · ${(u.latency_s ?? 0).toFixed(1)}s`;
 }
 
-function pre(text) {
-  return el("pre", text);
-}
-
 function openStepDetails(ev) {
-  const body = $("step_body");
-  const title = ev.kind === "step" ? `Step ${ev.step}` : `Step ${ev.step} (${ev.kind === "bad_reply" ? "bad reply" : "model error"})`;
-  $("step_title").textContent = title;
+  const kindText = ev.kind === "step" ? "" : ev.kind === "bad_reply" ? " · bad reply" : " · model error";
+  $("step_title").textContent = `Step ${ev.step}${kindText}`;
   const u = ev.usage;
-  const items = [el("h2", "Tokens")];
+  const items = [el("h2", "Tokens (exact, from the API)")];
   if (u) {
     const total = (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0);
     const imageTokens = 2 * Math.round((640 * 480) / 750);
+    const imgShare = total ? Math.min(100, (imageTokens / total) * 100) : 0;
+    const bar = el("div", "", "bar");
+    const bi = el("i", "", "b-img");
+    bi.style.width = `${imgShare}%`;
+    const bt = el("i", "", "b-txt");
+    bt.style.width = `${100 - imgShare}%`;
+    bar.append(bi, bt);
+    const legend = el("div", "", "legend");
+    legend.append(el("span", `images ≈ ${imageTokens}`, "l-img"), el("span", `text ≈ ${Math.max(0, total - imageTokens)}`, "l-txt"));
     items.push(
-      kv([["input (uncached)", u.in ?? "?"], ["cache write", u.cache_write ?? "?"], ["cache read", u.cache_read ?? "?"],
-          ["output", u.out ?? "?"], ["cost", `$${(u.cost_usd ?? 0).toFixed(4)}`], ["time", `${(u.latency_s ?? 0).toFixed(1)} s`]]),
-      el("h2", "Estimated split (not exact)"),
-      kv([["images", `${imageTokens} tokens`], ["text", `${Math.max(0, total - imageTokens)} tokens`]]),
-      el("p", `images = 2 × round(640×480/750) = 2 × ${imageTokens / 2} = ${imageTokens}; text = total input (${total}) - images, at least 0`, "muted"),
+      kvTiles([["input, uncached", u.in ?? "?"], ["cache write", u.cache_write ?? "?"], ["cache read", u.cache_read ?? "?"],
+               ["output", u.out ?? "?"], ["cost", `$${(u.cost_usd ?? 0).toFixed(4)}`], ["time", `${(u.latency_s ?? 0).toFixed(1)} s`]]),
+      el("h2", "Estimated split of the input (not exact)"),
+      bar,
+      legend,
+      el("p", `images = 2 × round(640×480/750) = 2 × ${imageTokens / 2} = ${imageTokens}; text = total input (${total}) − images`, "muted"),
     );
   } else {
     items.push(el("p", "no usage reported", "muted"));
   }
   const sys = el("details");
-  sys.append(el("summary", "System prompt"), pre(runSystemPrompt));
-  items.push(sys, el("h2", "User message"), pre(ev.prompt ?? ""));
+  sys.append(el("summary", "System prompt"), el("pre", runSystemPrompt));
+  items.push(sys, el("h2", "User message"), el("pre", ev.prompt ?? ""));
   const imgs = stepImages[ev.step];
   if (imgs) {
     const pair = el("div", "", "pair");
-    for (const [name, data] of [["Front camera", imgs.front], ["Top camera", imgs.top]]) {
+    for (const [name, data] of [["Image 1 · front camera", imgs.front], ["Image 2 · top camera", imgs.top]]) {
+      const fig = el("figure");
       const img = document.createElement("img");
       img.src = `data:image/png;base64,${data}`;
       img.alt = name;
-      pair.append(img);
+      fig.append(img, el("figcaption", name));
+      pair.append(fig);
     }
     items.push(pair);
   }
-  items.push(el("h2", "Attempts"));
+  items.push(el("h2", "Model calls"));
   (ev.attempts || []).forEach((a, i) => {
     const box = el("div", "", "attempt");
-    box.append(el("strong", `Attempt ${i + 1}: ${a.images} image${a.images === 1 ? "" : "s"} sent`), pre(a.message));
-    if (a.reply !== null && a.reply !== undefined) box.append(el("strong", "Reply"), pre(a.reply));
-    if (a.error) box.append(el("strong", "Error", "bad"), pre(a.error));
+    box.append(el("strong", `Call ${i + 1} · ${a.images} image${a.images === 1 ? "" : "s"} sent`), el("pre", a.message));
+    if (a.reply !== null && a.reply !== undefined) box.append(el("strong", "Reply"), el("pre", a.reply));
+    if (a.error) box.append(el("strong", "Error", "bad"), el("pre", a.error));
     box.append(el("div", usageLine(a.usage), "muted"));
     items.push(box);
   });
-  body.replaceChildren(...items);
-  body.scrollTop = 0;
+  $("step_body").replaceChildren(...items);
+  $("step_body").scrollTop = 0;
   $("step_dialog").showModal();
 }
 
 function clickable(item, ev) {
-  item.classList.add("clickable");
   item.tabIndex = 0;
   item.setAttribute("role", "button");
   item.addEventListener("click", () => openStepDetails(ev));
@@ -150,6 +199,62 @@ function clickable(item, ev) {
 }
 
 $("step_close").addEventListener("click", () => $("step_dialog").close());
+
+// ---- Step cards ----
+function stepMeta(u) {
+  const meta = el("span", "", "meta");
+  if (u) {
+    const total = (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0) + (u.out || 0);
+    meta.append(el("span", `${fmtTok(total)} tok`), el("span", `${(u.latency_s ?? 0).toFixed(0)}s`));
+  }
+  return meta;
+}
+
+// "move_to(0.5, 0.1, 0.2): reached, gripper at …" -> action, status word, rest
+function resultLine(text) {
+  const row = el("li");
+  const i = text.indexOf(": ");
+  if (i < 0) {
+    row.textContent = text;
+    return row;
+  }
+  const rest = text.slice(i + 2);
+  const word = rest.split(/[,\s]/)[0];
+  row.append(el("span", text.slice(0, i), "act"), document.createTextNode(" "),
+             el("span", word, `st-${word}`), document.createTextNode(rest.slice(word.length)));
+  row.title = text;
+  return row;
+}
+
+function stepCard(ev) {
+  const card = el("li", "", `step ${ev.success || ev.done ? "ok" : ""}`.trim());
+  const head = el("div", "", "step-head");
+  head.append(el("span", String(ev.step), "num"), el("span", ev.plan || "(no plan)", "plan"), stepMeta(ev.usage));
+  card.append(head);
+  if (ev.observation) card.append(el("div", ev.observation, "saw"));
+  if (ev.results.length) {
+    const ul = el("ul", "", "results");
+    ul.append(...ev.results.map(resultLine));
+    card.append(ul);
+  }
+  if (ev.success) card.append(el("span", "Task solved", "badge success"));
+  else if (ev.done) card.append(el("span", "Claude says done", "badge done"));
+  if (ev.truncated) card.append(el("span", "Plan cut to 8 actions", "badge warn"));
+  return clickable(card, ev);
+}
+
+function errorCard(ev, text) {
+  const card = el("li", "", "step err");
+  const head = el("div", "", "step-head");
+  head.append(el("span", String(ev.step), "num"), el("span", text, "plan errline"), stepMeta(ev.usage));
+  card.append(head);
+  return clickable(card, ev);
+}
+
+function emptyMemo() {
+  $("todo").replaceChildren(li("Claude writes its plan here", "empty"));
+  $("notes").replaceChildren(el("span", "Nothing yet", "empty"));
+}
 
 // ---- Prompt editor ----
 const PROMPT_KEY = "armmind.systemPrompt";
@@ -175,6 +280,7 @@ function writeSaved(text) {
 
 function showPromptTag() {
   $("prompt_tag").textContent = savedPrompt === null ? "default" : "edited";
+  $("prompt_tag").classList.toggle("edited", savedPrompt !== null);
 }
 
 async function loadPrompt() {
@@ -211,7 +317,7 @@ $("prompt_reset").addEventListener("click", () => {
   $("prompt_msg").textContent = "Reset to default";
 });
 
-// Show the starting scene of the seed, unless a run is active.
+// ---- Scene preview: the starting scene of the seed, unless a run is active ----
 async function loadPreview() {
   const seq = ++previewSeq;
   try {
@@ -224,14 +330,10 @@ async function loadPreview() {
     if (seq !== previewSeq || running) return;
     showImage("live", `data:image/jpeg;base64,${p.front}`);
     showImage("top", `data:image/png;base64,${p.top}`);
+    setCamState("preview");
   } catch (err) {
     // no preview is not an error: the images stay hidden
   }
-}
-
-function showImage(id, src) {
-  $(id).src = src;
-  $(id).hidden = false;
 }
 
 let previewTimer = null;
@@ -240,10 +342,11 @@ $("seed").addEventListener("input", () => {
   previewTimer = setTimeout(loadPreview, 300);
 });
 
+// ---- Start and Stop ----
 $("run").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (running) {  // keep the steps of the active run on screen
-    setStatus("error: a run is already active", "bad");
+    setStatus("a run is already active", "bad");
     return;
   }
   const body = {
@@ -259,9 +362,8 @@ $("run").addEventListener("submit", async (e) => {
   runSystemPrompt = "";
   resetTotals();
   $("steps").replaceChildren();
-  $("todo").replaceChildren();
-  $("notes").textContent = "";
-  setStatus("starting");
+  emptyMemo();
+  setStatus("starting", "thinking");
   try {
     const r = await fetch("/api/run", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -281,37 +383,33 @@ $("run").addEventListener("submit", async (e) => {
 
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
 
+// ---- Events from the server ----
 function onEvent(ev) {
   if (ev.kind === "run_start") {
     runSystemPrompt = ev.system_prompt || "";
   } else if (ev.kind === "observation") {
     stepImages[ev.step] = { front: ev.front_png, top: ev.top_png };  // shown in the step details
-    setStatus(`step ${ev.step}: thinking`);
+    setStatus(`step ${ev.step} · thinking`, "thinking");
   } else if (ev.kind === "reply") {
-    setStatus(`step ${ev.step}: moving`);
+    setStatus(`step ${ev.step} · moving`, "moving");
   } else if (ev.kind === "step") {
     addTotals(ev.usage);
-    const item = clickable(li(`Step ${ev.step}`, ev.success ? "success" : ""), ev);
-    const detail = document.createElement("ul");
-    detail.append(li(`Saw: ${ev.observation}`), li(`Plan: ${ev.plan}`), ...ev.results.map((r) => li(r, "result")));
-    if (ev.done) detail.append(li("Claude says done", "done"));
-    if (ev.truncated) detail.append(li("Plan cut to 8 actions", "bad"));
-    item.append(detail);
-    $("steps").prepend(item);
-    $("todo").replaceChildren(...ev.todo.map((t) => li(t)));
-    $("notes").textContent = ev.notes;
+    $("steps").prepend(stepCard(ev));
+    $("todo").replaceChildren(...(ev.todo.length ? ev.todo.map((t) => li(t)) : [li("Claude writes its plan here", "empty")]));
+    $("notes").replaceChildren(ev.notes ? document.createTextNode(ev.notes) : el("span", "Nothing yet", "empty"));
   } else if (ev.kind === "bad_reply") {
     addTotals(ev.usage);
-    $("steps").prepend(clickable(li(`Step ${ev.step}: bad reply (${ev.error})`, "bad"), ev));
+    $("steps").prepend(errorCard(ev, `Bad reply: ${ev.error}`));
   } else if (ev.kind === "llm_error") {
     setStatus(`model error: ${ev.message}`, "bad");
     addTotals(ev.usage);
-    $("steps").prepend(clickable(li(`Step ${ev.step}: model error (${ev.error_kind}): ${ev.message}`, "bad"), ev));
+    $("steps").prepend(errorCard(ev, `Model error (${ev.error_kind}): ${ev.message}`));
   } else if (ev.kind === "run_end") {
     running = false;
-    if (ev.status === "success") setStatus("SUCCESS", "success");
-    else if (ev.status === "done") setStatus("DONE (Claude says finished)", "success");
-    else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" ? "bad" : "");
+    setCamState("ended");
+    if (ev.status === "success") setStatus("success · task solved", "success");
+    else if (ev.status === "done") setStatus("done · Claude says finished", "success");
+    else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" || ev.status === "llm_error" ? "bad" : "");
   }
 }
 
@@ -319,8 +417,12 @@ function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
-    if (msg.type === "frame") showImage(msg.cam === "top" ? "top" : "live", `data:image/jpeg;base64,${msg.jpg}`);
-    else if (msg.type === "event") onEvent(msg);
+    if (msg.type === "frame") {
+      showImage(msg.cam === "top" ? "top" : "live", `data:image/jpeg;base64,${msg.jpg}`);
+      if (running) setCamState("live");
+    } else if (msg.type === "event") {
+      onEvent(msg);
+    }
   };
   ws.onclose = () => setTimeout(connect, 1000);
 }
