@@ -1,0 +1,6 @@
+runs/
+.venv/
+venv/
+__pycache__/
+*.pyc
+assets/
