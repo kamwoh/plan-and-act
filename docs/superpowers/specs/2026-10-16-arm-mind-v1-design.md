@@ -29,8 +29,9 @@ ps1-mind lets an LLM play PS1 games. The LLM is slow, and a game runs in real ti
 
 In v1:
 
+- You can change the instruction text before a run. The success check of the task stays the same.
 - Robot: Franka Panda arm with a parallel gripper. The model comes from MuJoCo Menagerie (Apache 2.0). Setup downloads it. The repository does not store it.
-- Scene: a table, a few colored cubes, a target zone.
+- Scene: a table and three colored cubes (red, blue, green).
 - Three tasks, each with a success check in code:
   1. Reach: "touch the red cube".
   2. Pick: "lift the red cube 10 cm".
@@ -50,7 +51,7 @@ Python 3.12, `uv`, a project venv. The server uses port 8780. It must never use 
 | `sim/world.py` | Loads the scene XML. Steps the physics. Resets with a seed. | `mujoco` |
 | `sim/render.py` | Renders the front and top cameras to images. Draws the coordinate grid. | `world`, Pillow |
 | `sim/arm.py` | Runs `move_to`, `open`, `close`, `wait`. Uses IK to get joint targets, moves smoothly, stops on contact or timeout. Returns a result. | `world` |
-| `tasks/` | One file per task: instruction text, cube layout, `success(world) -> bool`. | `world` |
+| `tasks/` | The three tasks: instruction text, cube layout, `success(world) -> bool`. | `world` |
 | `llm/` | Claude CLI client and a fake client for tests. Copied from ps1-mind. | none |
 | `agent/` | Builds the prompt, parses the JSON reply, keeps notes, to-do list and history. One `step()` is observe, ask, act. | `llm`, `Env` |
 | `server/` | FastAPI. Starts and stops runs. Sends frames and step events through a WebSocket. Serves the UI. | `agent`, `sim` |
@@ -69,7 +70,7 @@ class Env(Protocol):
 
 - `Observation`: front image, top image, gripper `x, y, z`, gripper open or closed, results of the last step's actions. With the debug switch on, it also has the object positions.
 - `Action`: one of `move_to(x, y, z)`, `open`, `close`, `wait(seconds)`.
-- `ActionResult`: `reached`, `blocked` (with the contact), `unreachable`, or `timeout`, plus the final gripper pose.
+- `ActionResult`: `reached`, `blocked` (with the contacts), or `unreachable`, plus the final gripper pose.
 
 Tests use a fake Env. Later, LIBERO or an Inspect Robots embodiment can go behind the same interface.
 
@@ -80,10 +81,10 @@ Tests use a fake Env. Later, LIBERO or an Inspect Robots embodiment can go behin
   "observation": "Red cube near the front left. Gripper is above the table centre.",
   "plan": "Move above the red cube, go down, close, lift.",
   "actions": [
-    {"move_to": [0.42, -0.10, 0.15]},
-    {"move_to": [0.42, -0.10, 0.03]},
-    {"close": true},
-    {"move_to": [0.42, -0.10, 0.20]}
+    {"type": "move_to", "xyz": [0.42, -0.10, 0.15]},
+    {"type": "move_to", "xyz": [0.42, -0.10, 0.02]},
+    {"type": "close"},
+    {"type": "move_to", "xyz": [0.42, -0.10, 0.20]}
   ],
   "notes": "optional, only when something changed",
   "todo": ["find red cube", "grasp it", "lift it"]
@@ -97,7 +98,7 @@ Units are metres, in the world frame. The grid on the images uses the same frame
 1. `Env.observe()` returns the images, the gripper pose and the last results.
 2. The agent builds the prompt and calls Claude. The physics stays paused.
 3. The agent parses the reply. If the JSON is bad, it asks once more. If the second reply is also bad, it logs `bad_reply` and the step ends with no action.
-4. For each action, `arm.py` runs physics steps. The server sends frames at about 30 fps, so you see the motion. An action ends when the arm reaches the target, touches something, or times out.
+4. For each action, `arm.py` runs physics steps. The server sends frames at about 30 fps, so you see the motion. A move takes a fixed time for its distance. After it, the result is `reached` if the gripper is within 2 cm of the target. If not, the result is `blocked`, with the contacts.
 5. The task's `success()` runs. The step event goes to the UI and to the log.
 6. The run ends on success, on the step limit, or on Stop.
 
