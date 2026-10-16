@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header><h1>arm-mind</h1><span id="status" aria-live="polite">idle</span></header>
+  <header><h1>arm-mind</h1><span id="status" aria-live="polite">idle</span><span id="totals" class="muted"></span></header>
   <main>
     <section class="views">
       <figure>
@@ -29,7 +29,7 @@
           <label>Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
         </div>
         <label class="check"><input id="show_positions" type="checkbox"> Debug: give cube positions to the model</label>
-        <div class="buttons"><button type="submit">Start</button><button type="button" id="stop">Stop</button></div>
+        <div class="buttons"><button type="submit">Start</button><button type="button" id="stop">Stop</button><button type="button" id="prompt_btn">Prompt <small id="prompt_tag">default</small></button></div>
       </form>
     </section>
     <section class="panel log">
@@ -41,6 +41,20 @@
       <ul id="steps"></ul>
     </section>
   </main>
+  <dialog id="step_dialog" aria-labelledby="step_title">
+    <div class="dlg-head"><h2 id="step_title">Step</h2><button type="button" id="step_close">Close</button></div>
+    <div id="step_body" class="dlg-body"></div>
+  </dialog>
+  <dialog id="prompt_dialog" aria-labelledby="prompt_title">
+    <div class="dlg-head"><h2 id="prompt_title">System prompt</h2><button type="button" id="prompt_close">Close</button></div>
+    <div class="dlg-body">
+      <textarea id="prompt_text" rows="14" maxlength="10000" spellcheck="false" aria-label="System prompt"></textarea>
+      <div class="buttons"><button type="button" id="prompt_save">Save</button><button type="button" id="prompt_reset">Reset to default</button><span id="prompt_msg" class="muted"></span></div>
+      <p class="muted">The reply format is fixed by a JSON schema, so a prompt edit cannot break parsing.</p>
+      <h2>Example step message (filled in by code each step)</h2>
+      <pre id="prompt_example"></pre>
+    </div>
+  </dialog>
   <script src="app.js"></script>
 </body>
 </html>

@@ -45,6 +45,33 @@ ul { padding-left: 18px; margin: 0; }
 li.done { color: var(--muted); }
 li.result { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
 
+#totals { margin-left: auto; font-size: 12px; }
+#prompt_btn small { color: var(--muted); }
+#steps > li.clickable { cursor: pointer; }
+#steps > li.clickable:hover, #steps > li.clickable:focus-visible { background: #f0eee8; outline: none; }
+
+/* Overlays: they scroll inside themselves, never the page. */
+dialog { width: min(1100px, 96vw); max-height: 94vh; padding: 0; border: 1px solid var(--line); border-radius: 6px;
+         background: var(--panel); color: var(--fg); }
+dialog[open] { display: flex; flex-direction: column; }
+dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.dlg-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px;
+            border-bottom: 1px solid var(--line); flex: none; }
+.dlg-head h2 { margin: 0; }
+.dlg-body { overflow: auto; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.dlg-body > * { flex: none; }
+.dlg-body h2 { margin-top: 6px; }
+.dlg-body textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }
+pre { margin: 0; padding: 8px; background: #f3f2ee; border-radius: 4px; white-space: pre-wrap; overflow-wrap: anywhere;
+      font: 12px/1.4 ui-monospace, monospace; max-height: 40vh; overflow: auto; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.pair img { width: 100%; border-radius: 4px; background: #222; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; font-family: ui-monospace, monospace; }
+.attempt { border: 1px solid var(--line); border-radius: 4px; padding: 6px 8px; display: grid; gap: 4px; }
+summary { cursor: pointer; }
+
 /* Narrow screens: stack everything and let the page scroll. */
 @media (max-width: 800px) {
   body { overflow: auto; height: auto; }
