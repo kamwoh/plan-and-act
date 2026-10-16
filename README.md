@@ -31,7 +31,7 @@ A line under the box shows the mode. If your text matches an example exactly, th
 
 Before you press Start, the page shows the starting scene for the seed in both camera views. It updates when you change the seed. The scene shows the cube layout and the arm in the ready pose.
 
-Set a seed and a step limit, then press Start. The left side shows the front camera live and the top camera from the last step. The right side shows Claude's to-do list, notes and each step.
+Set a seed and a step limit, then press Start. The left side shows the front camera and the top camera live, with a grid on the top view. The right side shows Claude's to-do list, notes and each step.
 
 The debug switch gives Claude the true cube positions. Use it to find out if a failure comes from vision or from planning.
 
