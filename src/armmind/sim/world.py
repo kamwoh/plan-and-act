@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from string import Template
 
@@ -9,6 +10,7 @@ import mujoco
 import numpy as np
 
 from armmind.scenes.base import Layout, ObjSpec, Scene
+from armmind.sim import meshes
 from armmind.sim.assets import panda_dir
 
 TEMPLATE = Path(__file__).with_name("scene.xml")
@@ -18,9 +20,37 @@ CAMERAS = {  # name: (pos, xyaxes). A scene can replace one.
     "front": ("1.45 0 0.80", "0 1 0 -0.55 0 0.835"),
     "top": ("0.5 0 1.2", "0 1 0 -1 0 0"),
 }
+SPAWN_GAP = 0.002  # a mesh object starts this far above the table, so that it does not start inside it
+
+
+@dataclass(frozen=True)
+class ObjInfo:
+    """The measured size of an object, in its own frame."""
+    width: float  # along x
+    depth: float  # along y
+    height: float
+    bottom: float  # the lowest point, below the body origin
+    narrow: str  # "x" or "y": the narrow horizontal axis
+
+
+def _quat(yaw_deg: float) -> list[float]:
+    half = np.radians(yaw_deg) / 2
+    return [float(np.cos(half)), 0.0, 0.0, float(np.sin(half))]
+
+
+def _mesh_object_xml(o: ObjSpec, i: int) -> str:
+    """A scanned object. Its geoms move so that the body origin is the centre of its box."""
+    info = meshes.measure(o.mesh)
+    density = 1000.0 * o.mass / info.mass
+    return (f'    <body name="{o.name}" pos="0.5 {-0.3 + 0.1 * i:.2f} {info.dims[2] / 2 + SPAWN_GAP:g}">\n'
+            f'      <freejoint name="{o.name}"/>\n'
+            f'{meshes.geoms_xml(o.name, o.mesh, info.centre, density)}\n'
+            f'    </body>')
 
 
 def _object_xml(o: ObjSpec, i: int) -> str:
+    if o.shape == "mesh":
+        return _mesh_object_xml(o, i)
     size = " ".join(f"{v:g}" for v in o.size)
     return (f'    <body name="{o.name}" pos="0.5 {-0.3 + 0.1 * i:.2f} {o.half_height:g}">\n'
             f'      <freejoint name="{o.name}"/>\n'
@@ -33,7 +63,10 @@ def scene_xml(scene: Scene) -> str:
     objects = "\n".join(_object_xml(o, i) for i, o in enumerate(scene.objects))
     cameras = "\n".join(f'    <camera name="{name}" pos="{pos}" xyaxes="{axes}" fovy="45"/>'
                         for name, (pos, axes) in {**CAMERAS, **scene.camera_overrides}.items())
-    return Template(TEMPLATE.read_text()).substitute(fixtures=scene.fixtures_xml, objects=objects, cameras=cameras)
+    mesh_assets = "\n".join(meshes.asset_xml(o.name, o.mesh) for o in scene.objects if o.shape == "mesh")
+    assets = f"  <asset>\n{mesh_assets}\n  </asset>" if mesh_assets else ""
+    return Template(TEMPLATE.read_text()).substitute(fixtures=scene.fixtures_xml, objects=objects, cameras=cameras,
+                                                     assets=assets)
 
 
 class World:
@@ -54,6 +87,21 @@ class World:
         mujoco.mj_resetDataKeyframe(self.model, home, 0)
         mujoco.mj_kinematics(self.model, home)
         self.rot0 = home.xmat[self.hand_id].reshape(3, 3).copy()  # the home orientation: yaw 0, points down
+        self._info = {o.name: self._measure(o) for o in scene.objects}
+        # The collision points of each object in its body frame, to find its lowest point.
+        self._points = {o.name: np.vstack([meshes.geom_points(self.model, g) for g in
+                                           meshes.collision_geoms(self.model, self.model.body(o.name).id)])
+                        for o in scene.objects if o.shape == "mesh"}
+
+    def _measure(self, o: ObjSpec) -> ObjInfo:
+        if o.shape == "mesh":
+            lo, hi = meshes.body_bounds(self.model, self.model.body(o.name).id)
+            w, d, h = (float(v) for v in hi - lo)
+            bottom = float(lo[2])
+        else:
+            w, d, h = o.dims
+            bottom = -o.half_height
+        return ObjInfo(w, d, h, bottom, "x" if w <= d else "y")
 
     @property
     def objects(self) -> tuple[ObjSpec, ...]:
@@ -75,8 +123,9 @@ class World:
         mujoco.mj_resetDataKeyframe(self.model, self.data, 0)
         for o in self.objects:
             adr = self.model.jnt_qposadr[self.model.joint(o.name).id]
-            x, y = layout[o.name]
-            self.data.qpos[adr:adr + 7] = [x, y, o.half_height, 1, 0, 0, 0]
+            x, y, *yaw = layout[o.name]  # (x, y) or (x, y, yaw)
+            z = -self._info[o.name].bottom + (SPAWN_GAP if o.shape == "mesh" else 0.0)
+            self.data.qpos[adr:adr + 7] = [x, y, z, *_quat(yaw[0] if yaw else 0.0)]
         for name, q in {**self.scene.initial_qpos, **(joint_qpos or {})}.items():
             self.data.qpos[self.model.jnt_qposadr[self.model.joint(name).id]] = q
         mujoco.mj_forward(self.model, self.data)
@@ -112,6 +161,22 @@ class World:
 
     def object_pos(self, name: str) -> np.ndarray:
         return self.data.body(name).xpos.copy()
+
+    def object_info(self, name: str) -> ObjInfo:
+        return self._info[name]
+
+    def object_yaw(self, name: str) -> float:
+        """The turn of the object about world +z, in degrees, in (-180, 180]."""
+        rot = self.data.body(name).xmat.reshape(3, 3)
+        yaw = float(np.degrees(np.arctan2(rot[1, 0], rot[0, 0])))
+        return 180.0 if yaw == -180.0 else yaw
+
+    def object_bottom(self, name: str) -> float:
+        """The height of the lowest point of the object. For a box or a cylinder: its centre minus half its height."""
+        body = self.data.body(name)
+        if name not in self._points:
+            return float(body.xpos[2] - self._info[name].height / 2)
+        return float((self._points[name] @ body.xmat.reshape(3, 3).T)[:, 2].min() + body.xpos[2])
 
     def gripper_contacts(self) -> list[str]:
         body = self.model.geom_bodyid

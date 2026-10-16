@@ -63,3 +63,4 @@ class Observation:
     gripper_yaw: float = 0.0  # degrees
     events: tuple[str, ...] = ()  # what happened since the last observation, e.g. "red button pressed"
     joints: tuple[str, ...] | None = None  # moving parts with units, e.g. "drawer slide 0.120 m"; debug only
+    object_yaws: dict[str, float] | None = None  # degrees about world +z, in (-180, 180]; debug only

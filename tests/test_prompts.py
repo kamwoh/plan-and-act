@@ -65,3 +65,14 @@ def test_image_text_replaces_the_last_line():
         "Image 1: front camera. Image 2: top camera."
     text = build_user_text(SCENE, "t", 1, 30, OBS, "", (), [], image_text="Image 1: side. Image 2: top.")
     assert text.splitlines()[-1] == "Image 1: side. Image 2: top."
+
+
+def test_debug_positions_show_the_object_yaw():
+    obs = Observation(b"", b"", (0.3, 0.0, 0.4), 0.08, (), {"bottle": (0.5, -0.1, 0.05), "bowl": (0.62, 0.22, 0.03)},
+                      object_yaws={"bottle": -35.4, "bowl": 0.0})
+    text = build_user_text(SCENE, "t", 1, 30, obs, "", (), [])
+    assert "Object centres (debug): bottle (0.500, -0.100, 0.050) yaw -35°; bowl (0.620, 0.220, 0.030) yaw 0°" in text
+
+
+def test_system_says_to_turn_for_the_narrow_side():
+    assert "narrow side" in SYSTEM

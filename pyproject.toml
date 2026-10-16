@@ -31,6 +31,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
   "assets: needs the Panda model (run scripts/fetch_assets.sh)",
+  "objects: needs the scanned objects (run scripts/fetch_objects.sh)",
 ]
 
 [tool.ruff]

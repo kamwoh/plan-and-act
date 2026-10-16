@@ -125,3 +125,19 @@ def test_observe_gives_new_events_and_debug_joints():
     finally:
         plain.close()
         env.close()
+
+
+@pytest.mark.assets
+def test_debug_switch_shows_object_yaws():
+    env = MujocoEnv(CUBES, TASKS["reach"], seed=0, instruction="Touch it.", show_positions=True)
+    try:
+        obs = env.observe()
+        assert set(obs.object_yaws) == {"red_cube", "blue_cube", "green_cube"}
+        assert all(abs(y) < 1.0 for y in obs.object_yaws.values())
+    finally:
+        env.close()
+    env = MujocoEnv(CUBES, TASKS["reach"], seed=0, instruction="Touch it.")
+    try:
+        assert env.observe().object_yaws is None
+    finally:
+        env.close()

@@ -31,6 +31,8 @@ counter-clockwise, seen from above. Without "yaw", the gripper keeps its current
 The arm can reach x from 0.25 to 0.75, y from -0.40 to 0.40, z from 0.01 to 0.50. \
 The arm moves a target outside this box to the nearest point inside it.
 To grasp an object: open, move 10 cm above it, move down to its centre height, close, then move up.
+An object can stand turned. Then turn the gripper with "yaw" so that the fingers close across its narrow side. \
+Hold a tall object a little below its centre, but keep its top less than 3.5 cm above the gripper position.
 Each result says if the gripper reached the target, was blocked, or could not reach it.
 
 The simulation stops while you think. Use at most 8 actions in each step. \
@@ -89,7 +91,9 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
     if obs.objects:
-        lines.append("Object centres (debug): " + "; ".join(f"{n} {fmt(p)}" for n, p in obs.objects.items()))
+        yaws = obs.object_yaws or {}
+        lines.append("Object centres (debug): " + "; ".join(
+            f"{n} {fmt(p)}" + (f" yaw {round(yaws[n])}°" if n in yaws else "") for n, p in obs.objects.items()))
     if obs.joints:
         lines.append(f"Moving parts (debug): {'; '.join(obs.joints)}.")
     if obs.events:

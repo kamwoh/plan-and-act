@@ -12,11 +12,6 @@ from armmind.types import Action
 CASES = [(s, t) for s in SCENES for t in SCENES[s].tasks]
 
 
-def _radius(obj) -> float:
-    """The radius of the object's footprint on the table."""
-    return float(np.hypot(obj.size[0], obj.size[1])) if obj.shape == "box" else float(obj.size[0])
-
-
 def test_registry_order_and_tasks():
     assert list(SCENES) == ["cubes", "tray", "zones", "shapes", "drawer", "buttons"]
     assert {n: list(s.tasks) for n, s in SCENES.items()} == {
@@ -27,10 +22,17 @@ def test_registry_order_and_tasks():
 
 def test_cubes_layout_is_unchanged():
     cubes = SCENES["cubes"]
-    assert cubes.layout(0) == {"red_cube": (0.559, -0.115), "blue_cube": (0.41, -0.242),
-                               "green_cube": (0.603, 0.206)}
-    assert cubes.layout(4) == {"red_cube": (0.636, 0.006), "blue_cube": (0.644, -0.21),
-                               "green_cube": (0.552, -0.062)}
+    assert cubes.layout(0) == {"red_cube": (0.559, -0.115, 0.0), "blue_cube": (0.41, -0.242, 0.0),
+                               "green_cube": (0.603, 0.206, 0.0)}
+    assert cubes.layout(4) == {"red_cube": (0.636, 0.006, 0.0), "blue_cube": (0.644, -0.21, 0.0),
+                               "green_cube": (0.552, -0.062, 0.0)}
+
+
+@pytest.mark.parametrize("name", ["cubes", "tray", "zones", "shapes", "drawer", "buttons"])
+def test_old_scenes_have_no_turned_or_placed_objects(name):
+    scene = SCENES[name]
+    assert all(not o.random_yaw and o.place is None and o.shape != "mesh" for o in scene.objects)
+    assert all(yaw == 0.0 for seed in range(5) for _, _, yaw in scene.layout(seed).values())
 
 
 @pytest.mark.parametrize("name", list(SCENES))
@@ -41,10 +43,15 @@ def test_layout_is_repeatable_and_spread_out(name):
         a, b = scene.layout(seed), scene.layout(seed)
         assert a == b
         assert set(a) == {o.name for o in scene.objects}
-        for p, q in itertools.combinations(a.values(), 2):
-            assert np.hypot(p[0] - q[0], p[1] - q[1]) >= scene.min_gap
-        for x, y in a.values():
-            assert x0 <= x <= x1 and y0 <= y <= y1
+        for (m, p), (n, q) in itertools.combinations(a.items(), 2):
+            radii = {o.name: o.footprint for o in scene.objects}
+            assert np.hypot(p[0] - q[0], p[1] - q[1]) >= max(scene.min_gap, radii[m] + radii[n])
+        for o in scene.objects:
+            x, y, _ = a[o.name]
+            if o.place is None:
+                assert x0 <= x <= x1 and y0 <= y <= y1
+            else:
+                assert (x, y) == o.place
     if len(scene.objects) > 0:
         assert scene.layout(0) != scene.layout(1)
 
@@ -55,7 +62,7 @@ def test_describe_lists_every_object(name):
     text = scene.describe()
     assert text.startswith("Objects: ")
     for obj in scene.objects:
-        assert obj.label in text
+        assert obj.label in text and obj.text() in text
     assert scene.fixtures_text in text
 
 
@@ -67,7 +74,8 @@ def test_model_loads_with_every_object(name):
     w.reset(scene.layout(0))
     assert w.objects == scene.objects
     for obj in scene.objects:
-        assert w.object_pos(obj.name)[2] == pytest.approx(obj.half_height, abs=1e-6)
+        gap = 0.002 if obj.shape == "mesh" else 0.0
+        assert w.object_pos(obj.name)[2] == pytest.approx(obj.half_height + gap, abs=1e-6)
 
 
 @pytest.mark.assets
@@ -77,7 +85,7 @@ def test_fixtures_are_outside_the_region(name):
     scene = SCENES[name]
     w = World(scene)
     m = w.model
-    grow = max((_radius(o) for o in scene.objects), default=0.0)
+    grow = max((o.footprint for o in scene.objects), default=0.0)
     x0, x1, y0, y1 = scene.region
     fixtures = 0
     for g in range(m.ngeom):
@@ -101,7 +109,7 @@ def test_objects_stay_still_at_their_start_poses(name):
         w.reset(scene.layout(seed))
         w.step(200)
         for obj in scene.objects:
-            np.testing.assert_allclose(w.object_pos(obj.name)[:2], scene.layout(seed)[obj.name], atol=0.002)
+            np.testing.assert_allclose(w.object_pos(obj.name)[:2], scene.layout(seed)[obj.name][:2], atol=0.002)
             assert w.object_pos(obj.name)[2] == pytest.approx(obj.half_height, abs=0.002)
 
 
@@ -354,3 +362,4 @@ def test_open_drawer_keeps_clear_of_the_cube_region():
 
 def test_buttons_text_says_to_close_the_gripper_first():
     assert "Close the gripper first" in SCENES["buttons"].fixtures_text
+

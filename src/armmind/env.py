@@ -59,6 +59,8 @@ class MujocoEnv:
 
     def observe(self) -> Observation:
         objects = {o.name: _r3(self.world.object_pos(o.name)) for o in self.world.objects} if self.show_positions else None
+        yaws = ({o.name: round(self.world.object_yaw(o.name), 1) for o in self.world.objects}
+                if self.show_positions else None)
         joints = (tuple(self.world.scene.joints[n].format(q) for n, q in self.world.joints().items())
                   if self.show_positions else None)
         events, self._seen = tuple(self.world.events[self._seen:]), len(self.world.events)
@@ -66,7 +68,7 @@ class MujocoEnv:
             front_png=png(self.cams.with_grid("front")), top_png=png(self.cams.with_grid("top")),
             tcp=_r3(self.world.tcp()), gripper_width=round(self.world.gripper_width(), 3),
             contacts=tuple(self.world.gripper_contacts()), objects=objects,
-            gripper_yaw=round(self.world.gripper_yaw(), 1), events=events, joints=joints)
+            gripper_yaw=round(self.world.gripper_yaw(), 1), events=events, joints=joints, object_yaws=yaws)
 
     def act(self, action: Action) -> ActionResult:
         return self.arm.act(action)
