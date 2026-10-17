@@ -155,15 +155,18 @@ class RunStore:
         if folder is None:
             return None
         start = plan = None
+        executions = 0
         try:
             for ev in read_events(folder / "events.jsonl"):
                 if ev.get("kind") == "run_start":
                     start = ev
                 elif ev.get("kind") == "plan":
                     plan = ev
+                elif ev.get("kind") == "exec_start":
+                    executions += 1
         except OSError:
             return None
         if not (start and start.get("mode") == "plan" and plan and isinstance(plan.get("view"), dict)
                 and isinstance(plan.get("keyframes"), list)):
             return None
-        return {"start": start, "plan": plan, "folder": folder}
+        return {"start": start, "plan": plan, "folder": folder, "executions": executions}

@@ -19,6 +19,7 @@ from armmind.agent.loop import Agent, AgentConfig
 from armmind.agent.prompts import SYSTEM, example_step_text
 from armmind.env import Env, SimThread
 from armmind.llm.protocol import LLMBackend
+from armmind.plan.formats import Keyframe
 from armmind.scenes import SCENES, Scene, Task
 from armmind.sim.assets import AssetsMissing
 from armmind.sim.meshes import warm
@@ -155,6 +156,30 @@ class Runner:
                      lambda env, call, emit: agent.plan(env, call, emit, seed=req.seed))
         return log.dir
 
+    async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
+                            keyframes: tuple[Keyframe, ...], step: int) -> None:
+        """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed. No model is called.
+        The events go to the end of the plan's own log."""
+        if self.running:
+            raise HTTPException(409, "a run is already active")
+        log = RunLog.append_to(folder)
+        cancel = threading.Event()
+
+        async def stopper() -> None:
+            cancel.set()
+
+        async def body(env, call, emit) -> None:
+            emit("exec_start", {"run_id": folder.name, "scene": scene.name, "instruction": instruction, "seed": seed,
+                                "check": task.name if task else None, "keyframes": len(keyframes)})
+            out = await call(env.execute_plan, keyframes, cancel.is_set)
+            emit("step", {"step": step, "plan": "Run the saved keyframes once.", "observation": "",
+                          "actions": out["actions"], "results": out["results"], "stopped": out["stopped"],
+                          "truncated": False, "notes": "", "todo": [], "lessons": [], "success": out["success"],
+                          "done": False, "prompt": "", "attempts": [], "usage": None})
+            emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"]})
+
+        self._launch(log, stopper, scene, task, instruction, seed, False, body, end_kind="exec_end")
+
     def _launch(self, log: RunLog, stopper: Callable[[], Awaitable[None]], scene: Scene, task: Task | None,
                 instruction: str, seed: int, show_positions: bool,
                 body: Callable[[Env, Callable, Callable[[str, dict], None]], Awaitable],
@@ -254,6 +279,30 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
         folder = await runner.start_plan(req, scene, task)
         return {"run_dir": str(folder), "run_id": folder.name}
+
+    @app.post("/api/plan/{run_id}/execute", dependencies=[Depends(same_origin)])
+    async def execute(run_id: str) -> dict:
+        found = history.plan(run_id)
+        if found is None:
+            raise HTTPException(404, "no such plan")
+        start, plan = found["start"], found["plan"]
+        scene = SCENES.get(start.get("scene") or "")
+        try:
+            keyframes = tuple(Keyframe.from_dict(k) for k in plan["keyframes"])
+            seed = int(start.get("seed", 0))
+        except (KeyError, TypeError, ValueError):
+            keyframes, seed = (), 0
+        if scene is None or not keyframes:
+            raise HTTPException(404, "the plan cannot run")
+        instruction = start.get("instruction") or ""
+        task = next((t for t in scene.tasks.values() if t.instruction == instruction), None)
+        await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
+                                   step=2 + found["executions"])
+        return {"run_id": run_id}
+
+    @app.post("/api/plan/{rest:path}")
+    def no_plan(rest: str) -> None:
+        raise HTTPException(404, "no such plan")  # for example an id with a slash in it
 
     @app.get("/api/plan/{run_id}/view")
     def plan_view(run_id: str) -> dict:

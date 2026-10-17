@@ -21,6 +21,14 @@ class RunLog:
         self.dir = folder
         self._f = (folder / "events.jsonl").open("a", encoding="utf-8")
 
+    @classmethod
+    def append_to(cls, folder: Path) -> RunLog:
+        """Add events to the end of the log of an existing run folder."""
+        log = cls.__new__(cls)
+        log.dir = Path(folder)
+        log._f = (log.dir / "events.jsonl").open("a", encoding="utf-8")
+        return log
+
     def event(self, kind: str, data: dict) -> dict:
         if clash := {"t", "kind", "type"} & data.keys():
             raise ValueError(f"reserved event keys: {sorted(clash)}")

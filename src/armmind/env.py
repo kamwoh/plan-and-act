@@ -9,6 +9,8 @@ from typing import Protocol
 
 import numpy as np
 
+from armmind.agent.rules import check_result
+from armmind.plan.formats import Keyframe
 from armmind.scenes import Scene, Task
 from armmind.sim.arm import Arm
 from armmind.sim.render import Cameras, jpeg, png
@@ -29,6 +31,18 @@ class Env(Protocol):
     def act(self, action: Action) -> ActionResult: ...
     def success(self) -> bool: ...
     def close(self) -> None: ...
+
+
+def keyframe_actions(keyframes, state: str = "open") -> list[Action]:
+    """The actions of a plan: a move_to for each keyframe, then an open or a close when the gripper state
+    changes. The open or close expects what the keyframe holds, or nothing."""
+    out = []
+    for k in keyframes:
+        out.append(Action("move_to", tuple(k.xyz), yaw=k.yaw))
+        if k.state != state:
+            out.append(Action("close" if k.state == "closed" else "open", expect=k.carrying or "nothing"))
+            state = k.state
+    return out
 
 
 def _r3(p) -> tuple[float, float, float]:
@@ -87,6 +101,27 @@ class MujocoEnv:
         """The scores of a plan against the true scene now (call it before any motion)."""
         from armmind.sim.planview import check_plan
         return check_plan(self.world, self.arm, belief, keyframes)
+
+    def execute_plan(self, keyframes: tuple[Keyframe, ...], should_stop: Callable[[], bool]) -> dict:
+        """Run the keyframes once, with the stop rules of a step. should_stop() between actions cancels the
+        rest. The auto-check runs at the end when the instruction is a task of the scene."""
+        actions = keyframe_actions(keyframes)
+        lines, stopped, cancelled = [], None, False
+        for i, action in enumerate(actions):
+            if should_stop():
+                cancelled = True
+                break
+            result, why = check_result(action, self.act(action), self.object_labels)
+            lines.append(result.summary())
+            if why is not None:
+                stopped = {"after": i + 1, "of": len(actions), "reason": why}
+                lines += [f"{a.describe()}: skipped" for a in actions[i + 1:]]
+                break
+        success = self.has_check and not cancelled and self.success()
+        status = ("cancelled" if cancelled else "success" if success else "stopped" if stopped
+                  else "failed" if self.has_check else "done")
+        return {"actions": [a.describe() for a in actions], "results": lines, "stopped": stopped,
+                "success": bool(success), "status": status}
 
     def close(self) -> None:
         self.cams.close()
