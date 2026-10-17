@@ -12,7 +12,7 @@ async def test_success_ends_run():
     status = await Agent(backend).run(env, direct, rec)
     assert status == "success"
     assert len(env.acts) == 2  # stops acting once the task is solved
-    assert rec.kinds() == ["run_start", "observation", "reply", "step", "run_end"]
+    assert rec.kinds() == ["run_start", "observation", "ask", "reply", "step", "run_end"]
     step = dict(rec.events)["step"]
     assert step["success"] is True and len(step["results"]) == 2
 
@@ -236,3 +236,23 @@ async def test_run_lessons_are_not_limited_by_history_steps():
     backend = FakeBackend(replies)
     await Agent(backend, AgentConfig(max_steps=4, history_steps=1)).run(FakeEnv(), direct, Recorder())
     assert all(f"- lesson {i}" in backend.sent[3][0].text for i in range(3))
+
+
+async def test_ask_comes_before_each_attempt_and_before_the_step():
+    rec = Recorder()
+    await Agent(FakeBackend([bad(), good()]), AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
+    assert rec.kinds() == ["run_start", "observation", "ask", "ask", "reply", "step", "run_end"]
+    asks = [d for k, d in rec.events if k == "ask"]
+    step = dict(rec.events)["step"]
+    assert [a["attempt"] for a in asks] == [1, 2] and all(a["step"] == 1 for a in asks)
+    assert asks[0]["prompt"] == step["prompt"] and "not valid" in asks[1]["prompt"]
+    assert set(asks[0]) == {"step", "prompt", "attempt"}
+
+
+async def test_reply_event_carries_what_the_chat_shows():
+    rec = Recorder()
+    backend = FakeBackend([good(notes="n1", lessons=["l1"])])
+    await Agent(backend, AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
+    reply = dict(rec.events)["reply"]
+    assert reply["observation"] == "o" and reply["notes"] == "n1" and reply["todo"] == ["t"]
+    assert reply["lessons"] == ["l1"] and reply["usage"]["latency_s"] == 0.1

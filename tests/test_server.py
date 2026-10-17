@@ -361,3 +361,19 @@ def test_use_lessons_reaches_the_run_start(tmp_path):
 def test_lessons_dir_defaults_to_next_to_the_runs(tmp_path):
     app = create_app(FakeBackend([]), fake_factory, tmp_path / "runs")
     assert app.state.runner.lessons.root == tmp_path / "lessons"
+
+
+def test_page_clears_the_preview_error_when_a_preview_loads():
+    js = (Path(__file__).resolve().parents[1] / "web" / "app.js").read_text()
+    body = js[js.index("async function renderPreview"):]
+    body = body[:body.index("\n}\n")]
+    assert "clearPreviewError()" in body.split("showImage(\"live\"")[0].split("if (!r.ok) return;")[1]
+
+
+def test_page_has_the_chat_and_the_lessons_parts():
+    web = Path(__file__).resolve().parents[1] / "web"
+    html, js = (web / "index.html").read_text(), (web / "app.js").read_text()
+    for part in ('id="chat"', 'id="lessons"', 'id="use_lessons"', 'id="lessons_dialog"', 'id="chat_latest"'):
+        assert part in html
+    assert 'id="steps"' not in html
+    assert 'ev.kind === "ask"' in js and "use_lessons" in js and 'method: "DELETE"' in js

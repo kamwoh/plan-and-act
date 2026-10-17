@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _serve(host: str, port: int, model: str | None, runs: str) -> int:
+    import os
     from pathlib import Path
 
     import uvicorn
@@ -37,7 +38,12 @@ def _serve(host: str, port: int, model: str | None, runs: str) -> int:
     from armmind.llm.claude_cli import ClaudeCLIBackend
     from armmind.server.app import create_app
 
-    app = create_app(ClaudeCLIBackend(model=model, timeout_s=180), runs_dir=Path(runs))
+    if os.environ.get("ARMMIND_FAKE_LLM") == "1":  # for tests and screenshots only: no model is called
+        from armmind.llm.fake import DemoBackend
+        backend = DemoBackend()
+    else:
+        backend = ClaudeCLIBackend(model=model, timeout_s=180)
+    app = create_app(backend, runs_dir=Path(runs))
     print(f"arm-mind: open http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
     return 0

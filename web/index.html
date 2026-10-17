@@ -20,59 +20,78 @@
   </header>
 
   <main>
-    <section class="views">
-      <figure class="cam" id="cam_front">
-        <div class="frame">
-          <span class="placeholder">Loading scene…</span>
-          <img id="live" alt="Front camera" hidden>
-          <span class="cam-label">Front</span>
-          <span class="cam-badge">Preview</span>
-        </div>
-      </figure>
-      <figure class="cam" id="cam_top">
-        <div class="frame">
-          <span class="placeholder">Loading scene…</span>
-          <img id="top" alt="Top camera with grid" hidden>
-          <span class="cam-label">Top · grid</span>
-          <span class="cam-badge">Preview</span>
-        </div>
-      </figure>
-    </section>
+    <div class="left">
+      <section class="views">
+        <figure class="cam" id="cam_front">
+          <div class="frame">
+            <span class="placeholder">Loading scene…</span>
+            <img id="live" alt="Front camera" hidden>
+            <span class="cam-label">Front</span>
+            <span class="cam-badge">Preview</span>
+          </div>
+        </figure>
+        <figure class="cam" id="cam_top">
+          <div class="frame">
+            <span class="placeholder">Loading scene…</span>
+            <img id="top" alt="Top camera with grid" hidden>
+            <span class="cam-label">Top · grid</span>
+            <span class="cam-badge">Preview</span>
+          </div>
+        </figure>
+      </section>
 
-    <section class="card controls">
-      <form id="run">
-        <div class="card-head"><h2>Instruction</h2>
-          <div class="chip-row"><span class="chips-label">Scene</span><div id="scenes" class="chips" role="group" aria-label="Scene"></div></div>
-        </div>
-        <div class="chip-row"><span class="chips-label">Examples</span><div id="examples" class="chips" role="group" aria-label="Examples"></div></div>
-        <textarea id="instruction" rows="3" maxlength="500" required placeholder="Tell the arm what to do, or pick an example"></textarea>
-        <div id="mode" class="mode"></div>
-        <div class="settings">
-          <label class="field">Seed <span class="seed-row"><input id="seed" type="number" value="0" min="0"><button type="button" class="btn icon" id="shuffle" title="Shuffle: pick a random seed" aria-label="Shuffle the layout"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8.5" cy="8.5" r="1.4" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.4" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.4" fill="currentColor"/></svg></button></span></label>
-          <label class="field">Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
-          <label class="switch"><input id="show_positions" type="checkbox"><span class="track"></span>Debug: true object positions</label>
-        </div>
-        <div class="buttons">
-          <button type="submit" class="btn primary" id="start_btn"><span aria-hidden="true">▶</span> Start</button>
-          <button type="button" class="btn" id="stop"><span aria-hidden="true">■</span> Stop</button>
-          <button type="button" class="btn ghost" id="prompt_btn">System prompt <small id="prompt_tag" class="tag">default</small></button>
-        </div>
-      </form>
-    </section>
+      <div class="bottom">
+        <section class="card controls">
+          <form id="run">
+            <div class="card-head"><h2>Instruction</h2>
+              <div class="chip-row"><span class="chips-label">Scene</span><div id="scenes" class="chips" role="group" aria-label="Scene"></div></div>
+            </div>
+            <div class="chip-row"><span class="chips-label">Examples</span><div id="examples" class="chips" role="group" aria-label="Examples"></div></div>
+            <textarea id="instruction" rows="2" maxlength="500" required placeholder="Tell the arm what to do, or pick an example"></textarea>
+            <div id="mode" class="mode"></div>
+            <div class="settings">
+              <label class="field">Seed <span class="seed-row"><input id="seed" type="number" value="0" min="0"><button type="button" class="btn icon" id="shuffle" title="Shuffle: pick a random seed" aria-label="Shuffle the layout"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8.5" cy="8.5" r="1.4" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.4" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.4" fill="currentColor"/></svg></button></span></label>
+              <label class="field">Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
+              <div class="switches">
+                <label class="switch"><input id="use_lessons" type="checkbox" checked><span class="track"></span>Use saved lessons</label>
+                <label class="switch"><input id="show_positions" type="checkbox"><span class="track"></span>Debug: true object positions</label>
+              </div>
+            </div>
+            <div class="buttons">
+              <button type="submit" class="btn primary" id="start_btn"><span aria-hidden="true">▶</span> Start</button>
+              <button type="button" class="btn" id="stop"><span aria-hidden="true">■</span> Stop</button>
+              <button type="button" class="btn ghost" id="lessons_btn">Lessons <small id="lessons_tag" class="tag">0</small></button>
+              <button type="button" class="btn ghost" id="prompt_btn">System prompt <small id="prompt_tag" class="tag">default</small></button>
+            </div>
+          </form>
+        </section>
 
-    <section class="card log">
-      <div class="memo">
-        <div class="memo-col"><h2>To-do</h2><ul id="todo" class="todo"><li class="empty">Claude writes its plan here</li></ul></div>
-        <div class="memo-col"><h2>Notes</h2><p id="notes" class="notes"><span class="empty">Nothing yet</span></p></div>
+        <section class="card memo">
+          <div class="memo-col"><h2>To-do</h2><ul id="todo" class="todo"><li class="empty">Claude writes its plan here</li></ul></div>
+          <div class="memo-col"><h2>Notes</h2><p id="notes" class="notes"><span class="empty">Nothing yet</span></p></div>
+          <div class="memo-col"><h2>Lessons</h2><ul id="lessons" class="lessons"><li class="empty">None in this run</li></ul><p id="lessons_saved" class="muted"></p></div>
+        </section>
       </div>
-      <div class="card-head"><h2>Steps</h2><span class="hint">click a step to see exactly what Claude got</span></div>
-      <ol id="steps" class="steps"></ol>
+    </div>
+
+    <section class="card chat-card" aria-label="Chat with Claude">
+      <div class="card-head"><h2>Chat</h2><span class="hint">click a sent or Claude entry for the details</span></div>
+      <ol id="chat" class="chat" aria-live="polite"><li class="chat-empty">Press Start. Each message to Claude and each reply shows here.</li></ol>
+      <button type="button" class="btn latest" id="chat_latest" hidden>↓ latest</button>
     </section>
   </main>
 
   <dialog id="step_dialog" aria-labelledby="step_title">
     <div class="dlg-head"><h2 id="step_title">Step</h2><button type="button" class="btn ghost" id="step_close">Close</button></div>
     <div id="step_body" class="dlg-body"></div>
+  </dialog>
+  <dialog id="lessons_dialog" aria-labelledby="lessons_title">
+    <div class="dlg-head"><h2 id="lessons_title">Saved lessons</h2><button type="button" class="btn ghost" id="lessons_close">Close</button></div>
+    <div class="dlg-body">
+      <p class="muted">Claude writes a lesson when an action has a result that it did not expect. Each scene keeps its newest 30 lessons. With "Use saved lessons" on, every step message lists them.</p>
+      <ol id="lessons_list" class="saved-list"></ol>
+      <div class="buttons"><button type="button" class="btn" id="lessons_clear">Clear all</button><span id="lessons_msg" class="muted"></span></div>
+    </div>
   </dialog>
   <dialog id="prompt_dialog" aria-labelledby="prompt_title">
     <div class="dlg-head"><h2 id="prompt_title">System prompt</h2><button type="button" class="btn ghost" id="prompt_close">Close</button></div>

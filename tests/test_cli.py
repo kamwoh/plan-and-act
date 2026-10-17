@@ -27,3 +27,17 @@ def test_scripted_refuses_a_task_of_another_scene(capsys):
 def test_scripted_uses_the_task_start_joints(capsys):
     assert main(["scripted", "--scene", "drawer", "--task", "close_drawer", "--seed", "0"]) == 0
     assert capsys.readouterr().out.strip().endswith("success")
+
+
+def test_serve_uses_the_demo_backend_only_with_the_env_var(monkeypatch, tmp_path):
+    import uvicorn
+
+    from armmind import cli
+    apps = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, host, port: apps.append(app))
+    monkeypatch.setenv("ARMMIND_FAKE_LLM", "1")
+    assert cli.main(["serve", "--port", "8788", "--runs", str(tmp_path / "runs")]) == 0
+    monkeypatch.delenv("ARMMIND_FAKE_LLM")
+    assert cli.main(["serve", "--port", "8788", "--runs", str(tmp_path / "runs")]) == 0
+    assert apps[0].state.runner.backend.name == "demo"
+    assert apps[1].state.runner.backend.name != "demo"

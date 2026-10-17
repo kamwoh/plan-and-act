@@ -116,7 +116,9 @@ class Agent:
             self._conv = await self.backend.open(self.system)
             attempts: list[dict] = []
             try:
-                reply, error, usage = await self._ask(Message("user", text, (obs.front_png, obs.top_png)), attempts)
+                reply, error, usage = await self._ask(Message("user", text, (obs.front_png, obs.top_png)), attempts,
+                                                      lambda m, i, n=n: emit("ask", {"step": n, "prompt": m.text,
+                                                                                    "attempt": i}))
             finally:
                 conv, self._conv = self._conv, None
                 await conv.close()
@@ -131,7 +133,9 @@ class Agent:
             if reply is None:
                 emit("bad_reply", {"step": n, "error": error.message if error else "no reply", **detail})
                 continue
-            emit("reply", {"step": n, "plan": reply.plan, "actions": [a.describe() for a in reply.actions]})
+            emit("reply", {"step": n, "observation": reply.observation, "plan": reply.plan,
+                           "actions": [a.describe() for a in reply.actions], "notes": reply.notes,
+                           "todo": list(reply.todo), "lessons": list(reply.lessons), "usage": _usage_dict(usage)})
             results, stopped = [], None
             for i, action in enumerate(reply.actions):
                 if self._stop.is_set():
@@ -191,11 +195,15 @@ class Agent:
         except OSError as e:
             logging.getLogger(__name__).warning("cannot save the lessons of scene %s: %s", scene, e)
 
-    async def _ask(self, msg: Message, attempts: list[dict]) -> tuple[Reply | None, LLMError | None, Usage | None]:
+    async def _ask(self, msg: Message, attempts: list[dict], on_ask: Callable[[Message, int], None]
+                   ) -> tuple[Reply | None, LLMError | None, Usage | None]:
+        """Send the step message, and once more after a reply in the wrong format. on_ask runs before each send."""
+        on_ask(msg, 1)
         reply, error, usage = await self._send(msg, attempts)
         if error is not None and error.kind == "schema" and not self._stop.is_set():
             retry = Message("user", f"Your last reply was not valid: {error.message[:300]}. "
                                     "Reply again in the required format.")
+            on_ask(retry, 2)
             reply, error, usage = await self._send(retry, attempts)
         return reply, error, usage
 

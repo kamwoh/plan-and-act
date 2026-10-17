@@ -90,6 +90,7 @@ function chooseScene(name, keepText = false) {
   cameras = cameraLabels(scene.name);
   for (const cam of ["front", "top"]) $(`cam_${cam}`).querySelector(".cam-label").textContent = cameras[cam];
   showMode();
+  loadLessons();
 }
 
 function sceneChip(s) {
@@ -184,6 +185,10 @@ function showImage(id, src) {
   $(id).hidden = false;
 }
 
+function clearPreviewError() {  // a good preview: drop the text of an earlier error
+  for (const fig of ["cam_front", "cam_top"]) $(fig).querySelector(".placeholder").textContent = "";
+}
+
 function showPreviewError(message) {  // hide the images and put the message where they were
   for (const [fig, img] of [["cam_front", "live"], ["cam_top", "top"]]) {
     $(img).hidden = true;
@@ -266,29 +271,161 @@ function openStepDetails(ev) {
   $("step_dialog").showModal();
 }
 
-function clickable(item, ev) {
+$("step_close").addEventListener("click", () => $("step_dialog").close());
+
+// ---- Chat ----
+let stepEvents = {};     // step number -> the step, bad_reply or llm_error event, for the details dialog
+let stepPrompts = {};    // step number -> the first message text, until the step event comes
+let thinking = null;     // { item, timer, start } while Claude thinks
+let runLessons = [];
+
+function atBottom() {
+  const c = $("chat");
+  return c.scrollHeight - c.scrollTop - c.clientHeight < 24;
+}
+
+function scrollChat(force = false) {
+  const c = $("chat");
+  if (force) c.scrollTop = c.scrollHeight;
+  $("chat_latest").hidden = atBottom();
+}
+
+// Add an entry. Stay at the bottom when the reader is there. Otherwise do not move, and show "↓ latest".
+function addEntry(item) {
+  const stick = atBottom();
+  const empty = $("chat").querySelector(".chat-empty");
+  if (empty) empty.remove();
+  $("chat").append(item);
+  if (stick) scrollChat(true);
+  else $("chat_latest").hidden = false;
+  return item;
+}
+
+function entry(cls, title, step = null) {
+  const item = el("li", "", `entry ${cls}`);
+  const head = el("div", "", "entry-head");
+  head.append(el("span", title, "who"));
+  if (step !== null) head.append(el("span", `step ${step}`, "entry-step"));
+  item.append(head);
+  return item;
+}
+
+function openStep(step) {
+  openStepDetails(stepEvents[step] || { kind: "step", step, prompt: stepPrompts[step] ?? "", attempts: [], usage: null });
+}
+
+function stepLink(item, step) {
+  item.classList.add("link");
   item.tabIndex = 0;
   item.setAttribute("role", "button");
-  item.addEventListener("click", () => openStepDetails(ev));
+  item.addEventListener("click", (e) => {
+    if (e.target.closest("button, summary")) return;  // "show all" and folds work on their own
+    openStep(step);
+  });
   item.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === item) {
       e.preventDefault();  // the focus moves to the dialog: the key must not press its Close button
-      openStepDetails(ev);
+      openStep(step);
     }
   });
   return item;
 }
 
-$("step_close").addEventListener("click", () => $("step_dialog").close());
-
-// ---- Step cards ----
-function stepMeta(u) {
-  const meta = el("span", "", "meta");
-  if (u) {
-    const total = (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0) + (u.out || 0);
-    meta.append(el("span", `${fmtTok(total)} tok`), el("span", `${(u.latency_s ?? 0).toFixed(0)}s`));
+// A text block that shows its first 4 lines, with a "show all" button when it is longer.
+function folded(text) {
+  const box = el("div", "", "fold");
+  const pre = el("pre", text, "msg");
+  box.append(pre);
+  if (text.split("\n").length > 4) {
+    pre.classList.add("short");
+    const more = el("button", "show all", "more");
+    more.type = "button";
+    more.addEventListener("click", () => {
+      const short = pre.classList.toggle("short");
+      more.textContent = short ? "show all" : "show less";
+    });
+    box.append(more);
   }
-  return meta;
+  return box;
+}
+
+function thumbs(step) {
+  const imgs = stepImages[step];
+  const row = el("div", "", "thumbs");
+  if (!imgs) return row;
+  for (const [label, data] of [[runCameras.front, imgs.front], [runCameras.top, imgs.top]]) {
+    const img = document.createElement("img");
+    img.src = `data:image/png;base64,${data}`;
+    img.alt = `${label} image of step ${step}`;
+    img.title = label;
+    row.append(img);
+  }
+  return row;
+}
+
+function startThinking(step) {
+  endThinking();
+  const item = entry("thinking", "Claude is thinking…", step);
+  const clock = el("span", "0 s", "clock");
+  item.querySelector(".entry-head").append(clock);
+  const start = performance.now();
+  thinking = { item, start, timer: setInterval(() => {
+    clock.textContent = `${Math.floor((performance.now() - start) / 1000)} s`;
+  }, 250) };
+  addEntry(item);
+}
+
+function endThinking() {
+  if (!thinking) return;
+  clearInterval(thinking.timer);
+  thinking.item.remove();
+  thinking = null;
+}
+
+function usageText(u) {
+  if (!u) return "";
+  const total = (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0);
+  return `${fmtTok(total)} in · ${fmtTok(u.out || 0)} out · $${(u.cost_usd ?? 0).toFixed(4)} · ${(u.latency_s ?? 0).toFixed(1)} s`;
+}
+
+function field(label, node) {
+  const row = el("div", "", "kv");
+  row.append(el("span", label, "k"), node);
+  return row;
+}
+
+function lines(items, cls = "") {
+  const ul = el("ul", "", `lines ${cls}`.trim());
+  ul.append(...items.map((t) => li(t)));
+  return ul;
+}
+
+function onAsk(ev) {
+  if (ev.attempt === 1) {
+    stepPrompts[ev.step] = ev.prompt;
+    const item = entry("sent", "→ Sent", ev.step);
+    item.append(folded(ev.prompt), thumbs(ev.step));
+    addEntry(stepLink(item, ev.step));
+  } else {
+    endThinking();
+    const item = entry("retry", "↻ Retry: the reply was not valid", ev.step);
+    item.append(folded(ev.prompt));
+    addEntry(stepLink(item, ev.step));
+  }
+  startThinking(ev.step);
+}
+
+function onReply(ev) {
+  endThinking();
+  const item = entry("claude", "← Claude", ev.step);
+  if (ev.observation) item.append(field("saw", el("span", ev.observation)));
+  item.append(field("plan", el("span", ev.plan || "(no plan)", "plan")));
+  item.append(field("actions", ev.actions.length ? lines(ev.actions, "mono") : el("span", "none", "muted")));
+  if (ev.notes) item.append(field("notes", el("span", ev.notes)));
+  if (ev.todo && ev.todo.length) item.append(field("todo", lines(ev.todo)));
+  if (ev.lessons && ev.lessons.length) item.append(field("lessons", lines(ev.lessons, "lesson-lines")));
+  if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
+  addEntry(stepLink(item, ev.step));
 }
 
 // "move_to(0.5, 0.1, 0.2): reached, gripper at …" -> action, status word, rest
@@ -307,34 +444,163 @@ function resultLine(text) {
   return row;
 }
 
-function stepCard(ev) {
-  const card = el("li", "", `step ${ev.success || ev.done ? "ok" : ""}`.trim());
-  const head = el("div", "", "step-head");
-  head.append(el("span", String(ev.step), "num"), el("span", ev.plan || "(no plan)", "plan"), stepMeta(ev.usage));
-  card.append(head);
-  if (ev.observation) card.append(el("div", ev.observation, "saw"));
+function onStepResults(ev) {
+  const item = entry("res", "⚙ Results", ev.step);
   if (ev.results.length) {
     const ul = el("ul", "", "results");
     ul.append(...ev.results.map(resultLine));
-    card.append(ul);
+    item.append(ul);
+  } else {
+    item.append(el("div", "no actions ran", "muted"));
   }
-  if (ev.success) card.append(el("span", "Task solved", "badge success"));
-  else if (ev.done) card.append(el("span", "Claude says done", "badge done"));
-  if (ev.truncated) card.append(el("span", "Plan cut to 8 actions", "badge warn"));
-  return clickable(card, ev);
+  if (ev.success) item.append(el("span", "Task solved", "badge success"));
+  else if (ev.done) item.append(el("span", "Claude says done", "badge done"));
+  if (ev.truncated) item.append(el("span", "Plan cut to 8 actions", "badge warn"));
+  addEntry(item);
+  if (ev.stopped) {
+    const warn = entry("stopped", `⚠ Stopped after action ${ev.stopped.after} of ${ev.stopped.of}`, ev.step);
+    warn.append(el("div", ev.stopped.reason));
+    addEntry(warn);
+  }
 }
 
-function errorCard(ev, text) {
-  const card = el("li", "", "step err");
-  const head = el("div", "", "step-head");
-  head.append(el("span", String(ev.step), "num"), el("span", text, "plan errline"), stepMeta(ev.usage));
-  card.append(head);
-  return clickable(card, ev);
+function errorEntry(ev, title, text) {
+  endThinking();
+  const item = entry("error", title, ev.step);
+  item.append(el("div", text));
+  if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
+  addEntry(stepLink(item, ev.step));
 }
+
+function onRunStart(ev) {
+  const item = entry("system", "Run started");
+  const sys = el("details");
+  sys.append(el("summary", "System prompt"), el("pre", ev.system_prompt || ""));
+  item.append(field("task", el("span", ev.instruction)), sys);
+  const saved = ev.saved_lessons || [];
+  if (ev.use_lessons === false) item.append(el("div", "Saved lessons: off for this run", "muted"));
+  else if (saved.length) {
+    const d = el("details");
+    d.append(el("summary", `Saved lessons given to Claude (${saved.length})`), lines(saved, "lesson-lines"));
+    item.append(d);
+  }
+  addEntry(item);
+}
+
+function onRunEnd(ev) {
+  endThinking();
+  const ok = ev.status === "success" || ev.status === "done";
+  const item = entry(ok ? "end ok" : "end", `■ Run ended: ${ev.status}`);
+  if (ev.message) item.append(el("div", ev.message));
+  addEntry(item);
+}
+
+function resetChat() {
+  endThinking();
+  stepEvents = {};
+  stepPrompts = {};
+  $("chat").replaceChildren();
+  $("chat_latest").hidden = true;
+}
+
+$("chat").addEventListener("scroll", () => {
+  $("chat_latest").hidden = atBottom();
+});
+$("chat_latest").addEventListener("click", () => scrollChat(true));
+
+// ---- Lessons ----
+const LESSONS_KEY = "armmind.useLessons";
+let savedLessons = [];
+
+function readUseLessons() {
+  try {
+    return localStorage.getItem(LESSONS_KEY) !== "false";
+  } catch (err) {
+    return true;
+  }
+}
+
+function writeUseLessons(on) {
+  try {
+    localStorage.setItem(LESSONS_KEY, on ? "true" : "false");
+  } catch (err) {
+    // storage is blocked: the choice lasts until the page closes
+  }
+}
+
+$("use_lessons").checked = readUseLessons();
+$("use_lessons").addEventListener("change", () => {
+  writeUseLessons($("use_lessons").checked);
+  showLessons();
+});
+
+function showLessons() {
+  $("lessons").replaceChildren(...(runLessons.length ? runLessons.map((t) => li(t)) : [li("None in this run", "empty")]));
+  const n = savedLessons.length;
+  $("lessons_tag").textContent = String(n);
+  $("lessons_saved").textContent = `${n} saved for this scene${$("use_lessons").checked ? "" : " · off"}`;
+}
+
+async function loadLessons() {
+  try {
+    const r = await fetch(`/api/lessons?scene=${encodeURIComponent(sceneName)}`);
+    savedLessons = r.ok ? await r.json() : [];
+  } catch (err) {
+    savedLessons = [];
+  }
+  showLessons();
+  if ($("lessons_dialog").open) fillLessonsDialog();
+}
+
+function fillLessonsDialog() {
+  const scene = scenes.find((x) => x.name === sceneName);
+  $("lessons_title").textContent = `Saved lessons · ${scene ? scene.title : sceneName}`;
+  $("lessons_clear").disabled = !savedLessons.length;
+  if (!savedLessons.length) {
+    $("lessons_list").replaceChildren(li("No saved lessons for this scene", "empty"));
+    return;
+  }
+  $("lessons_list").replaceChildren(...savedLessons.map((l, i) => {
+    const row = el("li", "", "saved");
+    const text = el("div", "", "saved-text");
+    const when = l.t ? new Date(l.t * 1000).toLocaleString() : "";
+    text.append(el("span", l.text), el("small", [l.outcome, when].filter(Boolean).join(" · "), "muted"));
+    const del = el("button", "Delete", "btn ghost small");
+    del.type = "button";
+    del.setAttribute("aria-label", `Delete lesson ${i + 1}`);
+    del.addEventListener("click", () => deleteLessons(i));
+    row.append(text, del);
+    return row;
+  }));
+}
+
+async function deleteLessons(index = null) {
+  const q = `scene=${encodeURIComponent(sceneName)}${index === null ? "" : `&index=${index}`}`;
+  try {
+    const r = await fetch(`/api/lessons?${q}`, { method: "DELETE" });
+    $("lessons_msg").textContent = r.ok ? "" : r.status === 409 ? "Wait until the run ends" : `error ${r.status}`;
+  } catch (err) {
+    $("lessons_msg").textContent = `error: ${err.message}`;
+  }
+  await loadLessons();
+}
+
+$("lessons_btn").addEventListener("click", () => {
+  $("lessons_msg").textContent = "";
+  fillLessonsDialog();
+  $("lessons_dialog").showModal();
+  loadLessons();
+});
+$("lessons_close").addEventListener("click", () => $("lessons_dialog").close());
+$("lessons_clear").addEventListener("click", () => {
+  if (confirm(`Delete all ${savedLessons.length} saved lessons of this scene?`)) deleteLessons(null);
+});
 
 function emptyMemo() {
   $("todo").replaceChildren(li("Claude writes its plan here", "empty"));
   $("notes").replaceChildren(el("span", "Nothing yet", "empty"));
+  runLessons = [];
+  showLessons();
 }
 
 // ---- Prompt editor ----
@@ -428,6 +694,7 @@ async function renderPreview(seq) {
     if (!r.ok) return;
     const p = await r.json();
     if (seq !== previewSeq || running) return;
+    clearPreviewError();
     showImage("live", `data:image/jpeg;base64,${p.front}`);
     showImage("top", `data:image/png;base64,${p.top}`);
     setCamState("preview");
@@ -461,6 +728,7 @@ $("run").addEventListener("submit", async (e) => {
     seed: Number($("seed").value),
     max_steps: Number($("max_steps").value),
     show_positions: $("show_positions").checked,
+    use_lessons: $("use_lessons").checked,
   };
   if (savedPrompt !== null) body.system_prompt = savedPrompt;
   previewSeq++;  // drop a preview that is still on its way
@@ -469,7 +737,7 @@ $("run").addEventListener("submit", async (e) => {
   stepImages = {};
   runSystemPrompt = "";
   resetTotals();
-  $("steps").replaceChildren();
+  resetChat();
   emptyMemo();
   setStatus("starting", "thinking");
   try {
@@ -498,26 +766,37 @@ function onEvent(ev) {
     runCameras = cameraLabels(ev.scene);
     setRunning(true);
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true);
+    onRunStart(ev);
   } else if (ev.kind === "observation") {
-    stepImages[ev.step] = { front: ev.front_png, top: ev.top_png };  // shown in the step details
+    stepImages[ev.step] = { front: ev.front_png, top: ev.top_png };  // for the chat and the step details
     setStatus(`step ${ev.step} · thinking`, "thinking");
+  } else if (ev.kind === "ask") {
+    onAsk(ev);
   } else if (ev.kind === "reply") {
     setStatus(`step ${ev.step} · moving`, "moving");
+    onReply(ev);
   } else if (ev.kind === "step") {
+    stepEvents[ev.step] = ev;
     addTotals(ev.usage);
-    $("steps").prepend(stepCard(ev));
+    onStepResults(ev);
     $("todo").replaceChildren(...(ev.todo.length ? ev.todo.map((t) => li(t)) : [li("Claude writes its plan here", "empty")]));
     $("notes").replaceChildren(ev.notes ? document.createTextNode(ev.notes) : el("span", "Nothing yet", "empty"));
+    for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
+    showLessons();
   } else if (ev.kind === "bad_reply") {
+    stepEvents[ev.step] = ev;
     addTotals(ev.usage);
-    $("steps").prepend(errorCard(ev, `Bad reply: ${ev.error}`));
+    errorEntry(ev, "✕ Bad reply: step skipped", ev.error);
   } else if (ev.kind === "llm_error") {
+    stepEvents[ev.step] = ev;
     setStatus(`model error: ${ev.message}`, "bad");
     addTotals(ev.usage);
-    $("steps").prepend(errorCard(ev, `Model error (${ev.error_kind}): ${ev.message}`));
+    errorEntry(ev, `✕ Model error (${ev.error_kind})`, ev.message);
   } else if (ev.kind === "run_end") {
     setRunning(false);
     setCamState("ended");
+    onRunEnd(ev);
+    loadLessons();
     if (ev.status === "success") setStatus("success · task solved", "success");
     else if (ev.status === "done") setStatus("done · Claude says finished", "success");
     else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" || ev.status === "llm_error" ? "bad" : "");

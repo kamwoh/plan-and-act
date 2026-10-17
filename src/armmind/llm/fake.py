@@ -1,9 +1,11 @@
 """Scripted backend for tests: replays prepared event lists and records what was sent."""
 from __future__ import annotations
 
+import asyncio
+import re
 from collections.abc import AsyncIterator
 
-from armmind.llm.protocol import LLMError, LLMEvent, Message
+from armmind.llm.protocol import Final, LLMError, LLMEvent, Message, Usage
 
 
 class FakeConversation:
@@ -38,3 +40,46 @@ class FakeBackend:
     async def open(self, system: str) -> FakeConversation:
         self.systems.append(system)
         return FakeConversation(self)
+
+
+DEMO_REPLIES = [  # invented replies for a demo run of the cubes scene
+    {"observation": "The red cube is left of the centre. The gripper is high above the table.",
+     "plan": "Open and move above the red cube.",
+     "actions": [{"type": "open"}, {"type": "move_to", "xyz": [0.5, -0.1, 0.15]}],
+     "todo": ["move above the red cube", "grasp it", "lift it"]},
+    {"observation": "The gripper is above the red cube.", "plan": "Go down and close on the cube.",
+     "actions": [{"type": "move_to", "xyz": [0.5, -0.1, 0.02]}, {"type": "close", "expect": {"holding": "red cube"}}],
+     "todo": ["grasp it", "lift it"], "notes": "The cube is at about x 0.50, y -0.10.",
+     "lessons": ["Closing 2 cm up on a 4 cm cube held it."]},
+    {"observation": "The gripper holds something.", "plan": "Lift the cube.",
+     "actions": [{"type": "move_to", "xyz": [0.5, -0.1, 0.15]}], "todo": ["lift it"]},
+]
+
+
+class DemoConversation:
+    def __init__(self, backend: DemoBackend):
+        self.backend = backend
+
+    async def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]:
+        await asyncio.sleep(self.backend.delay_s)
+        step = re.search(r"Step (\d+) of", msg.text)  # the same reply for the same step in each run
+        body = DEMO_REPLIES[(int(step.group(1)) - 1 if step else 0) % len(DEMO_REPLIES)]
+        yield Final("", body)
+        yield Usage("demo", self.backend.delay_s, 1800, 120, 0.004, 0, 0)
+
+    async def cancel(self) -> None:
+        pass
+
+    async def close(self) -> None:
+        pass
+
+
+class DemoBackend:
+    """A model stand-in for a manual check of the page. It waits, then gives the next invented reply."""
+    name = "demo"
+
+    def __init__(self, delay_s: float = 2.0):
+        self.delay_s = delay_s
+
+    async def open(self, system: str) -> DemoConversation:
+        return DemoConversation(self)
