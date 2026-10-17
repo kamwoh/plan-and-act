@@ -147,6 +147,44 @@ The API has three endpoints for this:
 - `GET /api/runs/{id}` gives the events of one run. Each image is a URL, not the image data.
 - `GET /api/runs/{id}/images/{name}` gives one image of the run.
 
+## Plan first
+
+The Plan button next to Start keeps two questions apart. Does Claude understand the scene and the task? Does the physics work? Plan uses the same instruction, scene, seed and lessons switch as Start.
+
+Claude gets one message with the scene text, the task, the two start images and the saved lessons. The message never holds the true positions, even with the debug switch on. Claude replies once with its belief of the scene and a plan for the whole task:
+
+- `objects`: up to 12 objects. Each one has a shape (box or cylinder), a size, a centre and a yaw.
+- `keyframes`: 1 to 40 gripper poses. Each one has a point, a yaw, the gripper state, the held object and a short note.
+- `summary`: the plan in one or two sentences.
+
+The camera boxes then play the plan as an imagined video. The page draws it with three.js r128 from cdnjs. Each view has the pose and the field of view of its real camera. The top view has the same grid labels as the real top image. Grey see-through shapes show the belief. A blue line shows the path of the gripper. A red dot marks a keyframe that failed a check. The video plays at real time, with the duration rule of `move_to`.
+
+The bar under the cameras has a play button, a time slider and the current keyframe with its note. Its last four buttons choose what the boxes show:
+
+- **Imagined:** the belief.
+- **Real start:** the true objects at the start.
+- **Both:** the belief, and the true objects as outlines.
+- **Camera:** the camera images.
+
+Drag in a view to turn it. Double-click to go back to the camera pose.
+
+The Plan check entry in the chat compares the belief with the true scene. For each object, it gives the error in xy, in z, in size and in yaw. An error above 2 cm or 15° is red. The yaw error ignores turns that do not change the shape: 90° for a square footprint and 180° for a box. A round object has no yaw error. The entry also lists the missing and the invented objects. Each keyframe gets these checks:
+
+- **reach:** the arm finds joint angles for the pose.
+- **collision:** on the straight path from the last keyframe, the hand and the fingers do not pass through a true object. The check uses boxes, so it can be wrong for a scanned object with an odd shape.
+- **grasp:** at a close, the fingers close across the narrow side within 20°. The narrow side is 7.5 cm or less. The hand is within 2 cm of the centre.
+- **release:** at an open, the entry gives the height of the held object above the table.
+
+Press Execute plan to run the keyframes once in the physics. The scene starts again from the same seed. Each keyframe becomes a `move_to`, then an `open` or a `close` when the gripper state changes. The stop rules of a normal step apply, and the code calls no model. At the end, the auto-check runs if the instruction matches a task of the scene. The cameras show the live frames, and the chat shows the results.
+
+The history shows a "plan" badge on a plan run. A load shows the chat, the Plan check and the imagined video. The API has three endpoints for plans:
+
+- `POST /api/plan` starts a plan.
+- `GET /api/plan/{id}/view` gives the data of the video as JSON.
+- `POST /api/plan/{id}/execute` runs a saved plan once.
+
+The code in `src/armmind/plan/` has no MuJoCo code. Another environment can supply its own video and checks. It must implement `PlanEnvironment` in `src/armmind/plan/formats.py`.
+
 ## How it works
 
 Each step: the app renders a front and a top camera image with a grid on the table. Claude gets the images, the gripper position and the gripper yaw. It replies with up to 8 actions: `move_to [x, y, z]`, `open`, `close`, `wait`.
