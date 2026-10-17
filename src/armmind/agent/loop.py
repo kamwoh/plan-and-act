@@ -78,6 +78,9 @@ def check_result(action: Action, result: ActionResult, labels: dict[str, str]) -
     return result, None
 
 
+MAX_RUN_LESSONS = 30  # the newest lessons of this run that go into each step message
+
+
 class Agent:
     def __init__(self, backend: LLMBackend, config: AgentConfig | None = None, system: str | None = None,
                  store: LessonStore | None = None, use_lessons: bool = True, run_id: str = ""):
@@ -95,14 +98,23 @@ class Agent:
             await self._conv.cancel()
 
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
-        history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
         self.run_lessons = []
         self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
-        notes, todo, status, check_failed, stopped_reason = "", (), "step_limit", False, None
-        labels = getattr(env, "object_labels", None) or {}
         emit("run_start", {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
                            "check": env.check_name, "system_prompt": self.system,
                            "use_lessons": self.use_lessons, "saved_lessons": list(self.saved_lessons)})
+        status = "error"  # kept when a step raises
+        try:
+            status = await self._steps(env, call, emit)
+        finally:
+            self._save_lessons(env.scene_name, status)
+        emit("run_end", {"status": status})
+        return status
+
+    async def _steps(self, env: Env, call: Call, emit: Emit) -> str:
+        history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
+        notes, todo, status, check_failed, stopped, stopped_reason = "", (), "step_limit", False, None, None
+        labels = getattr(env, "object_labels", None) or {}
         for n in range(1, self.cfg.max_steps + 1):
             if self._stop.is_set():
                 status = "stopped"
@@ -110,8 +122,9 @@ class Agent:
             obs = await call(env.observe)
             emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
             text = build_user_text(env.scene_text, env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history),
-                                   check_failed, env.image_text, [*self.saved_lessons, *self.run_lessons],
-                                   stopped_reason)
+                                   check_failed, env.image_text,
+                                   [*self.saved_lessons, *self.run_lessons[-MAX_RUN_LESSONS:]], stopped_reason,
+                                   skipped=bool(stopped and stopped["after"] < stopped["of"]))
             self._conv = await self.backend.open(self.system)
             attempts: list[dict] = []
             try:
@@ -174,15 +187,13 @@ class Agent:
             if self._stop.is_set():
                 status = "stopped"
                 break
-            if reply.done and not env.has_check:
+            if reply.done and not stopped and not env.has_check:
                 status = "done"
                 break
             check_failed = reply.done  # the model says it is done, but the check disagrees
         else:
             if self._stop.is_set():
                 status = "stopped"
-        self._save_lessons(env.scene_name, status)
-        emit("run_end", {"status": status})
         return status
 
     def _save_lessons(self, scene: str, status: str) -> None:

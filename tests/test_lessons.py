@@ -104,3 +104,30 @@ async def test_a_corrupt_store_does_not_stop_the_run(tmp_path):
     status = await Agent(FakeBackend([good(lessons=["x"])]), AgentConfig(max_steps=1), store=store).run(
         FakeEnv(), direct, Recorder())
     assert status == "step_limit" and store.texts("cubes") == ["x"]
+
+
+async def test_lessons_are_saved_when_the_run_fails(tmp_path):
+    store = LessonStore(tmp_path)
+    env = FakeEnv()
+    act = env.act
+
+    def act_then_fail(action):
+        if len(env.acts) >= 1:
+            raise RuntimeError("sim broke")
+        return act(action)
+
+    env.act = act_then_fail
+    backend = FakeBackend([good(lessons=["kept"]), good()])
+    with pytest.raises(RuntimeError):
+        await Agent(backend, AgentConfig(max_steps=2), store=store, run_id="r9").run(env, direct, Recorder())
+    items = store.load("cubes")
+    assert [i["text"] for i in items] == ["kept"] and items[0]["outcome"] == "error"
+
+
+async def test_only_the_newest_30_run_lessons_go_to_the_model():
+    replies = [good(lessons=[f"lesson {3 * i + k:02d}" for k in range(3)]) for i in range(12)] + [good()]
+    backend = FakeBackend(replies)
+    await Agent(backend, AgentConfig(max_steps=13)).run(FakeEnv(), direct, Recorder())
+    last = backend.sent[12][0].text
+    assert "lesson 35" in last and "lesson 06" in last
+    assert all(f"lesson {i:02d}" not in last for i in range(6))

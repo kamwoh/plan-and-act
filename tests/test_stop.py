@@ -201,3 +201,23 @@ def test_real_grasp_counts_as_held_and_the_solution_has_no_stop(scene, task, obj
     assert stops == []
     first_close = next(r for r in results if r.action.type == "close")
     assert first_close.held_after == (obj,)
+
+
+async def test_a_stopped_list_does_not_end_a_no_check_run_as_done():
+    env, rec = ScriptEnv([{"gripper_width": 0.001}], has_check=False), Recorder()
+    backend = FakeBackend([good([CLOSE, MOVE], done=True), good()])
+    status = await Agent(backend, AgentConfig(max_steps=2)).run(env, direct, rec)
+    assert status == "step_limit" and len(backend.sent) == 2
+
+
+async def test_a_stop_on_the_last_action_says_it_failed():
+    _, _, backend = await run_one([MOVE, CLOSE], [{}, {"gripper_width": 0.001}], steps=2, more=[good()])
+    text = backend.sent[1][0].text
+    assert ("Your last action failed: the gripper closed on nothing. Look at the images and plan again. "
+            "Write a lesson if it helps.") in text
+    assert "stopped early" not in text
+
+
+def test_system_says_how_to_close_on_purpose():
+    assert 'To close the gripper on purpose with nothing inside, for example to press or push, add ' \
+           '"expect": {"holding": "nothing"}.' in SYSTEM

@@ -39,6 +39,8 @@ The code stops your action list at the first failure: a blocked or unreachable m
 or a dropped object. You then get new images.
 Add "expect": {"holding": "<object>"} or {"holding": "nothing"} to an action to say what the gripper \
 should hold after it. A mismatch also stops the list.
+To close the gripper on purpose with nothing inside, for example to press or push, \
+add "expect": {"holding": "nothing"}.
 
 The simulation stops while you think. Use at most 8 actions in each step. \
 Write "observation" in 2 short sentences and "plan" in 1 sentence. \
@@ -94,7 +96,7 @@ IMAGE_TEXT = "Image 1: front camera. Image 2: top camera."
 def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs: Observation, notes: str,
                     todo: tuple[str, ...], history: list[StepSummary], check_failed: bool = False,
                     image_text: str | None = None, lessons: list[str] | tuple[str, ...] = (),
-                    stopped: str | None = None) -> str:
+                    stopped: str | None = None, skipped: bool = True) -> str:
     lines = [
         f"Scene: {scene}",
         f"Task: {instruction}",
@@ -103,8 +105,8 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
     if stopped:
-        lines.append(f"Your last action list stopped early: {stopped}. Look at the images and plan again. "
-                     "Write a lesson if it helps.")
+        head = "Your last action list stopped early" if skipped else "Your last action failed"
+        lines.append(f"{head}: {stopped}. Look at the images and plan again. Write a lesson if it helps.")
     if obs.objects:
         yaws = obs.object_yaws or {}
         lines.append("Object centres (debug): " + "; ".join(
