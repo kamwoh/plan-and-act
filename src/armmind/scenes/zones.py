@@ -1,7 +1,7 @@
 """Three cubes and three flat coloured zones: put cubes on zones."""
 from __future__ import annotations
 
-from armmind.scenes.base import Scene, Task
+from armmind.scenes.base import Scene, Task, box
 from armmind.scenes.common import THREE_CUBES, free, put
 
 ZONE_X, ZONE_HALF, RELEASE_Z = 0.68, 0.04, 0.025
@@ -18,6 +18,8 @@ FIXTURES = "\n".join(
     f'contype="0" conaffinity="0"/>\n'
     f'    </body>'
     for c, (y, rgba) in ZONES.items())
+SHAPES = tuple(box(f"{c}_zone", (ZONE_X, y, 0.0006), (2 * ZONE_HALF, 2 * ZONE_HALF, 0.001), rgba)
+               for c, (y, rgba) in ZONES.items())
 TEXT = ("Three flat coloured squares (zones) on the table, each 8 cm wide, centred at x 0.68: "
         "red zone at y -0.15, blue zone at y 0.00, green zone at y 0.15.")
 
@@ -37,7 +39,7 @@ def _sort_plan(w):
 
 
 ZONES_SCENE = Scene(
-    name="zones", title="Zones", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT,
+    name="zones", title="Zones", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.40, 0.58, -0.25, 0.25), min_gap=0.10,
     tasks={t.name: t for t in (
         Task("red_on_green", "Put the red cube on the green zone.", lambda w: on_zone(w, "red_cube", "green"),

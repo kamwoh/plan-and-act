@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 
+from armmind.plan.formats import Entity
 from armmind.types import Action
 
 if TYPE_CHECKING:
@@ -15,6 +16,22 @@ if TYPE_CHECKING:
 Layout = dict[str, tuple[float, float, float]]  # name -> (x, y, yaw in degrees)
 Monitor = Callable[["World"], "str | None"]  # called after each physics step; returns an event or None
 MAX_TRIES = 10000  # random points to try before layout() gives up
+
+
+def rgba(text: str) -> tuple[float, float, float, float]:
+    """An MJCF colour such as "0.9 0.1 0.1 1" as four numbers."""
+    r, g, b, a = (float(v) for v in text.split())
+    return (r, g, b, a)
+
+
+def box(name: str, xyz, size, color: str, yaw: float = 0.0) -> Entity:
+    """A box fixture from its centre and full size."""
+    return Entity(name, "box", tuple(float(v) for v in size), tuple(float(v) for v in xyz), yaw, rgba(color))
+
+
+def cylinder(name: str, xyz, radius: float, height: float, color: str) -> Entity:
+    """An upright cylinder fixture from its centre."""
+    return Entity(name, "cylinder", (2 * radius, 2 * radius, height), tuple(float(v) for v in xyz), 0.0, rgba(color))
 
 
 def threshold_monitor(joint: str, fire_at: float, rearm_at: float, event: str) -> Callable[[], Monitor]:
@@ -47,6 +64,7 @@ class ObjSpec:
     mesh: str = ""  # a scanned object: its folder name in assets/scanned_objects/models
     random_yaw: bool = False  # the layout turns the object by a random yaw
     place: tuple[float, float] | None = None  # a fixed start point (x, y) in place of a random one
+    round: bool = False  # a mesh object with a round footprint, such as a bowl: it looks the same at any yaw
 
     def __post_init__(self):
         if (self.shape == "mesh") != bool(self.mesh):
@@ -112,6 +130,9 @@ class Scene:
     camera_overrides: dict[str, tuple[str, str]] = field(default_factory=dict)  # camera: (pos, xyaxes)
     image_text: str | None = None  # replaces the last line of the step message, which names the images
     camera_labels: dict[str, str] = field(default_factory=lambda: {"front": "Front", "top": "Top · grid"})
+    # The fixed items as shapes, one for each geom of fixtures_xml, at the scene start. A test checks that
+    # the two agree. The plan view draws them.
+    fixtures: tuple[Entity, ...] = ()
 
     @property
     def meshes(self) -> tuple[str, ...]:

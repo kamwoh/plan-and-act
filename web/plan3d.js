@@ -1,0 +1,455 @@
+// A generic player for a PlanView: fixed entities, believed and true entities, an agent that follows a timed
+// track, and one canvas for each camera of the environment. All names and shapes come from the view data.
+(function () {
+  "use strict";
+  const T = window.THREE;
+  const RAD = Math.PI / 180;
+  const BELIEF_COLOR = 0x9aa3b2;
+  const PATH_COLOR = 0x5b8cff;
+  const FAIL_COLOR = 0xff4d4d;
+  const DEFAULT_COLOR = [0.78, 0.78, 0.78, 1];
+
+  const clamp01 = (a) => Math.min(1, Math.max(0, a));
+  const smooth = (a) => a * a * (3 - 2 * a);  // the same timing as the environment's motion
+  const lerp = (a, b, s) => a + (b - a) * s;
+  const lerp3 = (a, b, s) => [lerp(a[0], b[0], s), lerp(a[1], b[1], s), lerp(a[2], b[2], s)];
+  const rgb = (c) => new T.Color((c || DEFAULT_COLOR)[0], (c || DEFAULT_COLOR)[1], (c || DEFAULT_COLOR)[2]);
+
+  function unitGeometry(shape) {
+    if (shape === "cylinder") {
+      const g = new T.CylinderGeometry(0.5, 0.5, 1, 40);
+      g.rotateX(Math.PI / 2);  // the axis along +z
+      return g;
+    }
+    if (shape === "sphere") return new T.SphereGeometry(0.5, 32, 16);
+    return new T.BoxGeometry(1, 1, 1);
+  }
+
+  // An entity as a group: a unit shape scaled to the size, at the centre, turned by the yaw.
+  // style: "solid", "ghost" (see-through grey) or "outline" (edges only, in the entity colour).
+  function entityGroup(e, style) {
+    const group = new T.Group();
+    const geo = unitGeometry(e.shape);
+    if (style !== "outline") {
+      const ghost = style === "ghost";
+      const mat = new T.MeshLambertMaterial({
+        color: ghost ? BELIEF_COLOR : rgb(e.color), transparent: ghost || (e.color && e.color[3] < 1),
+        opacity: ghost ? 0.55 : (e.color ? e.color[3] : 1), depthWrite: !ghost,
+      });
+      group.add(new T.Mesh(geo, mat));
+    }
+    if (style !== "solid") {
+      const edges = new T.EdgesGeometry(geo, 30);
+      const color = style === "ghost" ? 0xdfe5ee : rgb(e.color);
+      group.add(new T.LineSegments(edges, new T.LineBasicMaterial({ color })));
+    }
+    group.scale.set(e.size[0], e.size[1], e.size[2]);
+    group.position.set(e.xyz[0], e.xyz[1], e.xyz[2]);
+    group.rotation.z = (e.yaw || 0) * RAD;
+    group.userData.name = e.name;
+    return group;
+  }
+
+  // ---- Time: the agent pose and the carried entities at time t ----
+  function agentAt(track, t) {
+    const kfs = track.keyframes;
+    let prev = track.start;
+    let t0 = 0;
+    for (let k = 0; k < kfs.length; k++) {
+      const kf = kfs[k];
+      if (t < kf.t) {
+        const s = smooth(clamp01((t - t0) / Math.max(1e-6, kf.t - t0)));
+        return { xyz: lerp3(prev.xyz, kf.xyz, s), yaw: lerp(prev.yaw, kf.yaw, s), gap: prev.gap, index: k };
+      }
+      if (t < kf.t_done) {
+        const s = kf.changes ? smooth(clamp01((t - kf.t) / Math.max(1e-6, kf.t_done - kf.t))) : 1;
+        return { xyz: kf.xyz.slice(), yaw: kf.yaw, gap: lerp(prev.gap, kf.gap, s), index: k };
+      }
+      prev = kf;
+      t0 = kf.t_done;
+    }
+    return { xyz: prev.xyz.slice(), yaw: prev.yaw, gap: prev.gap, index: Math.max(0, kfs.length - 1) };
+  }
+
+  // An entity pose in the frame of an agent pose, and back.
+  function toLocal(agent, pose) {
+    const c = Math.cos(-agent.yaw * RAD), s = Math.sin(-agent.yaw * RAD);
+    const dx = pose.xyz[0] - agent.xyz[0], dy = pose.xyz[1] - agent.xyz[1];
+    return { xyz: [c * dx - s * dy, s * dx + c * dy, pose.xyz[2] - agent.xyz[2]], yaw: pose.yaw - agent.yaw };
+  }
+
+  function toWorld(agent, local) {
+    const c = Math.cos(agent.yaw * RAD), s = Math.sin(agent.yaw * RAD);
+    return {
+      xyz: [agent.xyz[0] + c * local.xyz[0] - s * local.xyz[1], agent.xyz[1] + s * local.xyz[0] + c * local.xyz[1],
+            agent.xyz[2] + local.xyz[2]],
+      yaw: agent.yaw + local.yaw,
+    };
+  }
+
+  // The poses of a set of entities at time t. rename maps a carried name of the track to a name of the set.
+  function posesAt(track, entities, t, rename) {
+    const poses = {};
+    for (const e of entities) poses[e.name] = { xyz: e.xyz.slice(), yaw: e.yaw || 0 };
+    let carried = null;
+    track.keyframes.forEach((kf, k) => {
+      if (t < kf.t) return;
+      const at = { xyz: kf.xyz, yaw: kf.yaw };
+      const want = kf.carrying ? rename(kf.carrying) : null;
+      if (carried && carried.name !== want) {
+        poses[carried.name] = toWorld(at, carried.local);
+        carried = null;
+      }
+      if (want && !carried && poses[want]) carried = { name: want, local: toLocal(at, poses[want]), from: k };
+    });
+    if (carried) poses[carried.name] = toWorld(agentAt(track, t), carried.local);
+    return poses;
+  }
+
+  // ---- One camera view ----
+  class CameraView {
+    constructor(slot, cam, view) {
+      this.cam = cam;
+      this.canvas = slot.canvas;
+      this.overlay = slot.overlay;
+      this.renderer = slot.renderer;
+      this.scene = new T.Scene();
+      this.scene.background = new T.Color(0x000000);
+      const W = cam.width, H = cam.height;
+      this.camera = new T.PerspectiveCamera(cam.fovy, W / H, 0.01, 30);
+      this.scene.add(this.camera);
+      this.scene.add(new T.AmbientLight(0xffffff, 0.5));
+      const sun = new T.DirectionalLight(0xffffff, 0.5);
+      sun.position.set(0, 0, 1.5);
+      this.scene.add(sun);
+      const head = new T.DirectionalLight(0xffffff, 0.4);  // a light at the camera, as a headlight
+      head.position.set(0, 0, 1);
+      this.camera.add(head);
+      this.resetCamera();
+      this.build(view);
+      this.bindOrbit();
+    }
+
+    resetCamera() {
+      const c = this.cam;
+      this.camera.position.set(c.pos[0], c.pos[1], c.pos[2]);
+      this.camera.up.set(c.up[0], c.up[1], c.up[2]);
+      this.camera.lookAt(c.pos[0] + c.forward[0], c.pos[1] + c.forward[1], c.pos[2] + c.forward[2]);
+      const down = c.forward[2] < -0.05 ? -c.pos[2] / c.forward[2] : 1;  // where the view axis meets the floor
+      this.target = new T.Vector3(c.pos[0] + c.forward[0] * down, c.pos[1] + c.forward[1] * down,
+                                  c.pos[2] + c.forward[2] * down);
+      this.orbiting = false;
+      this.dirty = true;
+    }
+
+    build(view) {
+      for (const f of view.fixtures) this.scene.add(entityGroup(f, "solid"));
+      if (this.cam.grid && view.grid) this.addGrid(view.grid);
+      this.believed = {};
+      this.trueSolid = {};
+      this.trueOutline = {};
+      for (const e of view.believed) this.scene.add(this.believed[e.name] = entityGroup(e, "ghost"));
+      for (const e of view.true_start) {
+        this.scene.add(this.trueSolid[e.name] = entityGroup(e, "solid"));
+        this.scene.add(this.trueOutline[e.name] = entityGroup(e, "outline"));
+      }
+      this.addAgent(view.agent);
+      this.addPath(view);
+    }
+
+    addGrid(grid) {
+      const pts = [];
+      const z = (grid.z || 0) + 0.0008;
+      const x0 = grid.x[0], x1 = grid.x[grid.x.length - 1], y0 = grid.y[0], y1 = grid.y[grid.y.length - 1];
+      for (const x of grid.x) pts.push(new T.Vector3(x, y0, z), new T.Vector3(x, y1, z));
+      for (const y of grid.y) pts.push(new T.Vector3(x0, y, z), new T.Vector3(x1, y, z));
+      const geo = new T.BufferGeometry().setFromPoints(pts);
+      this.scene.add(new T.LineSegments(geo, new T.LineBasicMaterial({ color: 0x1e1e1e })));
+      this.grid = grid;
+    }
+
+    addAgent(agent) {
+      this.agent = new T.Group();
+      this.slideAxis = agent.slide_axis || [1, 0, 0];
+      this.parts = agent.parts.map((p) => {
+        const g = entityGroup({ ...p, yaw: 0, color: agent.color }, "solid");
+        g.userData.base = p.xyz;
+        g.userData.slide = p.slide || 0;
+        this.agent.add(g);
+        return g;
+      });
+      this.scene.add(this.agent);
+    }
+
+    addPath(view) {
+      const track = view.track;
+      const pts = [track.start.xyz, ...track.keyframes.map((k) => k.xyz)].map((p) => new T.Vector3(p[0], p[1], p[2]));
+      const line = new T.Line(new T.BufferGeometry().setFromPoints(pts),
+                              new T.LineBasicMaterial({ color: PATH_COLOR, depthTest: false, transparent: true, opacity: 0.85 }));
+      line.renderOrder = 10;
+      this.scene.add(line);
+      const marks = view.marks || [];
+      track.keyframes.forEach((k, i) => {
+        const bad = marks[i] && marks[i].ok === false;
+        const dot = new T.Mesh(new T.SphereGeometry(bad ? 0.009 : 0.005, 16, 8),
+                               new T.MeshBasicMaterial({ color: bad ? FAIL_COLOR : PATH_COLOR, depthTest: false, transparent: true }));
+        dot.position.set(k.xyz[0], k.xyz[1], k.xyz[2]);
+        dot.renderOrder = 11;
+        this.scene.add(dot);
+      });
+    }
+
+    setMode(mode) {
+      for (const g of Object.values(this.believed)) g.visible = mode !== "real";
+      for (const g of Object.values(this.trueSolid)) g.visible = mode === "real";
+      for (const g of Object.values(this.trueOutline)) g.visible = mode === "both";
+      this.dirty = true;
+    }
+
+    pose(groups, poses) {
+      for (const [name, p] of Object.entries(poses)) {
+        const g = groups[name];
+        if (!g) continue;
+        g.position.set(p.xyz[0], p.xyz[1], p.xyz[2]);
+        g.rotation.z = p.yaw * RAD;
+      }
+    }
+
+    update(agentPose, believedPoses, truePoses) {
+      this.agent.position.set(agentPose.xyz[0], agentPose.xyz[1], agentPose.xyz[2]);
+      this.agent.rotation.z = agentPose.yaw * RAD;
+      const a = this.slideAxis;
+      for (const g of this.parts) {
+        const d = (g.userData.slide * agentPose.gap) / 2;
+        const b = g.userData.base;
+        g.position.set(b[0] + a[0] * d, b[1] + a[1] * d, b[2] + a[2] * d);
+      }
+      this.pose(this.believed, believedPoses);
+      this.pose(this.trueSolid, truePoses);
+      this.pose(this.trueOutline, truePoses);
+      this.dirty = true;
+    }
+
+    render() {
+      if (!this.dirty) return;
+      this.dirty = false;
+      this.renderer.render(this.scene, this.camera);
+      this.drawLabels();
+    }
+
+    // The grid labels at the same pixel offsets as the labels of the real image.
+    drawLabels() {
+      const ctx = this.overlay.getContext("2d");
+      const W = this.cam.width, H = this.cam.height;
+      const r = this.overlay.width / W;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+      if (!this.grid) return;
+      ctx.setTransform(r, 0, 0, r, 0, 0);
+      ctx.fillStyle = "#000";
+      ctx.font = "10px sans-serif";
+      ctx.textBaseline = "hanging";
+      const fmt = (v) => (Math.abs(v) < 1e-9 ? 0 : v).toFixed(1);
+      const px = (x, y) => {
+        const v = new T.Vector3(x, y, this.grid.z || 0).project(this.camera);
+        return v.z > 1 ? null : [(v.x + 1) / 2 * W, (1 - v.y) / 2 * H];
+      };
+      const g = this.grid;
+      for (const x of g.x) {
+        const a = px(x, g.y[0]);
+        if (a) ctx.fillText(`x=${fmt(x)}`, a[0] - 34, a[1] - 9);
+      }
+      for (const y of g.y) {
+        const a = px(g.x[0], y);
+        if (a) ctx.fillText(`y=${fmt(y)}`, a[0] - 14, a[1] - 17);
+      }
+    }
+
+    // Drag to turn the view about the point it looks at. The wheel zooms. A double click goes back.
+    bindOrbit() {
+      const c = this.canvas;
+      let last = null;
+      this.onDown = (e) => {
+        last = [e.clientX, e.clientY];
+        c.setPointerCapture(e.pointerId);
+      };
+      this.onMove = (e) => {
+        if (!last) return;
+        const dx = e.clientX - last[0], dy = e.clientY - last[1];
+        last = [e.clientX, e.clientY];
+        this.orbit(-dx * 0.008, dy * 0.008, 1);
+      };
+      this.onUp = () => { last = null; };
+      this.onWheel = (e) => {
+        e.preventDefault();
+        this.orbit(0, 0, e.deltaY > 0 ? 1.1 : 1 / 1.1);
+      };
+      this.onDbl = () => this.resetCamera();
+      c.addEventListener("pointerdown", this.onDown);
+      c.addEventListener("pointermove", this.onMove);
+      c.addEventListener("pointerup", this.onUp);
+      c.addEventListener("wheel", this.onWheel, { passive: false });
+      c.addEventListener("dblclick", this.onDbl);
+    }
+
+    orbit(dAz, dEl, zoom) {
+      const off = this.camera.position.clone().sub(this.target);
+      const r = off.length() * zoom;
+      let az = Math.atan2(off.y, off.x) + dAz;
+      let el = Math.asin(Math.max(-1, Math.min(1, off.z / off.length()))) + dEl;
+      el = Math.max(5 * RAD, Math.min(88 * RAD, el));
+      if (!this.orbiting && Math.abs(off.z / off.length()) > 0.999) az = Math.atan2(-this.cam.up[1], -this.cam.up[0]);
+      this.orbiting = true;
+      this.camera.up.set(0, 0, 1);
+      this.camera.position.set(this.target.x + r * Math.cos(el) * Math.cos(az), this.target.y + r * Math.cos(el) * Math.sin(az),
+                               this.target.z + r * Math.sin(el));
+      this.camera.lookAt(this.target);
+      this.dirty = true;
+    }
+
+    dispose() {
+      const c = this.canvas;
+      c.removeEventListener("pointerdown", this.onDown);
+      c.removeEventListener("pointermove", this.onMove);
+      c.removeEventListener("pointerup", this.onUp);
+      c.removeEventListener("wheel", this.onWheel);
+      c.removeEventListener("dblclick", this.onDbl);
+      this.scene.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) o.material.dispose();
+      });
+    }
+  }
+
+  // ---- The player: one clock for all views ----
+  class Player {
+    // slots: [{ canvas, overlay, camera: the camera name of the view }]
+    constructor(slots) {
+      this.slots = slots.map((s) => ({ ...s, renderer: new T.WebGLRenderer({ canvas: s.canvas, antialias: true }) }));
+      this.views = [];
+      this.view = null;
+      this.time = 0;
+      this.playing = false;
+      this.mode = "imagined";
+      this.listeners = [];
+      this.raf = null;
+      this.lastNow = null;
+    }
+
+    load(view) {
+      this.unload();
+      this.view = view;
+      const byName = Object.fromEntries(view.cameras.map((c) => [c.name, c]));
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      for (const slot of this.slots) {
+        const cam = byName[slot.camera];
+        if (!cam) continue;
+        slot.renderer.setPixelRatio(dpr);
+        slot.renderer.setSize(cam.width, cam.height, false);
+        slot.overlay.width = Math.round(cam.width * dpr);
+        slot.overlay.height = Math.round(cam.height * dpr);
+        this.views.push(new CameraView(slot, cam, view));
+      }
+      const back = {};
+      for (const [trueName, believed] of Object.entries(view.true_match || {})) back[believed] = trueName;
+      this.toTrue = (name) => back[name] || null;
+      this.setMode(this.mode);
+      this.seek(0);
+      this.loop();
+    }
+
+    get duration() {
+      return this.view ? this.view.track.duration : 0;
+    }
+
+    setMode(mode) {
+      this.mode = mode;
+      for (const v of this.views) v.setMode(mode);
+    }
+
+    seek(t) {
+      if (!this.view) return;
+      this.time = Math.min(Math.max(0, t), this.duration);
+      const track = this.view.track;
+      const agent = agentAt(track, this.time);
+      const believed = posesAt(track, this.view.believed, this.time, (n) => n);
+      const truth = posesAt(track, this.view.true_start, this.time, this.toTrue);
+      for (const v of this.views) v.update(agent, believed, truth);
+      const kf = track.keyframes[agent.index];
+      for (const fn of this.listeners) fn({ time: this.time, duration: this.duration, index: agent.index, keyframe: kf, playing: this.playing });
+    }
+
+    play() {
+      if (!this.view) return;
+      if (this.time >= this.duration) this.seek(0);
+      this.playing = true;
+      this.lastNow = null;
+      this.seek(this.time);
+    }
+
+    pause() {
+      this.playing = false;
+      this.seek(this.time);
+    }
+
+    toggle() {
+      if (this.playing) this.pause();
+      else this.play();
+    }
+
+    onTick(fn) {
+      this.listeners.push(fn);
+    }
+
+    resetViews() {
+      for (const v of this.views) v.resetCamera();
+    }
+
+    loop() {
+      const step = (now) => {
+        if (!this.view) return;
+        if (this.playing) {
+          if (this.lastNow !== null) {
+            const t = this.time + (now - this.lastNow) / 1000;  // real time
+            if (t >= this.duration) {
+              this.playing = false;
+              this.seek(this.duration);
+            } else {
+              this.seek(t);
+            }
+          }
+          this.lastNow = now;
+        }
+        for (const v of this.views) v.render();
+        this.raf = requestAnimationFrame(step);
+      };
+      this.raf = requestAnimationFrame(step);
+    }
+
+    unload() {
+      if (this.raf !== null) cancelAnimationFrame(this.raf);
+      this.raf = null;
+      for (const v of this.views) v.dispose();
+      this.views = [];
+      this.view = null;
+      this.playing = false;
+      this.time = 0;
+    }
+  }
+
+  window.Plan3D = {
+    available() {
+      try {
+        const c = document.createElement("canvas");
+        return Boolean(T && (c.getContext("webgl2") || c.getContext("webgl")));
+      } catch (err) {
+        return false;
+      }
+    },
+    player(slots) {
+      return new Player(slots);
+    },
+    agentAt,
+    posesAt,
+  };
+})();

@@ -27,6 +27,17 @@ MAX_WAIT_S = 3.0
 FRAME_DT = 1 / 30
 
 
+def clamp_target(xyz) -> np.ndarray:
+    """The point that move_to goes to: the target, moved into the workspace box."""
+    return np.clip(np.asarray(xyz, dtype=float), WORKSPACE_LO, WORKSPACE_HI)
+
+
+def move_duration(start, target, yaw0: float, yaw: float) -> float:
+    """The time of the motion of a move_to in seconds, without the settle time after it."""
+    dist = float(np.linalg.norm(np.asarray(target, dtype=float) - np.asarray(start, dtype=float)))
+    return max(0.4, dist / SPEED, abs(yaw - yaw0) / TURN_SPEED)
+
+
 class Arm:
     def __init__(self, world: World, on_frame: Callable[[], None] | None = None):
         self.w, self.on_frame = world, on_frame
@@ -126,7 +137,7 @@ class Arm:
 
     def _move_to(self, action: Action) -> ActionResult:
         want = np.asarray(action.xyz, dtype=float)
-        target = np.clip(want, WORKSPACE_LO, WORKSPACE_HI)
+        target = clamp_target(want)
         notes = ["target clamped to the workspace"] if not np.allclose(target, want) else []
         yaw = self._yaw if action.yaw is None else float(np.clip(action.yaw, -YAW_LIMIT, YAW_LIMIT))
         if action.yaw is not None and yaw != action.yaw:
@@ -136,7 +147,7 @@ class Arm:
             why = "no joint solution for this point"
             return self._result(action, "unreachable", f"{note}, and {why}" if note else why)
         start, yaw0, q = self.w.tcp(), self._yaw, self.w.data.ctrl[:7].copy()
-        duration = max(0.4, float(np.linalg.norm(target - start)) / SPEED, abs(yaw - yaw0) / TURN_SPEED)
+        duration = move_duration(start, target, yaw0, yaw)
         ticks = max(1, round(duration / (self.w.dt * TICK_STEPS)))
         last_yaw = yaw0
         for i in range(1, ticks + 1):

@@ -11,9 +11,10 @@ BOWL_XY, PLATE_XY = (0.62, 0.22), (0.62, -0.22)
 BOWL_WALL = 0.01  # from the outer rim to the inner wall
 DROP = 0.015  # release an item this far above the surface below it
 PLATE_TOL = 0.01  # an item on the plate has its bottom this close to the plate floor
-BOWL = ObjSpec("bowl", "mesh", label="white bowl", mass=0.8, mesh="Threshold_Bead_Cereal_Bowl_White", place=BOWL_XY)
+BOWL = ObjSpec("bowl", "mesh", label="white bowl", mass=0.8, mesh="Threshold_Bead_Cereal_Bowl_White", place=BOWL_XY,
+               round=True)
 PLATE = ObjSpec("plate", "mesh", label="turquoise plate", mass=0.8, mesh="Room_Essentials_Salad_Plate_Turquoise",
-                place=PLATE_XY)
+                place=PLATE_XY, round=True)
 BOTTLE = ObjSpec("bottle", "mesh", label="white bottle", mass=0.15, mesh="Krill_Oil", random_yaw=True)
 PURPLE = ObjSpec("purple_box", "mesh", label="purple box", mass=0.12, mesh="JarroSil_Activated_Silicon",
                  random_yaw=True)

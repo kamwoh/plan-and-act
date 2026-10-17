@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from armmind.scenes.base import ObjSpec, Scene, Task
 from armmind.scenes.handling import items, place
-from armmind.scenes.tray import CX, CY, FIXTURES, FLOOR_HALF_H, TEXT, in_tray
+from armmind.scenes.tray import CX, CY, FIXTURES, FLOOR_HALF_H, SHAPES, TEXT, in_tray
 
 DROP = 0.004  # release a toy this far above the tray floor
 TOYS = (
@@ -34,7 +34,7 @@ def _all_plan(w):
 
 
 TOYS_SCENE = Scene(
-    name="toys", title="Toys", objects=TOYS, fixtures_xml=FIXTURES,
+    name="toys", title="Toys", objects=TOYS, fixtures_xml=FIXTURES, fixtures=SHAPES,
     fixtures_text=TEXT,
     region=(0.38, 0.65, -0.25, 0.12), min_gap=0.10,
     tasks={t.name: t for t in (

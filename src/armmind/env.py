@@ -78,6 +78,11 @@ class MujocoEnv:
     def success(self) -> bool:
         return self.task is not None and bool(self.task.success(self.world))
 
+    def plan_view(self, belief, keyframes, marks: list[dict] | None = None) -> dict:
+        """The PlanView of a belief and its keyframes, from the true scene now (call it before any motion)."""
+        from armmind.sim.planview import build_view
+        return build_view(self.world, belief, keyframes, marks, self.cams.w, self.cams.h)
+
     def close(self) -> None:
         self.cams.close()
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from armmind.scenes.base import ObjSpec, Scene, Task
+from armmind.scenes.base import ObjSpec, Scene, Task, box
 from armmind.scenes.common import free
 from armmind.types import Action
 
@@ -55,6 +55,25 @@ FIXTURES = "\n".join([
     '      <inertial pos="0 0 0.02" mass="0.4" diaginertia="0.002 0.002 0.002"/>',
     "    </body>",
 ])
+_POST_X0, _POST_X1 = _PX - PANEL_T / 2, HANDLE_DX  # a post runs along x, from the panel to the bar
+_TOP = FLOOR_Z + DEPTH
+SHAPES = (  # the drawer closed, at slide 0
+    box("cabinet_base", (CAB_X, 0, BASE_TOP / 2), (2 * CAB_HX, 2 * CAB_HY, BASE_TOP), WOOD),
+    box("cabinet_top", (CAB_X, 0, CAB_H - 0.005), (2 * CAB_HX, 2 * CAB_HY, 0.01), WOOD),
+    box("cabinet_left", (CAB_X, -CAB_HY + 0.005, _SIDE_Z), (2 * CAB_HX, 0.01, 2 * _SIDE_HZ), WOOD),
+    box("cabinet_right", (CAB_X, CAB_HY - 0.005, _SIDE_Z), (2 * CAB_HX, 0.01, 2 * _SIDE_HZ), WOOD),
+    box("cabinet_back", (CAB_X + CAB_HX - 0.005, 0, _SIDE_Z), (0.01, 2 * (CAB_HY - 0.01), 2 * _SIDE_HZ), WOOD),
+    box("drawer_floor", (DRAWER_X + 0.0025, 0, FLOOR_Z - WALL / 2), (2 * IN_HX + 0.005, 2 * (IN_HY + WALL), WALL), WOOD),
+    box("drawer_back", (DRAWER_X + IN_HX + WALL / 2, 0, FLOOR_Z + DEPTH / 2), (WALL, 2 * (IN_HY + WALL), DEPTH), WOOD),
+    box("drawer_left", (DRAWER_X, -IN_HY - WALL / 2, FLOOR_Z + DEPTH / 2), (2 * IN_HX, WALL, DEPTH), WOOD),
+    box("drawer_right", (DRAWER_X, IN_HY + WALL / 2, FLOOR_Z + DEPTH / 2), (2 * IN_HX, WALL, DEPTH), WOOD),
+    box("drawer_front", (DRAWER_X + _PX, 0, FLOOR_Z + (DEPTH - WALL) / 2), (PANEL_T, 2 * (IN_HY + 0.01), DEPTH + WALL),
+        WOOD),
+    # The bar is a capsule along y and the posts are cylinders along x. Boxes around them are close enough.
+    box("drawer_handle", (DRAWER_X + HANDLE_DX, 0, _TOP), (2 * HANDLE_R, 2 * (HANDLE_HY + HANDLE_R), 2 * HANDLE_R), DARK),
+    *(box(f"drawer_post_{i}", (DRAWER_X + (_POST_X0 + _POST_X1) / 2, y, _TOP), (abs(_POST_X1 - _POST_X0), 0.01, 0.01), DARK)
+      for i, y in enumerate((-HANDLE_HY, HANDLE_HY))),
+)
 TEXT = (f"A wooden cabinet at x {FRONT:.2f} to {CAB_X + CAB_HX:.2f}, y {-CAB_HY:.2f} to {CAB_HY:.2f}, "
         f"{CAB_H * 100:.0f} cm tall. Its drawer slides out toward the robot (-x), up to {MAX_OPEN * 100:.0f} cm. "
         f"The drawer handle is a dark bar along y, {2 * HANDLE_HY * 100:.0f} cm long, at z {FLOOR_Z + DEPTH:.2f}, "
@@ -124,7 +143,7 @@ def _cube_plan(w) -> list[Action]:
 
 
 DRAWER = Scene(
-    name="drawer", title="Drawer", objects=(RED,), fixtures_xml=FIXTURES, fixtures_text=TEXT,
+    name="drawer", title="Drawer", objects=(RED,), fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.35, 0.45, -0.25, -0.12), min_gap=0.10, joints={"drawer": "drawer slide {:.3f} m (0 = closed)"},
     # The front camera would see only the back of the cabinet. A side camera shows the drawer slide left-right.
     camera_overrides={"front": SIDE_CAMERA}, camera_labels={"front": "Side", "top": "Top · grid"},

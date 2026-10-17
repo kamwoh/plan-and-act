@@ -1,7 +1,9 @@
 """Generic plan formats: entities, keyframes and the view that the page plays. No simulator code here."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from typing import Protocol
 
 Vec3 = tuple[float, float, float]
 SHAPES = ("box", "cylinder", "sphere")
@@ -48,3 +50,54 @@ def entity_from_dict(d: dict) -> Entity:
     return Entity(str(d["name"]), str(d["shape"]), tuple(float(v) for v in d["size"]),
                   tuple(float(v) for v in d["xyz"]), float(d.get("yaw", 0.0)),
                   tuple(float(v) for v in color) if color is not None else None)
+
+
+def build_track(start: dict, keyframes, move_s: Callable[[Vec3, Vec3, float, float], float], settle_s: float,
+                change_s: float, gap: Callable[[Keyframe], float]) -> dict:
+    """The keyframes with the time of each one, from the motion rule of an environment.
+
+    The agent moves from the last pose to the keyframe in `move_s` seconds and arrives at `t`. It holds still
+    for `settle_s`, and for `change_s` more when its state changes. `t_done` is the end of all that.
+    `start` holds the xyz, the yaw and the state before the first keyframe."""
+    out, t = [], 0.0
+    xyz, yaw, state = tuple(start["xyz"]), float(start["yaw"]), start["state"]
+    for k in keyframes:
+        t += move_s(xyz, k.xyz, yaw, k.yaw)
+        changes = k.state != state
+        done = t + settle_s + (change_s if changes else 0.0)
+        out.append({**k.to_dict(), "gap": gap(k), "changes": changes, "t": round(t, 4), "t_done": round(done, 4)})
+        xyz, yaw, state, t = k.xyz, k.yaw, k.state, done
+    begin = Keyframe(tuple(start["xyz"]), float(start["yaw"]), start["state"], None)
+    return {"start": {"xyz": list(begin.xyz), "yaw": begin.yaw, "state": begin.state, "gap": gap(begin)},
+            "keyframes": out, "duration": round(t, 4)}
+
+
+def norm_name(name: str) -> str:
+    """A name for matching: lower case, with spaces in place of underscores."""
+    return " ".join(name.strip().lower().replace("_", " ").split())
+
+
+class PlanEnvironment(Protocol):
+    """What an environment gives for a plan. The MuJoCo arm environment implements it."""
+
+    def plan_view(self, belief: tuple[Entity, ...], keyframes: tuple[Keyframe, ...],
+                  marks: list[dict] | None = None) -> dict: ...
+
+    def check_plan(self, belief: tuple[Entity, ...], keyframes: tuple[Keyframe, ...]) -> dict: ...
+
+    def execute_plan(self, keyframes: tuple[Keyframe, ...], should_stop: Callable[[], bool]) -> dict: ...
+
+
+def match_entities(believed: list[str], truth: dict[str, list[str]]) -> dict[str, str]:
+    """Match believed names to true names. `truth` gives each true name its other names, such as labels.
+    Matching ignores case and treats "_" as a space. Each name matches once. Gives true name -> believed name."""
+    out: dict[str, str] = {}
+    taken: set[int] = set()
+    for true_name, other in truth.items():
+        keys = {norm_name(true_name), *(norm_name(o) for o in other if o)}
+        for i, name in enumerate(believed):
+            if i not in taken and norm_name(name) in keys:
+                out[true_name] = name
+                taken.add(i)
+                break
+    return out

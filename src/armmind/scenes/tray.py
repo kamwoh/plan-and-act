@@ -1,7 +1,7 @@
 """Three cubes and a fixed grey tray: put cubes in the tray."""
 from __future__ import annotations
 
-from armmind.scenes.base import Scene, Task
+from armmind.scenes.base import Scene, Task, box
 from armmind.scenes.common import THREE_CUBES, free, put
 
 CX, CY = 0.50, 0.28  # tray centre
@@ -34,6 +34,13 @@ FIXTURES = "\n".join([
     _wall("tray_wall_right", 0, _E, HALF, WALL / 2),
     "    </body>",
 ])
+SHAPES = (
+    box("tray_floor", (CX, CY, FLOOR_HALF_H), (2 * HALF, 2 * HALF, 2 * FLOOR_HALF_H), GREY),
+    box("tray_wall_near", (CX - _E, CY, WALL_HALF_H), (WALL, 2 * HALF, 2 * WALL_HALF_H), GREY),
+    box("tray_wall_far", (CX + _E, CY, WALL_HALF_H), (WALL, 2 * HALF, 2 * WALL_HALF_H), GREY),
+    box("tray_wall_left", (CX, CY - _E, WALL_HALF_H), (2 * HALF, WALL, 2 * WALL_HALF_H), GREY),
+    box("tray_wall_right", (CX, CY + _E, WALL_HALF_H), (2 * HALF, WALL, 2 * WALL_HALF_H), GREY),
+)
 TEXT = (f"A grey tray: inner area x {CX - INNER:.3f} to {CX + INNER:.3f}, y {CY - INNER:.3f} to {CY + INNER:.3f}, "
         f"walls {2 * WALL_HALF_H * 100:.1f} cm high.")
 
@@ -54,7 +61,7 @@ def _all_plan(w):
 
 
 TRAY = Scene(
-    name="tray", title="Tray", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT,
+    name="tray", title="Tray", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.40, 0.65, -0.25, 0.12), min_gap=0.10,
     tasks={t.name: t for t in (
         Task("red_in_tray", "Put the red cube in the tray.", lambda w: in_tray(w, "red_cube"), _red_plan),

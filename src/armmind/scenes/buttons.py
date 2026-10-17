@@ -1,7 +1,7 @@
 """A low panel with three spring buttons: red, green and blue. A press gives an event."""
 from __future__ import annotations
 
-from armmind.scenes.base import Scene, Task, threshold_monitor
+from armmind.scenes.base import Scene, Task, box, cylinder, threshold_monitor
 from armmind.types import Action
 
 PANEL_X, PANEL_HX, PANEL_HY, PANEL_H = 0.62, 0.05, 0.15, 0.04
@@ -29,6 +29,10 @@ FIXTURES = "\n".join([
       'contype="4" conaffinity="1"/>\n'
       "    </body>" for c, (y, rgba) in BUTTONS.items()),
 ])
+SHAPES = (
+    box("button_panel", (PANEL_X, 0, PANEL_H / 2), (2 * PANEL_HX, 2 * PANEL_HY, PANEL_H), "0.3 0.3 0.33 1"),
+    *(cylinder(f"{c}_button", (PANEL_X, y, PANEL_H + CAP_HH), CAP_R, 2 * CAP_HH, rgba) for c, (y, rgba) in BUTTONS.items()),
+)
 TEXT = (f"A low grey panel, {PANEL_H * 100:.0f} cm high, at x {PANEL_X - PANEL_HX:.2f} to {PANEL_X + PANEL_HX:.2f}, "
         f"y {-PANEL_HY:.2f} to {PANEL_HY:.2f}. On top are three round buttons, {2 * CAP_R * 100:.0f} cm wide, "
         f"at x {PANEL_X:.2f}: red at y -0.10, green at y 0.00, blue at y 0.10. The top of a button is at "
@@ -49,7 +53,7 @@ def press(colour: str) -> list[Action]:
 
 
 BUTTONS_SCENE = Scene(
-    name="buttons", title="Buttons", objects=(), fixtures_xml=FIXTURES, fixtures_text=TEXT,
+    name="buttons", title="Buttons", objects=(), fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.35, 0.45, -0.1, 0.1), min_gap=0.1, joints={f"{c}_button": f"{c} button depth {{:.3f}} m" for c in BUTTONS},
     monitors=tuple(threshold_monitor(f"{c}_button", FIRE, REARM, f"{c} button pressed") for c in BUTTONS),
     tasks={t.name: t for t in (
