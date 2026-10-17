@@ -87,7 +87,8 @@ img[hidden] { display: none; }
 .hint { color: var(--faint); font-size: 11px; }
 .controls { overflow: auto; padding: 12px; }
 .controls .buttons { gap: 6px; }
-.controls .buttons .btn { padding: 8px 11px; }
+.controls .buttons .btn { padding: 8px 9px; }
+.controls .buttons .btn.icon { padding: 7px 8px; }
 
 /* ---- Controls ---- */
 form { display: flex; flex-direction: column; gap: 8px; }
@@ -288,3 +289,25 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 
 .seed-row { display: flex; gap: 4px; }
 .btn.icon { padding: 4px 9px; line-height: 0; }
+
+/* ---- Run history dialog: one line for each run ---- */
+.history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.run-row {
+  width: 100%; display: grid; grid-template-columns: 118px 86px minmax(0, 1fr) 64px 60px 88px; gap: 10px; align-items: center;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-2); color: var(--fg);
+  font: 12.5px Inter, system-ui, sans-serif; text-align: left; cursor: pointer;
+}
+.run-row:hover:not(:disabled) { border-color: #3a4558; background: #1b2230; }
+.run-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.run-row:disabled { cursor: not-allowed; opacity: 0.6; }
+.run-when, .run-num { font: 11.5px var(--mono); color: var(--muted); }
+.run-num { text-align: right; }
+.run-scene { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.run-badge { justify-self: end; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px;
+             background: var(--line); color: var(--muted); white-space: nowrap; }
+.run-badge.s-success { background: rgba(60, 207, 134, 0.16); color: var(--ok); }
+.run-badge.s-done { background: rgba(91, 140, 255, 0.16); color: var(--accent); }
+.run-badge.s-step_limit, .run-badge.s-stopped { background: rgba(240, 176, 74, 0.14); color: var(--warn); }
+.run-badge.s-error, .run-badge.s-llm_error { background: rgba(240, 106, 106, 0.14); color: var(--bad); }
+.run-badge.s-running { background: rgba(180, 140, 255, 0.16); color: var(--think); }

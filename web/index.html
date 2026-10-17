@@ -61,6 +61,7 @@
               <button type="submit" class="btn primary" id="start_btn"><span aria-hidden="true">▶</span> Start</button>
               <button type="button" class="btn" id="stop"><span aria-hidden="true">■</span> Stop</button>
               <button type="button" class="btn ghost" id="lessons_btn">Lessons <small id="lessons_tag" class="tag">0</small></button>
+              <button type="button" class="btn ghost icon" id="history_btn" title="History: open an earlier run and read it on the page" aria-label="History"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
               <button type="button" class="btn ghost" id="prompt_btn">System prompt <small id="prompt_tag" class="tag">default</small></button>
             </div>
           </form>
@@ -91,6 +92,14 @@
       <p class="muted">Claude writes a lesson when an action has a result that it did not expect. Each scene keeps its newest 30 lessons. With "Use saved lessons" on, every step message lists them.</p>
       <ol id="lessons_list" class="saved-list"></ol>
       <div class="buttons"><button type="button" class="btn" id="lessons_clear">Clear all</button><span id="lessons_msg" class="muted"></span></div>
+    </div>
+  </dialog>
+  <dialog id="history_dialog" aria-labelledby="history_title">
+    <div class="dlg-head"><h2 id="history_title">Run history</h2><button type="button" class="btn ghost" id="history_close">Close</button></div>
+    <div class="dlg-body">
+      <p class="muted">The saved runs, newest first. Click a run to read it on the page. Reset, a scene, a seed or Start goes back to a new run.</p>
+      <ol id="history_list" class="history-list"></ol>
+      <p id="history_msg" class="muted"></p>
     </div>
   </dialog>
   <dialog id="prompt_dialog" aria-labelledby="prompt_title">

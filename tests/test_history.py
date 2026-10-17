@@ -212,3 +212,60 @@ def test_a_real_run_shows_in_the_history(tmp_path):
         events = c.get(f"/api/runs/{item['id']}").json()
     assert item["status"] == "done" and item["scene"] == "cubes" and item["steps"] == 1
     assert events[0]["kind"] == "run_start" and events[-1]["kind"] == "run_end"
+
+
+# ---- The page ----
+def _web(name):
+    from pathlib import Path
+    return (Path(__file__).resolve().parents[1] / "web" / name).read_text()
+
+
+def _body(js, start, end="\n}\n"):
+    body = js[js.index(start):]
+    return body[:body.index(end)]
+
+
+def test_page_has_the_history_button_and_dialog():
+    html = _web("index.html")
+    assert 'id="history_btn"' in html and 'id="history_dialog"' in html and 'id="history_list"' in html
+    buttons = _body(html, '<div class="buttons">', "</div>")
+    after_lessons = buttons.split('id="lessons_btn"', 1)[1].split("</button>", 1)[1]
+    assert after_lessons.lstrip().startswith("<button") and 'id="history_btn"' in after_lessons.split("</button>")[0]
+
+
+def test_history_loader_uses_the_live_event_handler():
+    js = _web("app.js")
+    body = _body(js, "async function loadRun")
+    assert "fetch(`/api/runs/${" in body
+    assert "onEvent(ev, true)" in body  # every event goes through the live handler
+    for call in ("onReply(", "onStepResults(", "onAsk(", "onRunStart(", "onRunEnd(", "addEntry("):
+        assert call not in body  # no second renderer
+    for call in ("resetChat()", "emptyMemo()", "resetTotals()"):
+        assert call in body  # the same clear as Reset
+    assert "writeScene" not in body and "localStorage" not in body
+
+
+def test_replayed_events_change_no_run_state_or_saved_scene():
+    js = _web("app.js")
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    import re
+    assert re.search(r"if \(!replay\) \{[^}]*setRunning\(true\)", handler)
+    assert "if (!replay) setRunning(false)" in handler
+    assert "chooseScene(ev.scene, true, !replay)" in handler
+    choose = _body(js, "function chooseScene(name, keepText = false, save = true)")
+    assert "if (save) writeScene(sceneName)" in choose
+
+
+def test_observation_images_are_base64_or_server_urls():
+    js = _web("app.js")
+    src = _body(js, "function imageSrc")
+    assert 'startsWith("/api/runs/")' in src and "pngUrl(" in src
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    assert "imageSrc(ev.front_png)" in handler and "imageSrc(ev.top_png)" in handler
+    assert "img.loading = \"lazy\"" in _body(js, "function thumbs")
+
+
+def test_history_rows_cannot_open_the_active_run():
+    js = _web("app.js")
+    body = _body(js, "function historyRow")
+    assert "run.active" in body and "running" in body

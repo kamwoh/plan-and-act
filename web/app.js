@@ -76,15 +76,16 @@ function writeScene(name) {
   }
 }
 
-// keepText: true when a run starts, so that its instruction stays in the box
-function chooseScene(name, keepText = false) {
+// keepText: true when a run starts, so that its instruction stays in the box.
+// save: false when the page shows an earlier run, so that the chosen scene stays in storage.
+function chooseScene(name, keepText = false, save = true) {
   const scene = scenes.find((s) => s.name === name) || scenes[0];
   if (!scene) return;
   const text = $("instruction").value.trim();
   if (!keepText && tasks.some((t) => t.instruction === text)) $("instruction").value = "";  // an example of the old scene
   sceneName = scene.name;
   tasks = scene.tasks;
-  writeScene(sceneName);
+  if (save) writeScene(sceneName);
   for (const c of $("scenes").children) c.classList.toggle("active", c.dataset.name === sceneName);
   $("examples").replaceChildren(chip("Your own", "", ""), ...tasks.map((t) => chip(t.name, t.name, t.instruction)));
   cameras = cameraLabels(scene.name);
@@ -137,6 +138,12 @@ let previewSeq = 0;
 // ---- Run totals ----
 let stepImages = {};   // step number -> { front, top }: object URLs of the PNG images of the observation events
 
+// A live event has the PNG as base64 data. A saved run has a URL of the server for it.
+function imageSrc(value) {
+  if (!value) return "";
+  return value.startsWith("/api/runs/") ? value : pngUrl(value);
+}
+
 function pngUrl(b64) {  // one Blob and one object URL for each image, shared by the chat and the step dialog
   const bin = atob(b64);
   const bytes = new Uint8Array(bin.length);
@@ -181,10 +188,12 @@ function showTotals() {
 resetTotals();
 
 // ---- Camera badges ----
-function setCamState(state) {  // "preview" | "live" | "ended"
+// "preview" | "live" | "ended" | "run" (the images of an earlier run, with the label)
+function setCamState(state, label = "") {
+  const text = { live: "Live", ended: "Last frame", run: label }[state] || "Preview";
   for (const id of ["cam_front", "cam_top"]) {
     $(id).classList.toggle("live", state === "live");
-    $(id).querySelector(".cam-badge").textContent = state === "live" ? "Live" : state === "ended" ? "Last frame" : "Preview";
+    $(id).querySelector(".cam-badge").textContent = text;
   }
 }
 
@@ -363,6 +372,7 @@ function thumbs(step) {
   if (!imgs) return row;
   for (const [label, data] of [[runCameras.front, imgs.front], [runCameras.top, imgs.top]]) {
     const img = document.createElement("img");
+    img.loading = "lazy";  // a long run loads only the images on screen
     img.src = data;
     img.alt = `${label} image of step ${step}`;
     img.title = label;
@@ -682,6 +692,7 @@ function setLoading(on) {
 }
 
 async function loadPreview() {
+  viewSeq++;  // drop an earlier run that is still on its way
   const seq = ++previewSeq;
   setLoading(true);
   try {
@@ -755,6 +766,8 @@ $("run").addEventListener("submit", async (e) => {
     use_lessons: $("use_lessons").checked,
   };
   if (savedPrompt !== null) body.system_prompt = savedPrompt;
+  writeScene(sceneName);  // the scene of an earlier run on the page becomes the chosen scene
+  viewSeq++;
   previewSeq++;  // drop a preview that is still on its way
   setLoading(false);
   // Reset before the POST: events of the new run can arrive before the response.
@@ -783,18 +796,30 @@ $("run").addEventListener("submit", async (e) => {
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
 
 // ---- Events from the server ----
-function onEvent(ev) {
+// Old runs have a step event with cost_usd and latency_s, but no usage.
+function stepUsage(ev) {
+  if (ev.usage) return ev.usage;
+  return typeof ev.cost_usd === "number" ? { cost_usd: ev.cost_usd, latency_s: ev.latency_s || 0 } : null;
+}
+
+// replay: true when the event comes from a saved run (see loadRun). It then changes no run state.
+function onEvent(ev, replay = false) {
   if (ev.kind === "run_start") {
     runSystemPrompt = ev.system_prompt || "";
     runCameras = cameraLabels(ev.scene);
-    setRunning(true);
-    if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true);
+    if (!replay) {
+      viewSeq++;  // a live run takes over the page from an earlier run
+      setRunning(true);
+    }
+    if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
     resetChat();
+    emptyMemo();
+    resetTotals();
     onRunStart(ev);
   } else if (ev.kind === "observation") {
     const old = stepImages[ev.step];
-    if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);
-    stepImages[ev.step] = { front: pngUrl(ev.front_png), top: pngUrl(ev.top_png) };  // for the chat and the step details
+    if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
+    stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };  // for the chat and the step details
     setStatus(`step ${ev.step} · thinking`, "thinking");
   } else if (ev.kind === "ask") {
     onAsk(ev);
@@ -803,7 +828,7 @@ function onEvent(ev) {
     onReply(ev);
   } else if (ev.kind === "step") {
     stepEvents[ev.step] = ev;
-    addTotals(ev.usage);
+    addTotals(stepUsage(ev));
     onStepResults(ev);
     $("todo").replaceChildren(...(ev.todo.length ? ev.todo.map((t) => li(t)) : [li("Claude writes its plan here", "empty")]));
     $("notes").replaceChildren(ev.notes ? document.createTextNode(ev.notes) : el("span", "Nothing yet", "empty"));
@@ -819,7 +844,7 @@ function onEvent(ev) {
     addTotals(ev.usage);
     errorEntry(ev, `✕ Model error (${ev.error_kind})`, ev.message);
   } else if (ev.kind === "run_end") {
-    setRunning(false);
+    if (!replay) setRunning(false);
     setCamState("ended");
     onRunEnd(ev);
     loadLessons();
@@ -828,6 +853,102 @@ function onEvent(ev) {
     else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" || ev.status === "llm_error" ? "bad" : "");
   }
 }
+
+// ---- History: read an earlier run on the page ----
+let viewSeq = 0;  // a newer load, a preview, a Start or a live run drops an older load
+
+function runTime(t) {
+  if (!t) return "?";
+  return new Date(t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function sceneTitle(name) {
+  const scene = scenes.find((s) => s.name === name);
+  return scene ? scene.title : name;
+}
+
+function historyRow(run) {
+  const status = run.active ? "running" : run.status;
+  const row = el("li");
+  const b = el("button", "", "run-row");
+  b.type = "button";
+  b.append(
+    el("span", runTime(run.started), "run-when"),
+    el("span", sceneTitle(run.scene), "run-scene"),
+    el("span", run.instruction || "(no instruction)", "run-text"),
+    el("span", `${run.steps} step${run.steps === 1 ? "" : "s"}`, "run-num"),
+    el("span", `$${run.cost_usd.toFixed(3)}`, "run-num"),
+    el("span", status.replace("_", " "), `run-badge s-${status}`),
+  );
+  b.title = run.instruction;
+  if (run.active) {
+    b.disabled = true;
+    b.title = "This run is active. The page shows it live.";
+  } else if (running) {
+    b.disabled = true;
+    b.title = "A run is active. Stop it to open an earlier run.";
+  }
+  b.addEventListener("click", () => {
+    $("history_dialog").close();
+    loadRun(run);
+  });
+  row.append(b);
+  return row;
+}
+
+async function openHistory() {
+  $("history_list").replaceChildren();
+  $("history_msg").textContent = "Loading…";
+  $("history_dialog").showModal();
+  try {
+    const r = await fetch("/api/runs");
+    if (!r.ok) throw new Error(`error ${r.status}`);
+    const runs = await r.json();
+    $("history_list").replaceChildren(...runs.map(historyRow));
+    $("history_msg").textContent = !runs.length ? "No saved runs yet" : running ? "A run is active. Stop it to open an earlier run." : "";
+  } catch (err) {
+    $("history_msg").textContent = `could not load the runs: ${err.message}`;
+  }
+}
+
+// Clear the page as Reset does, then send each saved event through the live handler.
+async function loadRun(run) {
+  if (running) return;
+  const seq = ++viewSeq;
+  const when = runTime(run.started);
+  setStatus(`loading run ${when}`, "thinking");
+  let events;
+  try {
+    const r = await fetch(`/api/runs/${encodeURIComponent(run.id)}`);
+    if (!r.ok) throw new Error(`error ${r.status}`);
+    events = await r.json();
+  } catch (err) {
+    if (seq === viewSeq) setStatus(`could not load the run: ${err.message}`, "bad");
+    return;
+  }
+  if (seq !== viewSeq || running) return;
+  previewSeq++;  // drop a preview that is still on its way
+  setLoading(false);
+  runSystemPrompt = "";
+  resetChat();
+  emptyMemo();
+  resetTotals();
+  for (const ev of events) onEvent(ev, true);
+  endThinking();  // an unfinished run can end on a question
+  scrollChat(true);
+  const last = Math.max(...Object.keys(stepImages).map(Number));
+  if (stepImages[last]) {
+    clearPreviewError();
+    showImage("live", stepImages[last].front);
+    showImage("top", stepImages[last].top);
+  }
+  setCamState("run", `Run ${when}`);
+  const ok = run.status === "success" || run.status === "done";
+  setStatus(`viewing run ${when} · ${run.status}`, ok ? "success" : run.status === "error" ? "bad" : "");
+}
+
+$("history_btn").addEventListener("click", openHistory);
+$("history_close").addEventListener("click", () => $("history_dialog").close());
 
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
