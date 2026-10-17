@@ -41,3 +41,17 @@ def test_serve_uses_the_demo_backend_only_with_the_env_var(monkeypatch, tmp_path
     assert cli.main(["serve", "--port", "8788", "--runs", str(tmp_path / "runs")]) == 0
     assert apps[0].state.runner.backend.name == "demo"
     assert apps[1].state.runner.backend.name != "demo"
+
+
+def test_demo_mode_keeps_its_lessons_out_of_the_real_folder(monkeypatch, tmp_path):
+    import tempfile
+
+    import uvicorn
+
+    from armmind import cli
+    apps = []
+    monkeypatch.setattr(uvicorn, "run", lambda app, host, port: apps.append(app))
+    monkeypatch.setenv("ARMMIND_FAKE_LLM", "1")
+    assert cli.main(["serve", "--port", "8788", "--runs", str(tmp_path / "runs")]) == 0
+    root = apps[0].state.runner.lessons.root
+    assert root != tmp_path / "lessons" and str(root).startswith(tempfile.gettempdir())

@@ -38,12 +38,16 @@ def _serve(host: str, port: int, model: str | None, runs: str) -> int:
     from armmind.llm.claude_cli import ClaudeCLIBackend
     from armmind.server.app import create_app
 
+    lessons_dir = None  # the default: next to the runs folder
     if os.environ.get("ARMMIND_FAKE_LLM") == "1":  # for tests and screenshots only: no model is called
+        import tempfile
+
         from armmind.llm.fake import DemoBackend
         backend = DemoBackend()
+        lessons_dir = Path(tempfile.mkdtemp(prefix="armmind-demo-lessons-"))  # keep invented lessons out
     else:
         backend = ClaudeCLIBackend(model=model, timeout_s=180)
-    app = create_app(backend, runs_dir=Path(runs))
+    app = create_app(backend, runs_dir=Path(runs), lessons_dir=lessons_dir)
     print(f"arm-mind: open http://{host}:{port}")
     uvicorn.run(app, host=host, port=port)
     return 0

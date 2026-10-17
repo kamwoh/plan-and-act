@@ -145,7 +145,7 @@ Each run writes `runs/<time>/events.jsonl` and the observation images.
 
     ./scripts/check.sh
 
-To check the page without a model, start the server with `ARMMIND_FAKE_LLM=1`. A demo backend then gives invented replies. Use it only for tests.
+To check the page without a model, start the server with `ARMMIND_FAKE_LLM=1`. A demo backend then gives invented replies. Use it only for tests. In this mode, the app saves lessons in a new temporary folder, not in `lessons/`.
 
 Tests marked `assets` skip when the Panda model is missing. Tests of the kitchen and toys scenes skip when the scanned objects are missing.
 
