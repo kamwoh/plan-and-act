@@ -86,9 +86,10 @@ img[hidden] { display: none; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hint { color: var(--faint); font-size: 11px; }
 .controls { overflow: auto; padding: 12px; }
-.controls .buttons { gap: 5px; }
-#history_btn { gap: 5px; }
-.controls .buttons .btn { padding: 8px 9px; }
+/* Seven controls share one row at 1366 px wide: small gaps and paddings. */
+.controls .buttons { gap: 4px; }
+.controls .tag { padding: 1px 4px; letter-spacing: 0.02em; }
+.controls .buttons .btn { padding: 8px 7px; gap: 5px; font-size: 12.5px; white-space: nowrap; }
 
 /* ---- Controls ---- */
 form { display: flex; flex-direction: column; gap: 8px; }
@@ -311,3 +312,47 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 .run-badge.s-step_limit, .run-badge.s-stopped { background: rgba(240, 176, 74, 0.14); color: var(--warn); }
 .run-badge.s-error, .run-badge.s-llm_error { background: rgba(240, 106, 106, 0.14); color: var(--bad); }
 .run-badge.s-running { background: rgba(180, 140, 255, 0.16); color: var(--think); }
+
+/* ---- Plan first: the imagined video in the camera boxes ---- */
+.views { grid-template-rows: minmax(0, 1fr); grid-auto-rows: auto; }
+.frame canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+canvas[hidden] { display: none; }
+.frame canvas.plan3d { cursor: grab; touch-action: none; }
+.frame canvas.plan3d:active { cursor: grabbing; }
+.frame canvas.plan3d-labels { pointer-events: none; }
+.cam.imagined .cam-badge { color: var(--think); }
+.player {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 4px 8px; min-width: 0;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+}
+.player[hidden] { display: none; }
+#play_btn { width: 30px; justify-content: center; line-height: 1; font-size: 12px; }
+#play_slider { flex: 1; min-width: 60px; accent-color: var(--accent); }
+.play-time { font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
+.play-kf { font-size: 12px; max-width: 32%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg { display: inline-flex; flex: none; border: 1px solid var(--line-2); border-radius: 7px; overflow: hidden; }
+.seg button { background: transparent; color: var(--muted); border: 0; padding: 4px 9px; cursor: pointer;
+              font: 600 11.5px Inter, system-ui, sans-serif; }
+.seg button + button { border-left: 1px solid var(--line-2); }
+.seg button:hover { color: var(--fg); }
+.seg button.active { background: rgba(91, 140, 255, 0.16); color: #fff; }
+
+/* ---- Plan entries in the chat ---- */
+.entry.plan { border-left-color: var(--think); }
+.entry.plan .who { color: var(--think); }
+.kf-lines { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; font: 11px/1.5 var(--mono); color: #aeb6c4; }
+.kf-lines li { overflow-wrap: anywhere; }
+.kf-lines .n { color: var(--faint); display: inline-block; min-width: 2.2em; }
+.kf-lines .mark-ok { color: var(--ok); }
+.kf-lines .mark-bad { color: var(--bad); }
+.kf-lines li.bad { color: #f3b0b0; }
+.ptable { width: 100%; border-collapse: collapse; font: 11px/1.45 var(--mono); }
+.ptable th { text-align: left; color: var(--faint); font-weight: 500; padding: 1px 4px; border-bottom: 1px solid var(--line); }
+.ptable td { padding: 1px 4px; color: #c9cfda; white-space: nowrap; }
+.ptable td:first-child { white-space: normal; overflow-wrap: anywhere; }
+.ptable td.over { color: var(--bad); font-weight: 600; }
+.btn.exec-btn { align-self: flex-start; padding: 5px 12px; font-size: 12px; background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.exec-btn:hover { background: var(--accent-2); }
+.run-badge.s-planned { background: rgba(180, 140, 255, 0.16); color: var(--think); }
+.run-mode { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px;
+            border-radius: 4px; background: rgba(180, 140, 255, 0.16); color: var(--think); margin-right: 6px; }

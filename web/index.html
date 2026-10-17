@@ -26,6 +26,8 @@
           <div class="frame">
             <span class="placeholder">Loading scene…</span>
             <img id="live" alt="Front camera" hidden>
+            <canvas id="plan_front" class="plan3d" hidden title="Drag to turn the view. Double-click to go back to the camera."></canvas>
+            <canvas id="plan_front_labels" class="plan3d-labels" hidden></canvas>
             <span class="cam-label">Front</span>
             <span class="cam-badge">Preview</span>
           </div>
@@ -34,10 +36,24 @@
           <div class="frame">
             <span class="placeholder">Loading scene…</span>
             <img id="top" alt="Top camera with grid" hidden>
+            <canvas id="plan_top" class="plan3d" hidden title="Drag to turn the view. Double-click to go back to the camera."></canvas>
+            <canvas id="plan_top_labels" class="plan3d-labels" hidden></canvas>
             <span class="cam-label">Top · grid</span>
             <span class="cam-badge">Preview</span>
           </div>
         </figure>
+        <div id="player" class="player" hidden>
+          <button type="button" class="btn icon" id="play_btn" aria-label="Play or pause the plan">▶</button>
+          <input id="play_slider" type="range" min="0" max="1" step="0.01" value="0" aria-label="Plan time">
+          <span id="play_time" class="play-time">0.0 / 0.0 s</span>
+          <span id="play_kf" class="play-kf"></span>
+          <div class="seg" role="group" aria-label="What the cameras show">
+            <button type="button" data-mode="imagined" title="Claude's belief: grey shapes">Imagined</button>
+            <button type="button" data-mode="real" title="The true objects at the start">Real start</button>
+            <button type="button" data-mode="both" title="The belief, and the true objects as outlines">Both</button>
+            <button type="button" data-mode="camera" title="The camera images">Camera</button>
+          </div>
+        </div>
       </section>
 
       <div class="bottom">
@@ -59,6 +75,7 @@
             </div>
             <div class="buttons">
               <button type="submit" class="btn primary" id="start_btn"><span aria-hidden="true">▶</span> Start</button>
+              <button type="button" class="btn" id="plan_btn" title="Plan first: Claude writes its belief of the scene and the whole plan in one reply. Nothing moves.">Plan</button>
               <button type="button" class="btn" id="stop"><span aria-hidden="true">■</span> Stop</button>
               <button type="button" class="btn ghost" id="lessons_btn">Lessons <small id="lessons_tag" class="tag">0</small></button>
               <button type="button" class="btn ghost" id="history_btn" title="History: open an earlier run and read it on the page"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>History</button>

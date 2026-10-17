@@ -6,6 +6,15 @@ const DEFAULT_CAMERAS = { front: "Front", top: "Top · grid" };
 let cameras = { ...DEFAULT_CAMERAS };  // the image labels of the chosen scene
 let runCameras = { ...DEFAULT_CAMERAS };  // the image labels of the scene of the last run, for its step details
 
+// Plan first: the camera boxes show either the camera images or the imagined video of a plan.
+const PLAN_BADGES = { imagined: "Imagined", real: "Real start", both: "Imagined + real" };
+const XY_LIMIT_CM = 2;     // the plan check marks a larger error red
+const YAW_LIMIT_DEG = 15;
+let viewMode = "camera";   // "camera", or a plan mode: "imagined", "real" or "both"
+let player = null;         // the Plan3D player, made on the first plan
+let playerFailed = false;  // no WebGL: the page says so and keeps the camera images
+let planRunId = null;      // the id of the plan run on the page, for Execute
+
 function cameraLabels(name) {
   const scene = scenes.find((s) => s.name === name);
   return { ...DEFAULT_CAMERAS, ...((scene && scene.cameras) || {}) };
@@ -132,6 +141,7 @@ function setRunning(value) {
   for (const c of $("scenes").children) c.disabled = value;
   $("shuffle").disabled = value;
   $("reset").disabled = value;
+  for (const b of document.querySelectorAll(".exec-btn")) b.disabled = value;
 }
 let previewSeq = 0;
 
@@ -189,17 +199,29 @@ resetTotals();
 
 // ---- Camera badges ----
 // "preview" | "live" | "ended" | "run" (the images of an earlier run, with the label)
+let camState = "preview";
+let camLabel = "";
+
 function setCamState(state, label = "") {
-  const text = { live: "Live", ended: "Last frame", run: label }[state] || "Preview";
+  camState = state;
+  camLabel = label;
+  paintBadges();
+}
+
+// The badge says what the boxes show: the plan video, or the camera images.
+function paintBadges() {
+  const plan = viewMode !== "camera";
+  const text = plan ? PLAN_BADGES[viewMode] : ({ live: "Live", ended: "Last frame", run: camLabel }[camState] || "Preview");
   for (const id of ["cam_front", "cam_top"]) {
-    $(id).classList.toggle("live", state === "live");
+    $(id).classList.toggle("live", !plan && camState === "live");
+    $(id).classList.toggle("imagined", plan);
     $(id).querySelector(".cam-badge").textContent = text;
   }
 }
 
 function showImage(id, src) {
   $(id).src = src;
-  $(id).hidden = false;
+  $(id).hidden = viewMode !== "camera";  // the image waits behind the plan video
 }
 
 function clearPreviewError() {  // a good preview: drop the text of an earlier error
@@ -231,7 +253,7 @@ function usageLine(u) {
 }
 
 function openStepDetails(ev) {
-  const kindText = ev.kind === "step" ? "" : ev.kind === "bad_reply" ? " · bad reply" : " · model error";
+  const kindText = { step: "", plan: " · plan", bad_reply: " · bad reply" }[ev.kind] ?? " · model error";
   $("step_title").textContent = `Step ${ev.step}${kindText}`;
   const u = stepUsage(ev);
   const items = [el("h2", "Tokens (exact, from the API)")];
@@ -493,7 +515,7 @@ function errorEntry(ev, title, text) {
 }
 
 function onRunStart(ev) {
-  const item = entry("system", "Run started");
+  const item = entry("system", ev.mode === "plan" ? "Plan started" : "Run started");
   const sys = el("details");
   sys.append(el("summary", "System prompt"), el("pre", ev.system_prompt || ""));
   item.append(field("task", el("span", ev.instruction)), sys);
@@ -509,8 +531,8 @@ function onRunStart(ev) {
 
 function onRunEnd(ev) {
   endThinking();
-  const ok = ev.status === "success" || ev.status === "done";
-  const item = entry(ok ? "end ok" : "end", `■ Run ended: ${ev.status}`);
+  const ok = ev.status === "success" || ev.status === "done" || ev.status === "planned";
+  const item = entry(ok ? "end ok" : "end", `■ ${ev.status === "planned" ? "Plan ready" : `Run ended: ${ev.status}`}`);
   if (ev.message) item.append(el("div", ev.message));
   addEntry(item);
 }
@@ -694,6 +716,7 @@ function setLoading(on) {
 }
 
 async function loadPreview() {
+  clearPlan();
   viewSeq++;  // drop an earlier run that is still on its way
   const seq = ++previewSeq;
   setLoading(true);
@@ -753,6 +776,38 @@ $("seed").addEventListener("input", () => {
 });
 
 // ---- Start and Stop ----
+// Clear the page for a new run or plan. Reset before the POST: its events can arrive before the response.
+function beginRun(text) {
+  writeScene(sceneName);  // the scene of an earlier run on the page becomes the chosen scene
+  viewSeq++;
+  previewSeq++;  // drop a preview that is still on its way
+  setLoading(false);
+  clearPlan();
+  runSystemPrompt = "";
+  resetTotals();
+  resetChat();
+  emptyMemo();
+  setStatus(text, "thinking");
+}
+
+async function postJson(url, body) {  // true when the server took it; else the status pill shows the error
+  try {
+    const r = await fetch(url, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!r.ok) {
+      const { detail } = await r.json().catch(() => ({}));
+      const text = Array.isArray(detail) ? detail.map((d) => d.msg).join(", ") : (detail || r.statusText);
+      setStatus(`error: ${text}`, "bad");
+      return false;
+    }
+  } catch (err) {
+    setStatus(`error: ${err.message}`, "bad");
+    return false;
+  }
+  return true;
+}
+
 $("run").addEventListener("submit", async (e) => {
   e.preventDefault();
   if (running) {  // keep the steps of the active run on screen
@@ -768,32 +823,28 @@ $("run").addEventListener("submit", async (e) => {
     use_lessons: $("use_lessons").checked,
   };
   if (savedPrompt !== null) body.system_prompt = savedPrompt;
-  writeScene(sceneName);  // the scene of an earlier run on the page becomes the chosen scene
-  viewSeq++;
-  previewSeq++;  // drop a preview that is still on its way
-  setLoading(false);
-  // Reset before the POST: events of the new run can arrive before the response.
-  runSystemPrompt = "";
-  resetTotals();
-  resetChat();
-  emptyMemo();
-  setStatus("starting", "thinking");
-  try {
-    const r = await fetch("/api/run", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
-    if (!r.ok) {
-      const { detail } = await r.json().catch(() => ({}));
-      const text = Array.isArray(detail) ? detail.map((d) => d.msg).join(", ") : (detail || r.statusText);
-      setStatus(`error: ${text}`, "bad");
-      return;
-    }
-  } catch (err) {
-    setStatus(`error: ${err.message}`, "bad");
+  beginRun("starting");
+  if (await postJson("/api/run", body)) setRunning(true);
+});
+
+// Plan first: the same instruction, scene, seed and lessons switch as Start. Never the true positions.
+async function startPlan() {
+  if (running) {
+    setStatus("a run is already active", "bad");
     return;
   }
-  setRunning(true);
-});
+  if (!$("run").reportValidity()) return;
+  const body = {
+    scene: sceneName,
+    instruction: $("instruction").value.trim(),
+    seed: Number($("seed").value),
+    use_lessons: $("use_lessons").checked,
+  };
+  beginRun("planning");
+  if (await postJson("/api/plan", body)) setRunning(true);
+}
+
+$("plan_btn").addEventListener("click", startPlan);
 
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
 
@@ -814,10 +865,13 @@ function onEvent(ev, replay = false) {
       setRunning(true);
     }
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
+    clearPlan();
+    planRunId = ev.mode === "plan" ? ev.run_id : null;
     resetChat();
     emptyMemo();
     resetTotals();
     onRunStart(ev);
+    if (ev.mode === "plan") setStatus("planning · Claude is thinking", "thinking");
   } else if (ev.kind === "observation") {
     const old = stepImages[ev.step];
     if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
@@ -836,6 +890,31 @@ function onEvent(ev, replay = false) {
     $("notes").replaceChildren(ev.notes ? document.createTextNode(ev.notes) : el("span", "Nothing yet", "empty"));
     for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
     showLessons();
+  } else if (ev.kind === "plan") {
+    stepEvents[ev.step] = ev;
+    addTotals(ev.usage);
+    onPlan(ev);
+    addEntry(planCheckEntry(ev.scores || {}));
+    if (ev.view) showPlan(ev.view);
+  } else if (ev.kind === "exec_start") {
+    if (!replay) {
+      viewSeq++;
+      setRunning(true);
+      if (ev.run_id !== planRunId) {  // another tab runs a plan that this page does not show
+        resetChat();
+        resetTotals();
+        planRunId = ev.run_id;
+      }
+      setStatus("running the plan", "moving");
+      setViewMode("camera");  // the live frames; a saved run keeps the imagined video
+    }
+    onExecStart(ev);
+  } else if (ev.kind === "exec_end") {
+    if (!replay) setRunning(false);
+    if (!replay && $("history_dialog").open) fillHistory();
+    setCamState("ended");
+    onExecEnd(ev);
+    setStatus(execText(ev), ev.success ? "success" : ev.status === "error" ? "bad" : "");
   } else if (ev.kind === "bad_reply") {
     stepEvents[ev.step] = ev;
     addTotals(ev.usage);
@@ -851,10 +930,183 @@ function onEvent(ev, replay = false) {
     setCamState("ended");
     onRunEnd(ev);
     loadLessons();
-    if (ev.status === "success") setStatus("success · task solved", "success");
+    if (ev.status === "planned") setStatus("plan ready · read the plan check, then execute", "success");
+    else if (ev.status === "success") setStatus("success · task solved", "success");
     else if (ev.status === "done") setStatus("done · Claude says finished", "success");
     else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" || ev.status === "llm_error" ? "bad" : "");
   }
+}
+
+// ---- Plan first: the imagined video, the plan entries and Execute ----
+function ensurePlayer() {
+  if (player || playerFailed) return player;
+  try {
+    if (!window.Plan3D || !Plan3D.available()) throw new Error("no WebGL");
+    player = Plan3D.player([
+      { canvas: $("plan_front"), overlay: $("plan_front_labels"), camera: "front" },
+      { canvas: $("plan_top"), overlay: $("plan_top_labels"), camera: "top" },
+    ]);
+    player.onTick(showPlayerTime);
+  } catch (err) {
+    playerFailed = true;
+    player = null;
+  }
+  return player;
+}
+
+function showPlan(view) {
+  const p = ensurePlayer();
+  $("player").hidden = false;
+  if (!p) {
+    $("play_kf").textContent = "The 3D view needs WebGL in this browser.";
+    return;
+  }
+  p.load(view);
+  $("play_slider").max = String(view.track.duration || 0);
+  setViewMode("imagined");
+  p.play();
+}
+
+function clearPlan() {
+  if (player) player.unload();
+  $("player").hidden = true;
+  setViewMode("camera");
+}
+
+function setViewMode(mode) {
+  viewMode = mode in PLAN_BADGES && player && player.view ? mode : "camera";
+  const plan = viewMode !== "camera";
+  for (const cam of ["front", "top"]) {
+    $(`plan_${cam}`).hidden = !plan;
+    $(`plan_${cam}_labels`).hidden = !plan;
+  }
+  for (const img of ["live", "top"]) $(img).hidden = plan || !$(img).getAttribute("src");
+  if (plan) player.setMode(viewMode);
+  for (const b of $("player").querySelectorAll(".seg button")) b.classList.toggle("active", b.dataset.mode === viewMode);
+  paintBadges();
+}
+
+function showPlayerTime({ time, duration, index, keyframe, playing }) {
+  $("play_slider").value = String(time);
+  $("play_time").textContent = `${time.toFixed(1)} / ${duration.toFixed(1)} s`;
+  const n = player && player.view ? player.view.track.keyframes.length : 0;
+  $("play_kf").textContent = keyframe ? `${index + 1}/${n} · ${keyframe.note || "(no note)"}` : "";
+  $("play_kf").title = $("play_kf").textContent;
+  $("play_btn").textContent = playing ? "❚❚" : "▶";
+}
+
+$("play_btn").addEventListener("click", () => {
+  if (!player || !player.view) return;
+  if (viewMode === "camera") setViewMode("imagined");
+  player.toggle();
+});
+$("play_slider").addEventListener("input", () => {
+  if (!player || !player.view) return;
+  if (viewMode === "camera") setViewMode("imagined");
+  player.pause();
+  player.seek(Number($("play_slider").value));
+});
+for (const b of $("player").querySelectorAll(".seg button")) b.addEventListener("click", () => setViewMode(b.dataset.mode));
+
+const xyzText = (p) => `(${p.map((v) => v.toFixed(2)).join(", ")})`;
+const signed = (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
+
+function onPlan(ev) {
+  endThinking();
+  const item = entry("claude", "← Claude · plan", ev.step);
+  item.append(field("plan", el("span", ev.summary || "(no summary)", "plan")));
+  const objects = (ev.objects || []).map((o) => `${o.name}: ${o.shape} ${o.size.map((v) => (v * 100).toFixed(1)).join("×")} cm, ` +
+    `centre ${xyzText(o.xyz)}, yaw ${Math.round(o.yaw)}°`);
+  item.append(field("sees", objects.length ? lines(objects, "mono") : el("span", "no objects", "muted")));
+  const keys = el("ol", "", "kf-lines");
+  (ev.keyframes || []).forEach((k, i) => {
+    const row = li("");
+    const holds = k.carrying ? ` · holds ${k.carrying}` : "";
+    row.append(el("span", String(i + 1), "n"), document.createTextNode(`${k.note || "(no note)"} · ${xyzText(k.xyz)} yaw ${Math.round(k.yaw)}° · ${k.state}${holds}`));
+    keys.append(row);
+  });
+  item.append(field("keys", keys));
+  if (ev.warnings && ev.warnings.length) item.append(lines(ev.warnings, "mono"));
+  if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
+  addEntry(stepLink(item, ev.step));
+}
+
+function planCheckEntry(scores) {
+  const item = entry("plan", "◎ Plan check");
+  const rows = scores.perception || [];
+  if (rows.length) {
+    const table = el("table", "", "ptable");
+    const head = el("tr");
+    for (const h of ["object", "xy", "z", "size (x y z)", "yaw"]) head.append(el("th", h));
+    table.append(head);
+    for (const r of rows) {
+      const tr = el("tr");
+      const sizeMax = Math.max(...r.size_cm.map(Math.abs));
+      const cells = [
+        [r.name, false],
+        [`${r.xy_cm.toFixed(1)} cm`, r.xy_cm > XY_LIMIT_CM],
+        [`${signed(r.z_cm)} cm`, Math.abs(r.z_cm) > XY_LIMIT_CM],
+        [`${r.size_cm.map(signed).join(" ")} cm`, sizeMax > XY_LIMIT_CM],
+        [r.yaw_deg === null ? "round" : `${r.yaw_deg.toFixed(0)}°`, r.yaw_deg !== null && r.yaw_deg > YAW_LIMIT_DEG],
+      ];
+      for (const [text, over] of cells) tr.append(el("td", text, over ? "over" : ""));
+      tr.firstChild.title = `true object: ${r.true_name}`;
+      table.append(tr);
+    }
+    item.append(table);
+  } else {
+    item.append(el("div", "No object of the belief matches a true object.", "muted"));
+  }
+  const s = scores.summary || {};
+  item.append(el("div", `xy error: mean ${(s.mean_xy_cm ?? 0).toFixed(1)} cm, max ${(s.max_xy_cm ?? 0).toFixed(1)} cm · ` +
+    `red: more than ${XY_LIMIT_CM} cm or ${YAW_LIMIT_DEG}°`, "muted"));
+  if ((scores.missing || []).length) item.append(field("missing", el("span", scores.missing.join(", "))));
+  if ((scores.invented || []).length) item.append(field("invented", el("span", scores.invented.join(", "))));
+  const marks = el("ol", "", "kf-lines");
+  (scores.marks || []).forEach((m, i) => {
+    const row = li("", m.ok ? "" : "bad");
+    const why = Object.entries(m.checks || {}).filter(([, v]) => v !== "ok").map(([k, v]) => `${k}: ${v}`);
+    row.append(el("span", m.ok ? "✓" : "✕", m.ok ? "mark-ok" : "mark-bad"), el("span", ` ${i + 1}`, "n"),
+               document.createTextNode([...why, m.info].filter(Boolean).join("; ") || "ok"));
+    marks.append(row);
+  });
+  item.append(field("checks", marks));
+  const exec = el("button", "▶ Execute plan", "btn exec-btn");
+  exec.type = "button";
+  exec.disabled = running;
+  exec.title = "Run the keyframes once in the physics, from a fresh start of the same scene and seed. No model is called.";
+  exec.addEventListener("click", executePlan);
+  item.append(exec);
+  return item;
+}
+
+async function executePlan() {
+  if (running || !planRunId) return;
+  setStatus("starting the plan", "moving");
+  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/execute`)) setRunning(true);
+}
+
+function onExecStart(ev) {
+  const item = entry("system", "▶ Executing the plan");
+  item.append(el("div", `${ev.keyframes} keyframes from a fresh start of seed ${ev.seed}. ` +
+    (ev.check ? `Auto-check: ${ev.check}.` : "No auto-check.")));
+  addEntry(item);
+}
+
+function execText(ev) {
+  if (ev.status === "success") return "plan executed · task solved";
+  if (ev.status === "stopped" && ev.stopped) return `plan stopped at action ${ev.stopped.after} of ${ev.stopped.of}`;
+  if (ev.status === "failed") return "plan executed · the auto-check says not solved";
+  if (ev.status === "cancelled") return "plan execution stopped";
+  if (ev.status === "error") return `error: ${ev.message || "the execution failed"}`;
+  return "plan executed";
+}
+
+function onExecEnd(ev) {
+  const item = entry(ev.success || ev.status === "done" ? "end ok" : "end", `■ Execution ended: ${ev.status}`);
+  item.append(el("div", ev.stopped ? `Stopped after action ${ev.stopped.after} of ${ev.stopped.of}: ${ev.stopped.reason}.`
+    : ev.success ? "The task is solved." : execText(ev)));
+  addEntry(item);
 }
 
 // ---- History: read an earlier run on the page ----
@@ -882,8 +1134,9 @@ function historyRow(run) {
     el("span", run.instruction || "(no instruction)", "run-text"),
     el("span", `${run.steps} step${run.steps === 1 ? "" : "s"}`, "run-num"),
     el("span", `$${run.cost_usd.toFixed(3)}`, "run-num"),
-    el("span", status.replace("_", " "), `run-badge s-${status}`),
+    el("span", (run.exec_status ? `run: ${run.exec_status}` : status).replace("_", " "), `run-badge s-${run.exec_status || status}`),
   );
+  if (run.mode === "plan") b.querySelector(".run-text").prepend(el("span", "plan", "run-mode"));
   b.title = run.instruction;
   if (active) {
     b.disabled = true;
@@ -963,7 +1216,7 @@ async function loadRun(run) {
     showImage("top", stepImages[last].top);
   }
   setCamState("run", `Run ${when}`);
-  const ok = run.status === "success" || run.status === "done";
+  const ok = run.status === "success" || run.status === "done" || run.status === "planned";
   const note = skipped ? ` · ${skipped} bad event${skipped > 1 ? "s" : ""} left out` : "";
   setStatus(`viewing run ${when} · ${run.status}${note}`, ok && !skipped ? "success" : run.status === "error" || run.status === "llm_error" || skipped ? "bad" : "");
 }
