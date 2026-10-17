@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import replace
 
 import mujoco
 import numpy as np
@@ -98,7 +99,16 @@ class Arm:
         self._next_frame = self.w.time
         self._run(SETTLE_S)
 
+    def held(self) -> tuple[str, ...]:
+        """The scene objects that the gripper touches now."""
+        names = {o.name for o in self.w.objects}
+        return tuple(n for n in self.w.gripper_contacts() if n in names)
+
     def act(self, action: Action) -> ActionResult:
+        before = self.held()
+        return replace(self._act(action), held_before=before, held_after=self.held())
+
+    def _act(self, action: Action) -> ActionResult:
         if action.type == "move_to":
             return self._move_to(action)
         if action.type in ("open", "close"):

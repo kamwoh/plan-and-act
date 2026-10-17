@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from armmind.types import Action
 
 MAX_WAIT_S = 3.0
+MAX_LESSONS, LESSON_CHARS = 3, 200
 
 
 class ReplyError(ValueError):
@@ -22,6 +23,7 @@ class Reply:
     todo: tuple[str, ...]
     truncated: bool = False
     done: bool = False
+    lessons: tuple[str, ...] = ()
 
 
 def _number(v) -> bool:
@@ -71,5 +73,9 @@ def parse_reply(obj, max_actions: int = 8) -> Reply:
     done = obj.get("done", False)
     if not isinstance(done, bool):
         raise ReplyError("'done' must be true or false")
+    lessons = obj.get("lessons") or []
+    if not isinstance(lessons, list) or not all(isinstance(t, str) for t in lessons):
+        raise ReplyError("'lessons' must be a list of strings")
+    lessons = [t.strip()[:LESSON_CHARS] for t in lessons if t.strip()][:MAX_LESSONS]
     return Reply(str(obj.get("observation", "")), str(obj.get("plan", "")), tuple(actions[:max_actions]),
-                 notes, tuple(todo[:5]), len(actions) > max_actions, done)
+                 notes, tuple(todo[:5]), len(actions) > max_actions, done, tuple(lessons))

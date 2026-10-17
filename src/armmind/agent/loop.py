@@ -42,8 +42,11 @@ def _sum_usage(attempts: list[dict]) -> dict | None:
 
 
 class Agent:
-    def __init__(self, backend: LLMBackend, config: AgentConfig | None = None, system: str | None = None):
+    def __init__(self, backend: LLMBackend, config: AgentConfig | None = None, system: str | None = None,
+                 saved_lessons: list[str] | tuple[str, ...] = ()):
         self.backend, self.cfg = backend, config or AgentConfig()
+        self.saved_lessons = tuple(saved_lessons)  # from earlier runs of the scene, oldest first
+        self.run_lessons: list[str] = []  # the new lessons of this run, oldest first, without duplicates
         self.system = system or SYSTEM
         self._stop = asyncio.Event()
         self._conv: Conversation | None = None
@@ -55,6 +58,7 @@ class Agent:
 
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
         history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
+        self.run_lessons = []
         notes, todo, status, check_failed = "", (), "step_limit", False
         emit("run_start", {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
                            "check": env.check_name, "system_prompt": self.system})
@@ -65,7 +69,7 @@ class Agent:
             obs = await call(env.observe)
             emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
             text = build_user_text(env.scene_text, env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history),
-                                   check_failed, env.image_text)
+                                   check_failed, env.image_text, [*self.saved_lessons, *self.run_lessons])
             self._conv = await self.backend.open(self.system)
             attempts: list[dict] = []
             try:
@@ -94,6 +98,9 @@ class Agent:
                     break
             if reply.notes is not None:
                 notes = reply.notes
+            for lesson in reply.lessons:
+                if lesson not in self.run_lessons:
+                    self.run_lessons.append(lesson)
             todo = reply.todo or todo
             history.append(StepSummary(n, reply.plan, tuple(r.summary() for r in results)))
             solved = await call(env.success) if env.has_check else False
@@ -101,6 +108,7 @@ class Agent:
                 "step": n, "observation": reply.observation, "plan": reply.plan,
                 "actions": [a.describe() for a in reply.actions], "results": [r.summary() for r in results],
                 "truncated": reply.truncated, "notes": notes, "todo": list(todo), "success": solved, "done": reply.done,
+                "lessons": list(reply.lessons),
                 "latency_s": usage.latency_s if usage else None, "cost_usd": usage.cost_usd if usage else None,
                 **detail,
             })

@@ -174,3 +174,15 @@ def test_a_stopped_turn_keeps_the_yaw_it_holds(arm):
     assert res.status == "unreachable" and res.note == "path leaves the reachable area"
     assert -60 < arm.w.gripper_yaw() < 60  # it stopped part way through the turn
     assert arm.act(Action("wait", seconds=0.3)).gripper_yaw == pytest.approx(arm._yaw, abs=3.0)
+
+
+def test_results_carry_the_held_objects_before_and_after(arm):
+    for a in (Action("open"), Action("move_to", (0.5, -0.1, 0.12)), Action("move_to", (0.5, -0.1, 0.02))):
+        arm.act(a)
+    grab = arm.act(Action("close"))
+    assert grab.held_before == () and grab.held_after == ("red_cube",)
+    assert "now holding red_cube" in grab.summary()
+    up = arm.act(Action("move_to", (0.5, -0.1, 0.12)))
+    assert up.held_before == up.held_after == ("red_cube",)
+    let_go = arm.act(Action("open"))
+    assert let_go.held_before == ("red_cube",) and "table" not in let_go.held_after

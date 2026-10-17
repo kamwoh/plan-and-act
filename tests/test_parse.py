@@ -67,3 +67,19 @@ def test_parse_move_to_with_yaw():
 def test_parse_rejects_bad_yaw(yaw):
     with pytest.raises(ReplyError, match="yaw"):
         parse_reply(reply([{"type": "move_to", "xyz": [0.5, 0, 0.1], "yaw": yaw}]))
+
+
+def test_parse_lessons_are_stripped_cut_and_optional():
+    assert parse_reply(reply([])).lessons == ()
+    r = parse_reply(reply([], lessons=["  Closing 9 cm up slipped. 6 cm up held.  ", "   ", "x" * 300]))
+    assert r.lessons == ("Closing 9 cm up slipped. 6 cm up held.", "x" * 200)
+
+
+def test_parse_keeps_at_most_3_lessons():
+    assert len(parse_reply(reply([], lessons=["a", "b", "c", "d"])).lessons) == 3
+
+
+@pytest.mark.parametrize("lessons", ["one lesson", [1], [None], {"a": 1}])
+def test_parse_rejects_bad_lessons(lessons):
+    with pytest.raises(ReplyError, match="lessons"):
+        parse_reply(reply([], lessons=lessons))

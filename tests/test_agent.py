@@ -218,3 +218,27 @@ async def test_image_text_of_the_env_reaches_the_model():
     env.image_text = "Image 1: side camera. Image 2: top camera."
     await Agent(backend, AgentConfig(max_steps=1)).run(env, direct, Recorder())
     assert backend.sent[0][0].text.endswith("\nImage 1: side camera. Image 2: top camera.")
+
+
+async def test_lessons_reach_the_next_step_and_the_step_event():
+    backend, rec = FakeBackend([good(lessons=["Closing high slipped."]), good(lessons=["Closing high slipped."]),
+                                good()]), Recorder()
+    await Agent(backend, AgentConfig(max_steps=3, history_steps=1)).run(FakeEnv(), direct, rec)
+    assert "Lessons: (none)" in backend.sent[0][0].text
+    assert "Lessons:\n- Closing high slipped.\n" in backend.sent[1][0].text
+    assert backend.sent[2][0].text.count("Closing high slipped.") == 1
+    steps = [d for k, d in rec.events if k == "step"]
+    assert steps[0]["lessons"] == ["Closing high slipped."] and steps[2]["lessons"] == []
+
+
+async def test_run_lessons_are_not_limited_by_history_steps():
+    replies = [good(lessons=[f"lesson {i}"]) for i in range(4)]
+    backend = FakeBackend(replies)
+    await Agent(backend, AgentConfig(max_steps=4, history_steps=1)).run(FakeEnv(), direct, Recorder())
+    assert all(f"- lesson {i}" in backend.sent[3][0].text for i in range(3))
+
+
+async def test_saved_lessons_come_first_in_the_message():
+    backend = FakeBackend([good(lessons=["new"]), good()])
+    await Agent(backend, AgentConfig(max_steps=2), saved_lessons=["old"]).run(FakeEnv(), direct, Recorder())
+    assert "Lessons:\n- old\n- new\n" in backend.sent[1][0].text

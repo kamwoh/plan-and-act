@@ -39,6 +39,10 @@ class ActionResult:
     contacts: tuple[str, ...] = ()
     note: str = ""
     gripper_yaw: float = 0.0  # degrees
+    # The scene objects that the gripper touches before and after the action (not the table or fixed items).
+    # None means unknown.
+    held_before: tuple[str, ...] | None = None
+    held_after: tuple[str, ...] | None = None
 
     def summary(self) -> str:
         s = f"{self.action.describe()}: {self.status}, gripper at {fmt(self.tcp)}"
@@ -49,6 +53,11 @@ class ActionResult:
             s += f", touching {', '.join(self.contacts)}"
         if self.note:
             s += f" ({self.note})"
+        if self.held_before is not None and self.held_after is not None:
+            if gained := [n for n in self.held_after if n not in self.held_before]:
+                s += f", now holding {', '.join(gained)}"
+            if lost := [n for n in self.held_before if n not in self.held_after]:
+                s += f", let go of {', '.join(lost)}"
         return s
 
 

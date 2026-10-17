@@ -40,6 +40,8 @@ The simulation stops while you think. Use at most 8 actions in each step. \
 Write "observation" in 2 short sentences and "plan" in 1 sentence. \
 Write "notes" only when something worth remembering changed. \
 Keep a "todo" list of 3 to 5 short sub-goals. \
+Write a "lessons" item only when an action had a result you did not expect. Write it as cause and effect, \
+for example "Closing 9 cm up on the bottle slipped. 6 cm up held." \
 Set "done" to true when you are sure the task is complete. The actions in the same reply still run first."""
 
 REPLY_SCHEMA = {
@@ -67,6 +69,7 @@ REPLY_SCHEMA = {
         "notes": {"type": "string"},
         "todo": {"type": "array", "items": {"type": "string"}, "maxItems": 5},
         "done": {"type": "boolean"},
+        "lessons": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
     },
 }
 
@@ -83,7 +86,7 @@ IMAGE_TEXT = "Image 1: front camera. Image 2: top camera."
 
 def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs: Observation, notes: str,
                     todo: tuple[str, ...], history: list[StepSummary], check_failed: bool = False,
-                    image_text: str | None = None) -> str:
+                    image_text: str | None = None, lessons: list[str] | tuple[str, ...] = ()) -> str:
     lines = [
         f"Scene: {scene}",
         f"Task: {instruction}",
@@ -102,6 +105,8 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
     if history:
         lines.append("Recent steps:")
         lines += [f"- step {h.step}: {h.plan} -> {'; '.join(h.results) or 'no actions'}" for h in history]
+    unique = list(dict.fromkeys(lessons))
+    lines += ["Lessons:", *(f"- {t}" for t in unique)] if unique else ["Lessons: (none)"]
     lines.append(f"Your notes: {notes or '(empty)'}")
     lines.append("Your to-do list: " + ("; ".join(todo) if todo else "(empty)"))
     if check_failed:
