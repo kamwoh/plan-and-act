@@ -7,6 +7,7 @@ from typing import Literal
 ActionType = Literal["move_to", "open", "close", "wait"]
 Status = Literal["reached", "blocked", "unreachable"]
 Vec3 = tuple[float, float, float]
+CLOSED_ON_NOTHING_M = 0.005  # a closed gripper below this width holds nothing
 
 
 def fmt(p) -> str:
@@ -40,7 +41,7 @@ class ActionResult:
     contacts: tuple[str, ...] = ()
     note: str = ""
     gripper_yaw: float = 0.0  # degrees
-    # The scene objects that the closed gripper touches before and after the action (not the table or fixed items).
+    # The scene objects that the gripper holds before and after the action: closed, between both fingers.
     # None means unknown.
     held_before: tuple[str, ...] | None = None
     held_after: tuple[str, ...] | None = None

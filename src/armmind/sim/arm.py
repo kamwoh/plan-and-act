@@ -8,7 +8,7 @@ import mujoco
 import numpy as np
 
 from armmind.sim.world import TCP_OFFSET, World
-from armmind.types import Action, ActionResult, Status
+from armmind.types import CLOSED_ON_NOTHING_M, Action, ActionResult, Status
 
 WORKSPACE_LO = np.array([0.25, -0.40, 0.01])
 WORKSPACE_HI = np.array([0.75, 0.40, 0.50])
@@ -100,12 +100,13 @@ class Arm:
         self._run(SETTLE_S)
 
     def held(self) -> tuple[str, ...]:
-        """The scene objects that the gripper touches now. An open gripper holds nothing, even when a finger
-        touches an object."""
-        if self.w.data.ctrl[7] != GRIP_CLOSED:
+        """The scene objects that the gripper holds now: it is closed, both fingers touch the object, and the
+        width is not about 0. An open gripper, a push with the closed fingers or one finger on an edge holds
+        nothing."""
+        if self.w.data.ctrl[7] != GRIP_CLOSED or self.w.gripper_width() < CLOSED_ON_NOTHING_M:
             return ()
         names = {o.name for o in self.w.objects}
-        return tuple(n for n in self.w.gripper_contacts() if n in names)
+        return tuple(n for n in self.w.pinched() if n in names)
 
     def act(self, action: Action) -> ActionResult:
         before = self.held()

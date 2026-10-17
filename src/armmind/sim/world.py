@@ -201,3 +201,14 @@ class World:
                 if mine in self._gripper and other not in self._gripper:
                     names.add("table" if other == 0 else self.model.body(other).name)
         return sorted(names)
+
+    def pinched(self) -> list[str]:
+        """The bodies that both fingers touch, so the gripper holds them between its fingers."""
+        body = self.model.geom_bodyid
+        left, right = self.model.body("left_finger").id, self.model.body("right_finger").id
+        touched: dict[int, set[int]] = {left: set(), right: set()}
+        for g1, g2 in zip(self.data.contact.geom1, self.data.contact.geom2, strict=True):
+            for mine, other in ((body[g1], body[g2]), (body[g2], body[g1])):
+                if mine in touched and other not in self._gripper:
+                    touched[mine].add(other)
+        return sorted(self.model.body(b).name for b in touched[left] & touched[right] if b != 0)

@@ -14,7 +14,7 @@ from armmind.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_
 from armmind.env import Env
 from armmind.llm.protocol import Conversation, Final, LLMBackend, LLMError, Message, Usage
 from armmind.store.lessons import LessonStore
-from armmind.types import Action, ActionResult, fmt
+from armmind.types import CLOSED_ON_NOTHING_M, Action, ActionResult, fmt
 
 Emit = Callable[[str, dict], None]
 Call = Callable[..., Awaitable]
@@ -44,7 +44,6 @@ def _sum_usage(attempts: list[dict]) -> dict | None:
     return total
 
 
-CLOSED_ON_NOTHING_M = 0.005  # a close that ends below this width, with no object, closed on nothing
 
 
 def _resolve(name: str, labels: dict[str, str]) -> str | None:

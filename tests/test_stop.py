@@ -151,3 +151,53 @@ def test_real_button_press_with_expect_nothing_runs_without_a_stop():
     moves = [{"type": "move_to", "xyz": list(a.xyz)} for a in press("green")]
     step = _real_run("buttons", [{**CLOSE, "expect": {"holding": "nothing"}}, *moves])
     assert step["stopped"] is None and len(step["results"]) == 4
+
+
+# ---- What counts as holding, in a real world ----
+
+def _run_actions(scene_name, task_name, actions=None, seed=0):
+    """Run actions (or the task solution) through check_result. Gives (results, stop reasons)."""
+    from armmind.agent.loop import check_result
+    from armmind.scenes import SCENES
+    from armmind.sim.arm import Arm
+    from armmind.sim.world import World
+    scene = SCENES[scene_name]
+    task = scene.tasks[task_name] if task_name else None
+    w = World(scene)
+    w.reset(scene.layout(seed), task.initial_qpos if task else None)
+    arm = Arm(w)
+    arm.reset_ready()
+    labels = {o.name: o.label for o in scene.objects}
+    results, stops = [], []
+    for a in actions if actions is not None else task.solution(w):
+        r, why = check_result(a, arm.act(a), labels)
+        results.append(r)
+        if why:
+            stops.append((a.describe(), why))
+    return results, stops
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("side", [(0, -1), (-1, 0)])
+def test_real_push_with_the_closed_gripper_is_not_holding(side):
+    from armmind.scenes import SCENES
+    bx, by, _ = SCENES["cubes"].layout(0)["blue_cube"]
+    dx, dy = side
+    seq = [Action("close", expect="nothing"), Action("move_to", (bx + dx * 0.08, by + dy * 0.08, 0.15)),
+           Action("move_to", (bx + dx * 0.08, by + dy * 0.08, 0.02)),
+           Action("move_to", (bx + dx * 0.01, by + dy * 0.01, 0.02)),  # push into the cube
+           Action("move_to", (bx + dx * 0.01, by + dy * 0.01, 0.15))]
+    results, stops = _run_actions("cubes", None, seq)
+    assert stops == []
+    assert all(r.held_after == () for r in results)
+    assert all("now holding" not in r.summary() for r in results)
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize(("scene", "task", "obj"), [("cubes", "pick", "red_cube"), ("kitchen", "bottle_in_bowl", "bottle"),
+                                                    ("toys", "panda_in_tray", "panda")])
+def test_real_grasp_counts_as_held_and_the_solution_has_no_stop(scene, task, obj):
+    results, stops = _run_actions(scene, task)
+    assert stops == []
+    first_close = next(r for r in results if r.action.type == "close")
+    assert first_close.held_after == (obj,)
