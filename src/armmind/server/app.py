@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -23,6 +24,7 @@ from armmind.sim.assets import AssetsMissing
 from armmind.sim.meshes import warm
 from armmind.store.lessons import LessonChanged, LessonStore
 from armmind.store.runlog import RunLog
+from armmind.store.runs import RunStore
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
 EnvFactory = Callable[[Scene, Task | None, str, int, bool, Callable[[str, bytes], None]], Env]
@@ -216,6 +218,29 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         scene = _scene(req.scene)
         task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
         return {"run_dir": str(await runner.start(req, scene, task))}
+
+    history = RunStore(Path(runs_dir))
+
+    def image_url(run_id: str, name: str) -> str:
+        return f"/api/runs/{run_id}/images/{name}"
+
+    @app.get("/api/runs")
+    def list_runs() -> list[dict]:
+        return history.runs(active=runner.run_dir.name if runner.running and runner.run_dir else None)
+
+    @app.get("/api/runs/{run_id}")
+    def run_events(run_id: str) -> list[dict]:
+        events = history.events(run_id, image_url)
+        if events is None:
+            raise HTTPException(404, "no such run")
+        return events
+
+    @app.get("/api/runs/{run_id}/images/{name}")
+    def run_image(run_id: str, name: str) -> FileResponse:
+        path = history.image(run_id, name)
+        if path is None:
+            raise HTTPException(404, "no such image")
+        return FileResponse(path, media_type="image/png")
 
     @app.get("/api/prompt")
     def prompt() -> dict:
