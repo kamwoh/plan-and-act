@@ -19,6 +19,7 @@ class Action:
     xyz: Vec3 | None = None
     seconds: float = 0.5
     yaw: float | None = None  # degrees about world +z, 0 is the start orientation; None keeps the current yaw
+    expect: str | None = None  # what the gripper should hold after the action: an object, or "nothing"
 
     def describe(self) -> str:
         if self.type == "move_to":
@@ -39,7 +40,7 @@ class ActionResult:
     contacts: tuple[str, ...] = ()
     note: str = ""
     gripper_yaw: float = 0.0  # degrees
-    # The scene objects that the gripper touches before and after the action (not the table or fixed items).
+    # The scene objects that the closed gripper touches before and after the action (not the table or fixed items).
     # None means unknown.
     held_before: tuple[str, ...] | None = None
     held_after: tuple[str, ...] | None = None

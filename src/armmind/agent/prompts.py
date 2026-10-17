@@ -35,6 +35,10 @@ For an object taller than 7 cm, close the gripper 3.5 cm below its top, not at i
 An object can stand at an angle. Then turn the gripper with "yaw" so that the fingers close across \
 its narrow side.
 Each result says if the gripper reached the target, was blocked, or could not reach it.
+The code stops your action list at the first failure: a blocked or unreachable move, a close on nothing, \
+or a dropped object. You then get new images.
+Add "expect": {"holding": "<object>"} or {"holding": "nothing"} to an action to say what the gripper \
+should hold after it. A mismatch also stops the list.
 
 The simulation stops while you think. Use at most 8 actions in each step. \
 Write "observation" in 2 short sentences and "plan" in 1 sentence. \
@@ -63,6 +67,8 @@ REPLY_SCHEMA = {
                     "xyz": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3},
                     "seconds": {"type": "number"},
                     "yaw": {"type": "number"},
+                    "expect": {"type": "object", "additionalProperties": False, "required": ["holding"],
+                               "properties": {"holding": {"type": "string"}}},
                 },
             },
         },
@@ -79,6 +85,7 @@ class StepSummary:
     step: int
     plan: str
     results: tuple[str, ...]
+    stopped: str | None = None  # e.g. "Stopped after action 3 of 6: the gripper closed on nothing."
 
 
 IMAGE_TEXT = "Image 1: front camera. Image 2: top camera."
@@ -86,7 +93,8 @@ IMAGE_TEXT = "Image 1: front camera. Image 2: top camera."
 
 def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs: Observation, notes: str,
                     todo: tuple[str, ...], history: list[StepSummary], check_failed: bool = False,
-                    image_text: str | None = None, lessons: list[str] | tuple[str, ...] = ()) -> str:
+                    image_text: str | None = None, lessons: list[str] | tuple[str, ...] = (),
+                    stopped: str | None = None) -> str:
     lines = [
         f"Scene: {scene}",
         f"Task: {instruction}",
@@ -94,6 +102,9 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
         f"Gripper at {fmt(obs.tcp)}, yaw {round(obs.gripper_yaw)}°, width {obs.gripper_width:.3f} m.",
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
+    if stopped:
+        lines.append(f"Your last action list stopped early: {stopped}. Look at the images and plan again. "
+                     "Write a lesson if it helps.")
     if obs.objects:
         yaws = obs.object_yaws or {}
         lines.append("Object centres (debug): " + "; ".join(
@@ -104,7 +115,8 @@ def build_user_text(scene: str, instruction: str, step: int, max_steps: int, obs
         lines.append(f"Events: {'; '.join(obs.events)}.")
     if history:
         lines.append("Recent steps:")
-        lines += [f"- step {h.step}: {h.plan} -> {'; '.join(h.results) or 'no actions'}" for h in history]
+        lines += [f"- step {h.step}: {h.plan} -> {'; '.join(h.results) or 'no actions'}"
+                  + (f". {h.stopped}" if h.stopped else "") for h in history]
     unique = list(dict.fromkeys(lessons))
     lines += ["Lessons:", *(f"- {t}" for t in unique)] if unique else ["Lessons: (none)"]
     lines.append(f"Your notes: {notes or '(empty)'}")

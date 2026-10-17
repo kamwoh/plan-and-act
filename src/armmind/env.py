@@ -23,6 +23,7 @@ class Env(Protocol):
     image_text: str | None  # names the two images in the step message; None means the default text
     has_check: bool
     check_name: str | None
+    object_labels: dict[str, str]  # scene object name -> its label, e.g. "red_cube" -> "red cube, 4 cm"
 
     def observe(self) -> Observation: ...
     def act(self, action: Action) -> ActionResult: ...
@@ -42,6 +43,7 @@ class MujocoEnv:
         self.task, self.instruction, self.show_positions = task, instruction, show_positions
         self.scene_name, self.scene_text, self.image_text = scene.name, scene.describe(), scene.image_text
         self.has_check, self.check_name = task is not None, task.name if task else None
+        self.object_labels = {o.name: o.label for o in scene.objects}
         self.world = World(scene)
         self.world.reset(scene.layout(seed), task.initial_qpos if task else None)
         self.cams = Cameras(self.world)

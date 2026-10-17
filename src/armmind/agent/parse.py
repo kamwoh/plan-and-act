@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from armmind.types import Action
 
@@ -35,9 +35,22 @@ def _number(v) -> bool:
         return False
 
 
+def _expect(i: int, a: dict) -> str | None:
+    if "expect" not in a:
+        return None
+    e = a["expect"]
+    if not (isinstance(e, dict) and set(e) == {"holding"} and isinstance(e["holding"], str)):
+        raise ReplyError(f"action {i}: 'expect' must be {{\"holding\": \"<object>\"}}")
+    return e["holding"].strip()
+
+
 def _action(i: int, a) -> Action:
     if not isinstance(a, dict):
         raise ReplyError(f"action {i} is not an object")
+    return replace(_kind(i, a), expect=_expect(i, a))
+
+
+def _kind(i: int, a: dict) -> Action:
     kind = a.get("type")
     if kind == "move_to":
         xyz = a.get("xyz")

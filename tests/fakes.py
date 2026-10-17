@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from typing import ClassVar
 
 from armmind.llm.protocol import Final, LLMError, Usage
 from armmind.types import Action, ActionResult, Observation
@@ -12,6 +13,7 @@ class FakeEnv:
     scene_name = "cubes"
     scene_text = "Objects: red cube, 4 cm; blue cube, 4 cm."
     image_text = None
+    object_labels: ClassVar[dict[str, str]] = {}
 
     def __init__(self, succeed_after: int | None = None, has_check: bool = True):
         self.has_check = has_check
@@ -92,3 +94,18 @@ class DeafBackend:
     async def open(self, system):
         self.conv = DeafConversation()
         return self.conv
+
+
+class ScriptEnv(FakeEnv):
+    """A FakeEnv whose action results follow a script: one dict of ActionResult fields for each action."""
+    object_labels: ClassVar[dict[str, str]] = {"red_cube": "red cube, 4 cm", "blue_cube": "blue cube, 4 cm"}
+
+    def __init__(self, outcomes: list[dict], **kw):
+        super().__init__(**kw)
+        self.outcomes = list(outcomes)
+
+    def act(self, action: Action) -> ActionResult:
+        self.acts.append(action)
+        o = {"status": "reached", "gripper_width": 0.08, "contacts": (), "held_before": (), "held_after": (),
+             **(self.outcomes.pop(0) if self.outcomes else {})}
+        return ActionResult(action, o.pop("status"), (0.3, 0.0, 0.4), o.pop("gripper_width"), **o)

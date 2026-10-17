@@ -186,3 +186,12 @@ def test_results_carry_the_held_objects_before_and_after(arm):
     assert up.held_before == up.held_after == ("red_cube",)
     let_go = arm.act(Action("open"))
     assert let_go.held_before == ("red_cube",) and "table" not in let_go.held_after
+
+
+def test_an_open_gripper_holds_nothing_even_when_it_touches(arm):
+    for a in (Action("open"), Action("move_to", (0.545, -0.1, 0.12))):
+        arm.act(a)
+    touch = arm.act(Action("move_to", (0.545, -0.1, 0.02)))  # one open finger presses on the cube
+    assert "red_cube" in touch.contacts and touch.held_after == ()
+    away = arm.act(Action("move_to", (0.525, -0.1, 0.02)))
+    assert away.held_before == () and "let go" not in away.summary()

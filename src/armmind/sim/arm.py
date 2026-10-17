@@ -100,7 +100,10 @@ class Arm:
         self._run(SETTLE_S)
 
     def held(self) -> tuple[str, ...]:
-        """The scene objects that the gripper touches now."""
+        """The scene objects that the gripper touches now. An open gripper holds nothing, even when a finger
+        touches an object."""
+        if self.w.data.ctrl[7] != GRIP_CLOSED:
+            return ()
         names = {o.name for o in self.w.objects}
         return tuple(n for n in self.w.gripper_contacts() if n in names)
 

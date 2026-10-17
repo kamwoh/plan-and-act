@@ -6,12 +6,13 @@ import contextlib
 import json
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from armmind.agent.parse import Reply, ReplyError, parse_reply
 from armmind.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_text
 from armmind.env import Env
 from armmind.llm.protocol import Conversation, Final, LLMBackend, LLMError, Message, Usage
+from armmind.types import Action, ActionResult, fmt
 
 Emit = Callable[[str, dict], None]
 Call = Callable[..., Awaitable]
@@ -41,6 +42,41 @@ def _sum_usage(attempts: list[dict]) -> dict | None:
     return total
 
 
+CLOSED_ON_NOTHING_M = 0.005  # a close that ends below this width, with no object, closed on nothing
+
+
+def _resolve(name: str, labels: dict[str, str]) -> str | None:
+    """The object name for a name or a label, matched without case. "nothing" gives ""."""
+    want = name.strip().lower()
+    if want == "nothing":
+        return ""
+    for obj, label in labels.items():
+        if want in {obj.lower(), obj.lower().replace("_", " "), label.lower(), label.split(",")[0].strip().lower()}:
+            return obj
+    return None
+
+
+def check_result(action: Action, result: ActionResult, labels: dict[str, str]) -> tuple[ActionResult, str | None]:
+    """Compare a result with what the model wanted. Gives the result, maybe with a note, and the reason to stop
+    the action list, or None."""
+    held = result.held_after if result.held_after is not None else tuple(c for c in result.contacts if c != "table")
+    before = result.held_before or ()
+    expect = _resolve(action.expect, labels) if action.expect is not None else None
+    if action.expect is not None and expect is None:
+        note = f"unknown object {action.expect!r} in expect, ignored"
+        result = replace(result, note=f"{result.note}, {note}" if result.note else note)
+    if action.type == "move_to" and result.status in ("blocked", "unreachable"):
+        return result, f"the move to {fmt(action.xyz)} was {result.status}"
+    if action.type == "close" and not held and result.gripper_width < CLOSED_ON_NOTHING_M and expect != "":
+        return result, "the gripper closed on nothing"
+    if action.type != "open" and (dropped := [n for n in before if n not in held]):
+        why = f"dropped {', '.join(dropped)}"
+        return replace(result, note=f"{result.note}, {why}" if result.note else why), why
+    if expect is not None and (expect not in held if expect else bool(held)):
+        return result, f"expected to hold {expect or 'nothing'}, holds {', '.join(held) or 'nothing'}"
+    return result, None
+
+
 class Agent:
     def __init__(self, backend: LLMBackend, config: AgentConfig | None = None, system: str | None = None,
                  saved_lessons: list[str] | tuple[str, ...] = ()):
@@ -59,7 +95,8 @@ class Agent:
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
         history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
         self.run_lessons = []
-        notes, todo, status, check_failed = "", (), "step_limit", False
+        notes, todo, status, check_failed, stopped_reason = "", (), "step_limit", False, None
+        labels = getattr(env, "object_labels", None) or {}
         emit("run_start", {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
                            "check": env.check_name, "system_prompt": self.system})
         for n in range(1, self.cfg.max_steps + 1):
@@ -69,7 +106,8 @@ class Agent:
             obs = await call(env.observe)
             emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
             text = build_user_text(env.scene_text, env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history),
-                                   check_failed, env.image_text, [*self.saved_lessons, *self.run_lessons])
+                                   check_failed, env.image_text, [*self.saved_lessons, *self.run_lessons],
+                                   stopped_reason)
             self._conv = await self.backend.open(self.system)
             attempts: list[dict] = []
             try:
@@ -89,24 +127,34 @@ class Agent:
                 emit("bad_reply", {"step": n, "error": error.message if error else "no reply", **detail})
                 continue
             emit("reply", {"step": n, "plan": reply.plan, "actions": [a.describe() for a in reply.actions]})
-            results = []
-            for action in reply.actions:
+            results, stopped = [], None
+            for i, action in enumerate(reply.actions):
                 if self._stop.is_set():
                     break
-                results.append(await call(env.act, action))
+                result, why = check_result(action, await call(env.act, action), labels)
+                results.append(result)
                 if await call(env.success):
                     break
+                if why is not None:
+                    stopped = {"after": i + 1, "of": len(reply.actions), "reason": why}
+                    break
+            lines = [r.summary() for r in results]
+            if stopped:
+                lines += [f"{a.describe()}: skipped" for a in reply.actions[stopped["after"]:]]
+            stopped_reason = stopped["reason"] if stopped else None
             if reply.notes is not None:
                 notes = reply.notes
             for lesson in reply.lessons:
                 if lesson not in self.run_lessons:
                     self.run_lessons.append(lesson)
             todo = reply.todo or todo
-            history.append(StepSummary(n, reply.plan, tuple(r.summary() for r in results)))
+            history.append(StepSummary(n, reply.plan, tuple(lines), stopped and
+                                       f"Stopped after action {stopped['after']} of {stopped['of']}: "
+                                       f"{stopped['reason']}."))
             solved = await call(env.success) if env.has_check else False
             emit("step", {
                 "step": n, "observation": reply.observation, "plan": reply.plan,
-                "actions": [a.describe() for a in reply.actions], "results": [r.summary() for r in results],
+                "actions": [a.describe() for a in reply.actions], "results": lines, "stopped": stopped,
                 "truncated": reply.truncated, "notes": notes, "todo": list(todo), "success": solved, "done": reply.done,
                 "lessons": list(reply.lessons),
                 "latency_s": usage.latency_s if usage else None, "cost_usd": usage.cost_usd if usage else None,
