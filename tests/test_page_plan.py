@@ -84,3 +84,70 @@ def test_a_replayed_execution_keeps_the_imagined_video():
     start = handler[handler.index('ev.kind === "exec_start"'):handler.index('ev.kind === "exec_end"')]
     live = start[start.index("if (!replay) {"):start.index("onExecStart(ev)")]
     assert 'setViewMode("camera")' in live  # only a live execution switches to the camera images
+
+
+# ---- Review follow-ups ----
+NODE_POSES = r"""
+const vm = require("vm"), fs = require("fs");
+const ctx = { window: {}, console };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), ctx);
+const P = ctx.window.Plan3D;
+const kf = (xyz, carrying, t) => ({ xyz, yaw: 0, carrying, gap: 0, changes: false, t, t_done: t + 0.5 });
+const view = {
+  track: { start: { xyz: [0.3, 0, 0.4], yaw: 0, gap: 0.08 },
+           keyframes: [kf([0.5, 0, 0.02], "red cube", 1), kf([0.5, 0, 0.3], "red cube", 3)], duration: 3.5 },
+  believed: [{ name: "red cube", xyz: [0.5, 0, 0.02], yaw: 0 }],
+  true_start: [{ name: "red_cube", xyz: [0.54, 0, 0.02], yaw: 0 }],
+  true_match: { red_cube: "red cube" },
+  marks: JSON.parse(process.argv[2]),
+};
+const c = P.carriers(view);
+const b = P.posesAt(view.track, view.believed, 3.5, c.believed)["red cube"].xyz[2];
+const t = P.posesAt(view.track, view.true_start, 3.5, c.truth)["red_cube"].xyz[2];
+console.log(JSON.stringify([b, t]));
+"""
+
+
+def _poses(marks):
+    import json
+    out = subprocess.run(["node", "-e", NODE_POSES, str(WEB / "plan3d.js"), json.dumps(marks)], check=True,
+                         capture_output=True, text=True).stdout
+    return json.loads(out)
+
+
+def test_real_start_moves_a_true_object_only_when_the_marks_say_it_is_held():
+    held = [{"ok": True, "holds": "red_cube"}, {"ok": True, "holds": "red_cube"}]
+    missed = [{"ok": False, "holds": None}, {"ok": True, "holds": None}]
+    assert _poses(held) == [0.3, 0.3]
+    assert _poses(missed) == [0.3, 0.02]  # the belief moves, the true cube stays
+    assert _poses([]) == [0.3, 0.3]  # an old view without marks: the name match decides
+
+
+def test_clear_plan_forgets_the_plan_and_disables_execute():
+    js = _web("app.js")
+    body = _body(js, "function clearPlan")
+    assert "planRunId = null" in body and ".exec-btn" in body
+    assert "!planRunId" in _body(js, "function setRunning")
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    start = handler[handler.index('ev.kind === "exec_start"'):handler.index('ev.kind === "exec_end"')]
+    assert "chooseScene(ev.scene, true, !replay)" in start
+
+
+def test_scripts_are_deferred_in_order():
+    html = _web("index.html")
+    tags = re.findall(r"<script[^>]*>", html)
+    assert all(" defer" in t for t in tags) and len(tags) == 3
+    assert html.index("three.min.js") < html.index("plan3d.js") < html.index("app.js")
+
+
+def test_without_a_player_the_bar_hides_and_the_message_stays():
+    body = _body(_web("app.js"), "function showPlan")
+    assert '$("player").hidden = true' in body and "WebGL" in body and "addEntry(" in body
+
+
+def test_the_camera_view_stops_the_hidden_video():
+    js = _web("app.js")
+    assert "player.sleep()" in _body(js, "function setViewMode")
+    p3 = _web("plan3d.js")
+    assert "sleep()" in p3 and "wake()" in p3

@@ -168,9 +168,11 @@ class Runner:
         async def stopper() -> None:
             cancel.set()
 
-        async def body(env, call, emit) -> None:
+        def before(emit) -> None:  # before the env, so that a failed start still has a pair of events
             emit("exec_start", {"run_id": folder.name, "scene": scene.name, "instruction": instruction, "seed": seed,
                                 "check": task.name if task else None, "keyframes": len(keyframes)})
+
+        async def body(env, call, emit) -> None:
             out = await call(env.execute_plan, keyframes, cancel.is_set)
             emit("step", {"step": step, "plan": "Run the saved keyframes once.", "observation": "",
                           "actions": out["actions"], "results": out["results"], "stopped": out["stopped"],
@@ -178,12 +180,12 @@ class Runner:
                           "done": False, "prompt": "", "attempts": [], "usage": None})
             emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"]})
 
-        self._launch(log, stopper, scene, task, instruction, seed, False, body, end_kind="exec_end")
+        self._launch(log, stopper, scene, task, instruction, seed, False, body, end_kind="exec_end", before=before)
 
     def _launch(self, log: RunLog, stopper: Callable[[], Awaitable[None]], scene: Scene, task: Task | None,
                 instruction: str, seed: int, show_positions: bool,
                 body: Callable[[Env, Callable, Callable[[str, dict], None]], Awaitable],
-                end_kind: str = "run_end") -> None:
+                end_kind: str = "run_end", before: Callable[[Callable[[str, dict], None]], None] | None = None) -> None:
         """Make the env on a fresh sim thread, run `body`, and clean up. An error ends with an `end_kind` event."""
         self.run_dir, self._stopper = log.dir, stopper
         pacer = Pacer()
@@ -203,6 +205,8 @@ class Runner:
         async def go() -> None:
             sim, env = SimThread(), None
             try:
+                if before is not None:
+                    before(emit)
                 env = await sim.call(self.env_factory, scene, task, instruction, seed, show_positions, on_frame)
                 await body(env, sim.call, emit)
             except Exception as e:  # noqa: BLE001  report and end the run, never kill the server

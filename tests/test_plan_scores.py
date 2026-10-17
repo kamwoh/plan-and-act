@@ -23,8 +23,15 @@ def no_reach_limit(xyz, yaw):
     return None
 
 
+def arm_gap(state, held):  # the gap rule of the arm environment
+    if state == "open":
+        return 0.08
+    return min(0.08, held.size[0], held.size[1]) if held is not None else 0.0
+
+
 def checks(keyframes, truth, round_names=()):
-    return plan_checks(START, keyframes, truth, ALIASES, set(round_names), PARTS, no_reach_limit)
+    return plan_checks(START, keyframes, truth, ALIASES, set(round_names), PARTS, no_reach_limit,
+                       open_state="open", gap=arm_gap)
 
 
 # ---- Perception ----
@@ -42,7 +49,8 @@ def test_a_5_cm_shift_gives_a_5_cm_xy_error():
     p = perception([moved], [CUBE], ALIASES, set())
     [r] = p["rows"]
     assert r["name"] == "Red Cube" and r["xy_cm"] == pytest.approx(5.0)
-    assert r["z_cm"] == pytest.approx(1.0) and r["size_cm"] == pytest.approx([1.0, 0.0, -1.0])
+    # The sizes compare in the canonical form, with the shorter side first: 5 x 4 cm becomes 4 x 5 cm.
+    assert r["z_cm"] == pytest.approx(1.0) and r["size_cm"] == pytest.approx([0.0, 1.0, -1.0])
     assert p["summary"]["mean_xy_cm"] == pytest.approx(5.0) and p["summary"]["max_xy_cm"] == pytest.approx(5.0)
 
 
@@ -158,7 +166,7 @@ def test_reach_uses_the_environment_rule():
         return "no joint solution for this point" if xyz[1] > 0.3 else None
 
     kfs = [Keyframe((0.5, 0.35, 0.2), 0.0, "open", None)]
-    marks = plan_checks(START, kfs, [], ALIASES, set(), PARTS, reach)
+    marks = plan_checks(START, kfs, [], ALIASES, set(), PARTS, reach, open_state="open", gap=arm_gap)
     assert marks[0]["ok"] is False and marks[0]["checks"]["reach"] == "no joint solution for this point"
 
 
@@ -227,3 +235,42 @@ def test_reach_fails_outside_the_workspace():
     assert "outside the workspace" in scores["marks"][0]["checks"]["reach"]
     assert scores["marks"][1]["checks"]["reach"] == "ok"
     assert len(scores["missing"]) == 3 and scores["summary"]["failed_keyframes"] == 1
+
+
+# ---- Review follow-ups ----
+def test_a_box_and_the_same_box_turned_90_with_swapped_sizes_score_the_same():
+    true = Entity("long_box", "box", (0.065, 0.046, 0.08), (0.5, 0.0, 0.04), 165.2)
+    same = Entity("long box", "box", (0.046, 0.065, 0.08), (0.5, 0.0, 0.04), 75.2)
+    [r] = perception([same], [true], ALIASES, set())["rows"]
+    assert r["yaw_deg"] == 0 and r["size_cm"] == [0, 0, 0]
+    turned = Entity("long box", "box", (0.065, 0.046, 0.08), (0.5, 0.0, 0.04), 75.2)
+    [r] = perception([turned], [true], ALIASES, set())["rows"]
+    assert r["yaw_deg"] == pytest.approx(90.0) and r["size_cm"] == [0, 0, 0]
+
+
+def test_descend_open_then_close_in_place_exempts_the_target():
+    tall = Entity("long_box", "box", (0.04, 0.04, 0.12), (0.5, 0.0, 0.06), 0.0)
+    kfs = [Keyframe((0.5, 0.0, 0.2), 0.0, "open", None, "above"),
+           Keyframe((0.5, 0.0, 0.06), 0.0, "open", None, "down"),
+           Keyframe((0.5, 0.0, 0.06), 0.0, "closed", "long_box", "close in place")]
+    marks = checks(kfs, [tall])
+    assert [m["checks"]["collision"] for m in marks] == ["ok", "ok", "ok"]
+    assert marks[2]["checks"]["grasp"] == "ok"
+
+
+def test_a_pure_yaw_turn_sweeps_the_hand_through_an_object():
+    # The cube floats at hand height. The hand clears it at yaw 0 and at yaw 90, and hits it at yaw 45.
+    cube = Entity("blue_cube", "box", (0.02, 0.02, 0.02), (0.55, 0.05, 0.18), 0.0)
+    kfs = [Keyframe((0.5, 0.0, 0.1), 0.0, "open", None, "stop"),
+           Keyframe((0.5, 0.0, 0.1), 90.0, "open", None, "turn in place")]
+    marks = checks(kfs, [cube])
+    assert marks[0]["checks"]["collision"] == "ok"
+    assert "blue_cube" in marks[1]["checks"]["collision"]
+
+
+def test_marks_say_what_the_true_scene_holds():
+    marks = checks(pick(CUBE), [CUBE, BLUE])
+    assert [m["holds"] for m in marks] == [None, "red_cube", "red_cube"]
+    missed = pick(CUBE)
+    missed[1] = Keyframe((0.5, -0.06, 0.02), 0.0, "closed", "red_cube")  # 4 cm off: the grasp fails
+    assert [m["holds"] for m in checks(missed, [CUBE, BLUE])] == [None, None, None]

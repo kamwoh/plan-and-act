@@ -115,3 +115,14 @@ def test_plan_system_shares_the_facts_of_system():
         assert fact in SYSTEM and fact in PLAN_SYSTEM
     assert "keyframes" in PLAN_SYSTEM and "keyframes" not in SYSTEM
     assert "Use at most 8 actions" not in PLAN_SYSTEM
+
+
+@pytest.mark.parametrize("names", [["red_cube", "red_cube"], ["red cube", "Red_Cube"]])
+def test_duplicate_object_names_raise(names):
+    with pytest.raises(ReplyError, match="twice"):
+        parse_plan(plan(objects=[obj(name=n) for n in names]))
+
+
+def test_plan_system_has_no_step_message():
+    assert "step message" not in PLAN_SYSTEM
+    assert "the step message lists them with their sizes" in SYSTEM

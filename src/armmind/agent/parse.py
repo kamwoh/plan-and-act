@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
-from armmind.plan.formats import Entity, Keyframe
+from armmind.plan.formats import Entity, Keyframe, norm_name
 from armmind.types import Action
 
 MAX_WAIT_S = 3.0
@@ -186,6 +186,14 @@ def parse_plan(obj) -> PlanReply:
     if not isinstance(summary, str):
         raise ReplyError("'summary' must be a string")
     warnings: list[str] = []
-    return PlanReply(tuple(_plan_object(i, o) for i, o in enumerate(objects)),
+    entities = tuple(_plan_object(i, o) for i, o in enumerate(objects))
+    seen: dict[str, str] = {}
+    for e in entities:  # one name for each object, so that a keyframe names exactly one
+        key = norm_name(e.name)
+        if key in seen:
+            raise ReplyError(f"the object name {e.name!r} is there twice (also as {seen[key]!r}). "
+                             "Give each object its own name")
+        seen[key] = e.name
+    return PlanReply(entities,
                      tuple(_plan_keyframe(i, k, warnings) for i, k in enumerate(keyframes)),
                      summary.strip()[:SUMMARY_CHARS], tuple(warnings))

@@ -166,3 +166,36 @@ def test_a_real_execution_streams_frames_and_logs_the_check(tmp_path):
     assert start["check"] == "pick" and start["keyframes"] == 3
     assert step["step"] == 2 and len(step["actions"]) == 4
     assert end["status"] in ("success", "stopped", "failed") and isinstance(end["success"], bool)
+
+
+def test_exec_start_comes_before_the_env_is_made(tmp_path):
+    def factory(scene, task, instruction, seed, show_positions, on_frame):
+        if factory.calls:
+            raise RuntimeError("no renderer")
+        factory.calls += 1
+        return plan_factory(scene, task, instruction, seed, show_positions, on_frame)
+    factory.calls = 0
+
+    with TestClient(create_app(FakeBackend([good_plan()]), factory, tmp_path / "runs",
+                               lessons_dir=tmp_path / "lessons")) as c:
+        run_id = c.post("/api/plan", json={"instruction": PICK}).json()["run_id"]
+        wait_idle(c)
+        assert c.post(f"/api/plan/{run_id}/execute").status_code == 200
+        wait_idle(c)
+    start, end = events(tmp_path)[-2:]
+    assert start["kind"] == "exec_start" and start["scene"] == "cubes"
+    assert end["kind"] == "exec_end" and end["status"] == "error" and "no renderer" in end["message"]
+
+
+def test_execute_after_a_scene_change_uses_the_plan_scene(tmp_path):
+    ENVS.clear()
+    tray = SCENES["tray"].tasks["red_in_tray"].instruction
+    with client(tmp_path, FakeBackend([good_plan(), good_plan()])) as c:
+        run_id = c.post("/api/plan", json={"instruction": tray, "scene": "tray", "seed": 4}).json()["run_id"]
+        wait_idle(c)
+        assert c.get("/api/preview", params={"scene": "cubes", "seed": 9}).status_code in (200, 503)
+        assert c.post(f"/api/plan/{run_id}/execute").status_code == 200
+        wait_idle(c)
+    env = ENVS[-1]
+    assert (env.scene_name, env.seed, env.check_name) == ("tray", 4, "red_in_tray")
+    assert events(tmp_path)[-3]["scene"] == "tray"

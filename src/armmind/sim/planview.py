@@ -79,6 +79,13 @@ def finger_gap(k: Keyframe, believed: list[Entity]) -> float:
     return round(min(OPEN_GAP, held.size[0], held.size[1]), 4) if held is not None else 0.0
 
 
+def true_gap(state: str, held: Entity | None) -> float:
+    """The finger gap with a true held object: as finger_gap, from the measured narrow width."""
+    if state == "open":
+        return OPEN_GAP
+    return min(OPEN_GAP, held.size[0], held.size[1]) if held is not None else 0.0
+
+
 def agent() -> dict:
     fingers = [{"name": f"finger_{side}", "shape": "box", "size": FINGER_SIZE,
                 "xyz": [sign * FINGER_SIZE[0] / 2, 0.0, FINGER_Z], "slide": sign}
@@ -133,6 +140,6 @@ def check_plan(world: World, arm: Arm, belief, keyframes) -> dict:
     start = {"xyz": tuple(float(v) for v in world.tcp()), "yaw": world.gripper_yaw(), "state": "open"}
     match = match_entities([b.name for b in believed], names)
     marks = plan_checks(start, list(keyframes), truth, names, round_names, agent()["parts"], reach,
-                        {b: t for t, b in match.items()})
+                        open_state="open", gap=true_gap, believed_to_true={b: t for t, b in match.items()})
     return {"perception": p["rows"], "missing": p["missing"], "invented": p["invented"],
             "summary": {**p["summary"], "failed_keyframes": sum(not m["ok"] for m in marks)}, "marks": marks}

@@ -241,5 +241,11 @@ def test_page_loads_one_exact_three_version():
     urls = re.findall(r'src="(https://[^"]+)"', html)
     three = [u for u in urls if "three" in u]
     assert three == ["https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"]
-    assert '<script src="plan3d.js"></script>' in html
+    assert '<script src="plan3d.js" defer></script>' in html
     assert html.index("three.min.js") < html.index("plan3d.js") < html.index("app.js")
+
+
+def test_scores_take_the_states_and_the_gap_from_the_environment():
+    src = (ROOT / "src" / "armmind" / "plan" / "scores.py").read_text()
+    for word in ('"open"', '"closed"', "OPEN_GAP", "0.08"):
+        assert word not in src, word

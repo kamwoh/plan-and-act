@@ -87,15 +87,16 @@
     };
   }
 
-  // The poses of a set of entities at time t. rename maps a carried name of the track to a name of the set.
-  function posesAt(track, entities, t, rename) {
+  // The poses of a set of entities at time t. carriedAt(k, keyframe) names the entity of the set that the
+  // agent carries after keyframe k, or gives null.
+  function posesAt(track, entities, t, carriedAt) {
     const poses = {};
     for (const e of entities) poses[e.name] = { xyz: e.xyz.slice(), yaw: e.yaw || 0 };
     let carried = null;
     track.keyframes.forEach((kf, k) => {
       if (t < kf.t) return;
       const at = { xyz: kf.xyz, yaw: kf.yaw };
-      const want = kf.carrying ? rename(kf.carrying) : null;
+      const want = carriedAt(k, kf) || null;
       if (carried && carried.name !== want) {
         poses[carried.name] = toWorld(at, carried.local);
         carried = null;
@@ -104,6 +105,19 @@
     });
     if (carried) poses[carried.name] = toWorld(agentAt(track, t), carried.local);
     return poses;
+  }
+
+  // Who carries what. The belief follows the track. The true entities follow the marks: a mark names the true
+  // entity that the agent holds after its keyframe, so a failed grasp moves nothing. A view without that
+  // field falls back to the name match.
+  function carriers(view) {
+    const back = {};
+    for (const [trueName, believed] of Object.entries(view.true_match || {})) back[believed] = trueName;
+    const marks = view.marks || [];
+    return {
+      believed: (k, kf) => kf.carrying,
+      truth: (k, kf) => (marks[k] && "holds" in marks[k] ? marks[k].holds : (kf.carrying && back[kf.carrying]) || null),
+    };
   }
 
   // ---- One camera view ----
@@ -350,9 +364,7 @@
         slot.overlay.height = Math.round(cam.height * dpr);
         this.views.push(new CameraView(slot, cam, view));
       }
-      const back = {};
-      for (const [trueName, believed] of Object.entries(view.true_match || {})) back[believed] = trueName;
-      this.toTrue = (name) => back[name] || null;
+      this.carry = carriers(view);
       this.setMode(this.mode);
       this.seek(0);
       this.loop();
@@ -372,8 +384,8 @@
       this.time = Math.min(Math.max(0, t), this.duration);
       const track = this.view.track;
       const agent = agentAt(track, this.time);
-      const believed = posesAt(track, this.view.believed, this.time, (n) => n);
-      const truth = posesAt(track, this.view.true_start, this.time, this.toTrue);
+      const believed = posesAt(track, this.view.believed, this.time, this.carry.believed);
+      const truth = posesAt(track, this.view.true_start, this.time, this.carry.truth);
       for (const v of this.views) v.update(agent, believed, truth);
       const kf = track.keyframes[agent.index];
       for (const fn of this.listeners) fn({ time: this.time, duration: this.duration, index: agent.index, keyframe: kf, playing: this.playing });
@@ -403,6 +415,20 @@
 
     resetViews() {
       for (const v of this.views) v.resetCamera();
+    }
+
+    // Stop the clock and the drawing while the views are hidden. wake() draws again.
+    sleep() {
+      this.playing = false;
+      if (this.raf !== null) cancelAnimationFrame(this.raf);
+      this.raf = null;
+    }
+
+    wake() {
+      if (!this.view || this.raf !== null) return;
+      for (const v of this.views) v.dirty = true;
+      this.seek(this.time);
+      this.loop();
     }
 
     loop() {
@@ -451,5 +477,6 @@
     },
     agentAt,
     posesAt,
+    carriers,
   };
 })();

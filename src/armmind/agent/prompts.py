@@ -69,7 +69,7 @@ You plan a whole task for a Franka Panda robot arm in a physics simulation, befo
 You get two camera images of the start and the state of the gripper. You reply in one message \
 with what you believe the scene is, and with the keyframes of the whole task.
 
-{COORDS}{OBJECTS}{GRIPPER}"yaw" is in degrees (-90 to 90) and turns the gripper about the vertical axis. {YAW}
+{COORDS}{OBJECTS.replace("the step message", "the message")}{GRIPPER}"yaw" is in degrees (-90 to 90) and turns the gripper about the vertical axis. {YAW}
 {REACH}{GRASP}
 Write your belief in "objects": one item for each object that you see. Name each object as the \
 message does, for example "red cube". "shape" is "box" or "cylinder". "size" is [width along x, depth along y, \

@@ -12,7 +12,6 @@ IGNORE_TARGET_M = 0.03  # the grasp target does not count in the last 3 cm befor
 GRASP_ANGLE_DEG = 20.0
 MAX_GRASP_WIDTH = 0.075
 GRASP_CENTRE_M = 0.02
-OPEN_GAP = 0.08
 COLLIDE_M = 0.002  # an overlap must be deeper than this: the boxes of scanned objects are a little loose
 
 
@@ -43,6 +42,13 @@ def yaw_error(true: Entity, believed_yaw: float, round_names: set[str]) -> float
     return None if period is None else _fold(believed_yaw - true.yaw, period)
 
 
+def canonical(e: Entity) -> Entity:
+    """The same box with the shorter horizontal side along x: [w, d] at yaw t equals [d, w] at t + 90."""
+    if e.size[0] <= e.size[1]:
+        return e
+    return Entity(e.name, e.shape, (e.size[1], e.size[0], e.size[2]), e.xyz, e.yaw + 90.0, e.color)
+
+
 def perception(believed: list[Entity], truth: list[Entity], aliases: dict[str, list[str]],
                round_names: set[str]) -> dict:
     """Errors of each matched object, the missing and the invented objects, and a summary."""
@@ -52,7 +58,7 @@ def perception(believed: list[Entity], truth: list[Entity], aliases: dict[str, l
     for t in truth:
         if t.name not in match:
             continue
-        b = by_name[match[t.name]]
+        b, t = canonical(by_name[match[t.name]]), canonical(t)
         yaw = yaw_error(t, b.yaw, round_names)
         rows.append({"name": b.name, "true_name": t.name,
                      "xy_cm": _round(math.hypot(b.xyz[0] - t.xyz[0], b.xyz[1] - t.xyz[1]) * 100),
@@ -113,11 +119,16 @@ def _narrow_width(e: Entity) -> float:
 
 
 def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, list[str]], round_names: set[str],
-                parts: list[dict], reach: Callable[[tuple, float], str | None],
+                parts: list[dict], reach: Callable[[tuple, float], str | None], *, open_state: str,
+                gap: Callable[[str, Entity | None], float],
                 believed_to_true: dict[str, str] | None = None) -> list[dict]:
-    """One mark for each keyframe: {"ok", "checks": {name: "ok" or a reason}, "info"}.
+    """One mark for each keyframe: {"ok", "checks": {name: "ok" or a reason}, "info", "holds"}.
 
-    reach(xyz, yaw) gives None or the reason why the environment cannot reach the pose."""
+    The environment gives these rules:
+    - reach(xyz, yaw): None, or the reason why it cannot reach the pose.
+    - open_state: the state that holds nothing. A change away from it grasps, a change back to it releases.
+    - gap(state, held): the slide gap of the agent parts in a state, with the held true entity or None.
+    "holds" is the true object in the agent after the keyframe, or None."""
     by_name = {t.name: t for t in truth}
     poses = {t.name: (t.xyz, t.yaw) for t in truth}  # where each true object is, as the plan moves them
     keys = {name: {norm_name(name), *(norm_name(a) for a in aliases.get(name, []) if a)} for name in by_name}
@@ -129,35 +140,38 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
         n = norm_name(name)
         return next((t for t, k in keys.items() if n in k), believed_to_true.get(n))
 
-    def gap_of(state: str, held: str | None) -> float:
-        if state == "open":
-            return OPEN_GAP
-        return min(OPEN_GAP, _narrow_width(by_name[held])) if held else 0.0
+    def closes(before: str, k: Keyframe) -> bool:
+        return before == open_state and k.state != open_state
 
     xyz, yaw, state = tuple(start["xyz"]), float(start["yaw"]), start["state"]
     held, local = None, None  # the true object in the hand, and its pose in the hand frame
+    keyframes = list(keyframes)
     marks = []
-    for k in keyframes:
+    for i, k in enumerate(keyframes):
         k: Keyframe
         checks, info = {}, ""
         why = reach(k.xyz, k.yaw)
         checks["reach"] = why or "ok"
-        closing = k.state == "closed" and state != "closed"
+        closing = closes(state, k)
         target = true_name(k.carrying) if closing else None
-        checks["collision"] = _path_check(xyz, yaw, k, parts, gap_of(state, held), held, target, by_name, poses)
+        # A descent that stops open, with a close in place at the next keyframe, may touch its target too.
+        nxt = keyframes[i + 1] if i + 1 < len(keyframes) else None
+        near = target or (true_name(nxt.carrying) if nxt is not None and closes(k.state, nxt) else None)
+        checks["collision"] = _path_check(xyz, yaw, k, parts, gap(state, by_name.get(held)), held, near,
+                                          by_name, poses)
         if held is not None:  # the held object moves with the hand to the keyframe
             poses[held] = _to_world(k.xyz, k.yaw, local)
         if closing and k.carrying is not None:
             checks["grasp"] = _grasp_check(k, target, by_name, poses, round_names)
             if target is not None and checks["grasp"] == "ok":
                 held, local = target, _to_local(k.xyz, k.yaw, poses[target])
-        if k.state == "open" and state == "closed" and held is not None:
+        if k.state == open_state and state != open_state and held is not None:
             bottom = poses[held][0][2] - by_name[held].size[2] / 2
             checks["release"] = "ok"
             info = f"{held}: {bottom * 100:.1f} cm above the table"
             poses[held] = drop(held, by_name, poses)
             held, local = None, None
-        marks.append({"ok": all(v == "ok" for v in checks.values()), "checks": checks, "info": info})
+        marks.append({"ok": all(v == "ok" for v in checks.values()), "checks": checks, "info": info, "holds": held})
         xyz, yaw, state = k.xyz, k.yaw, k.state
     return marks
 
@@ -192,8 +206,11 @@ def _to_world(xyz, yaw: float, local):
 
 def _path_check(xyz, yaw: float, k: Keyframe, parts, gap: float, held: str | None, target: str | None,
                 by_name: dict[str, Entity], poses: dict) -> str:
-    dist = math.dist(xyz, k.xyz)
-    n = max(1, math.ceil(dist / SAMPLE_M))
+    # Sample every 1 cm of the move, and every 1 cm of the arc of the outer part corner for a turn.
+    radius = max((math.hypot(abs(p["xyz"][0]) + abs(p.get("slide", 0)) * gap / 2 + p["size"][0] / 2,
+                             abs(p["xyz"][1]) + p["size"][1] / 2) for p in parts), default=0.0)
+    arc = math.radians(abs(k.yaw - yaw)) * radius
+    n = max(1, math.ceil(max(math.dist(xyz, k.xyz), arc) / SAMPLE_M))
     for i in range(1, n + 1):
         a = i / n
         p = tuple(xyz[j] + a * (k.xyz[j] - xyz[j]) for j in range(3))

@@ -141,7 +141,7 @@ function setRunning(value) {
   for (const c of $("scenes").children) c.disabled = value;
   $("shuffle").disabled = value;
   $("reset").disabled = value;
-  for (const b of document.querySelectorAll(".exec-btn")) b.disabled = value;
+  for (const b of document.querySelectorAll(".exec-btn")) b.disabled = value || !planRunId;  // an old entry stays off
 }
 let previewSeq = 0;
 
@@ -897,6 +897,8 @@ function onEvent(ev, replay = false) {
     addEntry(planCheckEntry(ev.scores || {}));
     if (ev.view) showPlan(ev.view);
   } else if (ev.kind === "exec_start") {
+    runCameras = cameraLabels(ev.scene);
+    if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
     if (!replay) {
       viewSeq++;
       setRunning(true);
@@ -956,19 +958,25 @@ function ensurePlayer() {
 
 function showPlan(view) {
   const p = ensurePlayer();
-  $("player").hidden = false;
-  if (!p) {
-    $("play_kf").textContent = "The 3D view needs WebGL in this browser.";
+  if (!p) {  // no bar with buttons that do nothing: the chat says why
+    $("player").hidden = true;
+    const item = entry("system", "No imagined video");
+    item.append(el("div", "The 3D view needs WebGL and three.js in this browser. The boxes keep the camera images."));
+    addEntry(item);
     return;
   }
+  $("player").hidden = false;
   p.load(view);
   $("play_slider").max = String(view.track.duration || 0);
   setViewMode("imagined");
   p.play();
 }
 
+// A new run, preview, scene or seed drops the plan. Its old Plan check entry can no longer execute.
 function clearPlan() {
   if (player) player.unload();
+  planRunId = null;
+  for (const b of document.querySelectorAll(".exec-btn")) b.disabled = true;
   $("player").hidden = true;
   setViewMode("camera");
 }
@@ -981,7 +989,12 @@ function setViewMode(mode) {
     $(`plan_${cam}_labels`).hidden = !plan;
   }
   for (const img of ["live", "top"]) $(img).hidden = plan || !$(img).getAttribute("src");
-  if (plan) player.setMode(viewMode);
+  if (plan) {
+    player.setMode(viewMode);
+    player.wake();
+  } else if (player) {
+    player.sleep();  // the hidden video stops: no clock and no drawing
+  }
   for (const b of $("player").querySelectorAll(".seg button")) b.classList.toggle("active", b.dataset.mode === viewMode);
   paintBadges();
 }
