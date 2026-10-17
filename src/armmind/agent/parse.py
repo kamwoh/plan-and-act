@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
+from armmind.plan.formats import Entity, Keyframe
 from armmind.types import Action
 
 MAX_WAIT_S = 3.0
@@ -92,3 +93,99 @@ def parse_reply(obj, max_actions: int = 8) -> Reply:
     lessons = [t.strip()[:LESSON_CHARS] for t in lessons if t.strip()][:MAX_LESSONS]
     return Reply(str(obj.get("observation", "")), str(obj.get("plan", "")), tuple(actions[:max_actions]),
                  notes, tuple(todo[:5]), len(actions) > max_actions, done, tuple(lessons))
+
+
+# ---- The plan reply ----
+MAX_OBJECTS, MAX_KEYFRAMES = 12, 40
+YAW_LIMIT = 90.0  # degrees, as move_to clamps it
+NAME_CHARS, NOTE_CHARS, SUMMARY_CHARS = 80, 200, 1000
+
+
+@dataclass(frozen=True)
+class PlanReply:
+    objects: tuple[Entity, ...]
+    keyframes: tuple[Keyframe, ...]
+    summary: str
+    warnings: tuple[str, ...] = ()  # e.g. "keyframe 2: yaw clamped to 90"
+
+
+def _vec(where: str, key: str, v, positive: bool = False) -> tuple[float, float, float]:
+    if not (isinstance(v, list) and len(v) == 3 and all(_number(x) for x in v)) or (
+            positive and not all(x > 0 for x in v)):
+        kind = "3 finite numbers above 0" if positive else "3 finite numbers"
+        raise ReplyError(f"{where}: '{key}' must be {kind}")
+    return (float(v[0]), float(v[1]), float(v[2]))
+
+
+def _field(where: str, d: dict, key: str):
+    if key not in d:
+        raise ReplyError(f"{where}: '{key}' is missing")
+    return d[key]
+
+
+def _text(where: str, d: dict, key: str) -> str:
+    v = _field(where, d, key)
+    if not isinstance(v, str):
+        raise ReplyError(f"{where}: '{key}' must be a string")
+    return v.strip()
+
+
+def _yaw(where: str, d: dict) -> float:
+    v = _field(where, d, "yaw")
+    if not _number(v):
+        raise ReplyError(f"{where}: 'yaw' must be a finite number of degrees")
+    return float(v)
+
+
+def _plan_object(i: int, o) -> Entity:
+    where = f"object {i + 1}"
+    if not isinstance(o, dict):
+        raise ReplyError(f"{where} is not an object")
+    name = _text(where, o, "name")
+    if not name:
+        raise ReplyError(f"{where}: 'name' is empty")
+    shape = _field(where, o, "shape")
+    if shape not in ("box", "cylinder"):
+        raise ReplyError(f"{where}: 'shape' must be \"box\" or \"cylinder\"")
+    return Entity(name[:NAME_CHARS], shape, _vec(where, "size", _field(where, o, "size"), positive=True),
+                  _vec(where, "xyz", _field(where, o, "xyz")), _yaw(where, o))
+
+
+def _plan_keyframe(i: int, k, warnings: list[str]) -> Keyframe:
+    where = f"keyframe {i + 1}"
+    if not isinstance(k, dict):
+        raise ReplyError(f"{where} is not an object")
+    xyz = _vec(where, "xyz", _field(where, k, "xyz"))
+    want = _yaw(where, k)
+    yaw = min(max(want, -YAW_LIMIT), YAW_LIMIT)
+    if yaw != want:
+        warnings.append(f"{where}: yaw clamped to {yaw:g}")
+    state = _field(where, k, "gripper")
+    if state not in ("open", "closed"):
+        raise ReplyError(f"{where}: 'gripper' must be \"open\" or \"closed\"")
+    holding = _text(where, k, "holding")
+    carrying = None if holding.lower() in ("", "nothing") else holding[:NAME_CHARS]
+    return Keyframe(xyz, yaw, state, carrying, _text(where, k, "note")[:NOTE_CHARS])
+
+
+def parse_plan(obj) -> PlanReply:
+    """Check a plan reply and turn it into entities and keyframes. A bad value raises ReplyError."""
+    if not isinstance(obj, dict):
+        raise ReplyError("the reply is not a JSON object")
+    objects = _field("the reply", obj, "objects")
+    if not isinstance(objects, list):
+        raise ReplyError("'objects' must be a list")
+    if len(objects) > MAX_OBJECTS:
+        raise ReplyError(f"'objects' has {len(objects)} items, at most {MAX_OBJECTS} are allowed")
+    keyframes = _field("the reply", obj, "keyframes")
+    if not isinstance(keyframes, list):
+        raise ReplyError("'keyframes' must be a list")
+    if not 1 <= len(keyframes) <= MAX_KEYFRAMES:
+        raise ReplyError(f"'keyframes' must have 1 to {MAX_KEYFRAMES} items, not {len(keyframes)}")
+    summary = _field("the reply", obj, "summary")
+    if not isinstance(summary, str):
+        raise ReplyError("'summary' must be a string")
+    warnings: list[str] = []
+    return PlanReply(tuple(_plan_object(i, o) for i, o in enumerate(objects)),
+                     tuple(_plan_keyframe(i, k, warnings) for i, k in enumerate(keyframes)),
+                     summary.strip()[:SUMMARY_CHARS], tuple(warnings))

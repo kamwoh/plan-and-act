@@ -5,7 +5,7 @@ import asyncio
 import base64
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -52,6 +52,18 @@ class RunRequest(BaseModel):
     @classmethod
     def _strip_prompt(cls, v: str | None) -> str | None:
         return (v or "").strip() or None  # empty means: use the default
+
+
+class PlanRequest(BaseModel):
+    instruction: str = Field(min_length=1, max_length=500)
+    scene: str = "cubes"
+    seed: int = Field(0, ge=0)
+    use_lessons: bool = True
+
+    @field_validator("instruction")
+    @classmethod
+    def _strip(cls, v: str) -> str:
+        return RunRequest._strip(v)
 
 
 class Hub:
@@ -117,7 +129,7 @@ class Runner:
         self.backend, self.env_factory, self.runs_dir, self.hub = backend, env_factory, runs_dir, hub
         self.lessons = lessons
         self.task: asyncio.Task | None = None
-        self.agent: Agent | None = None
+        self._stopper: Callable[[], Awaitable[None]] | None = None  # stops the active run, plan or execution
         self.run_dir: Path | None = None
 
     @property
@@ -128,7 +140,27 @@ class Runner:
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog(self.runs_dir)
-        self.run_dir = log.dir
+        agent = Agent(self.backend, AgentConfig(max_steps=req.max_steps), system=req.system_prompt,
+                      store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
+        self._launch(log, agent.stop, scene, task, req.instruction, req.seed, req.show_positions, agent.run)
+        return log.dir
+
+    async def start_plan(self, req: PlanRequest, scene: Scene, task: Task | None) -> Path:
+        """A run of kind "plan": one model call, no motion. The env never gets the true positions."""
+        if self.running:
+            raise HTTPException(409, "a run is already active")
+        log = RunLog(self.runs_dir)
+        agent = Agent(self.backend, store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
+        self._launch(log, agent.stop, scene, task, req.instruction, req.seed, False,
+                     lambda env, call, emit: agent.plan(env, call, emit, seed=req.seed))
+        return log.dir
+
+    def _launch(self, log: RunLog, stopper: Callable[[], Awaitable[None]], scene: Scene, task: Task | None,
+                instruction: str, seed: int, show_positions: bool,
+                body: Callable[[Env, Callable, Callable[[str, dict], None]], Awaitable],
+                end_kind: str = "run_end") -> None:
+        """Make the env on a fresh sim thread, run `body`, and clean up. An error ends with an `end_kind` event."""
+        self.run_dir, self._stopper = log.dir, stopper
         pacer = Pacer()
 
         def on_frame(cam: str, jpg: bytes) -> None:
@@ -143,17 +175,13 @@ class Runner:
                     msg[key] = _b64(value)
             self.hub.publish_threadsafe(msg)
 
-        self.agent = Agent(self.backend, AgentConfig(max_steps=req.max_steps), system=req.system_prompt,
-                           store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
-        agent = self.agent
-
         async def go() -> None:
             sim, env = SimThread(), None
             try:
-                env = await sim.call(self.env_factory, scene, task, req.instruction, req.seed, req.show_positions, on_frame)
-                await agent.run(env, sim.call, emit)
+                env = await sim.call(self.env_factory, scene, task, instruction, seed, show_positions, on_frame)
+                await body(env, sim.call, emit)
             except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
-                emit("run_end", {"status": "error", "message": f"{type(e).__name__}: {e}"})
+                emit(end_kind, {"status": "error", "message": f"{type(e).__name__}: {e}"})
             finally:
                 try:
                     if env is not None:
@@ -167,11 +195,10 @@ class Runner:
                         log.close()
 
         self.task = asyncio.create_task(go())
-        return log.dir
 
     async def stop(self) -> None:
-        if self.agent is not None:
-            await self.agent.stop()
+        if self._stopper is not None:
+            await self._stopper()
         if self.task is not None:
             await asyncio.wait({self.task}, timeout=5)
 
@@ -220,6 +247,20 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         return {"run_dir": str(await runner.start(req, scene, task))}
 
     history = RunStore(Path(runs_dir))
+
+    @app.post("/api/plan", dependencies=[Depends(same_origin)])
+    async def plan(req: PlanRequest) -> dict:
+        scene = _scene(req.scene)
+        task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
+        folder = await runner.start_plan(req, scene, task)
+        return {"run_dir": str(folder), "run_id": folder.name}
+
+    @app.get("/api/plan/{run_id}/view")
+    def plan_view(run_id: str) -> dict:
+        plan = history.plan(run_id)
+        if plan is None:
+            raise HTTPException(404, "no such plan")
+        return plan["plan"]["view"]
 
     def image_url(run_id: str, name: str) -> str:
         return f"/api/runs/{run_id}/images/{name}"

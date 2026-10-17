@@ -56,12 +56,31 @@ DEMO_REPLIES = [  # invented replies for a demo run of the cubes scene
 ]
 
 
+DEMO_PLAN = {  # an invented plan for the cubes scene: pick up the red cube
+    "objects": [
+        {"name": "red cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.5, -0.1, 0.02], "yaw": 0},
+        {"name": "blue cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.55, 0.12, 0.02], "yaw": 10},
+        {"name": "green cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.45, 0.2, 0.02], "yaw": 0},
+    ],
+    "keyframes": [
+        {"xyz": [0.5, -0.1, 0.15], "yaw": 0, "gripper": "open", "holding": "nothing", "note": "above the red cube"},
+        {"xyz": [0.5, -0.1, 0.02], "yaw": 0, "gripper": "closed", "holding": "red cube", "note": "grasp it"},
+        {"xyz": [0.5, -0.1, 0.2], "yaw": 0, "gripper": "closed", "holding": "red cube", "note": "lift it"},
+    ],
+    "summary": "Grasp the red cube from above and lift it 18 cm.",
+}
+
+
 class DemoConversation:
     def __init__(self, backend: DemoBackend):
         self.backend = backend
 
     async def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]:
         await asyncio.sleep(self.backend.delay_s)
+        if schema is not None and "keyframes" in schema.get("properties", {}):
+            yield Final("", DEMO_PLAN)
+            yield Usage("demo", self.backend.delay_s, 2400, 400, 0.006, 0, 0)
+            return
         step = re.search(r"Step (\d+) of", msg.text)  # the same reply for the same step in each run
         body = DEMO_REPLIES[(int(step.group(1)) - 1 if step else 0) % len(DEMO_REPLIES)]
         yield Final("", body)

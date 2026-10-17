@@ -8,7 +8,7 @@ from pathlib import Path
 
 RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}(-[0-9]{1,4})?")  # the folder names that RunLog writes
 IMAGE_NAME = re.compile(r"step[0-9]{3}_(front|top)\.png")
-STEP_KINDS = ("step", "bad_reply", "llm_error")  # one of these ends each step
+STEP_KINDS = ("step", "bad_reply", "llm_error", "plan")  # one of these ends each step or the plan call
 MAX_RUNS = 200
 
 
@@ -38,7 +38,8 @@ def _num(value) -> float:
 
 def summarize(name: str, events: Iterator[dict]) -> dict:
     s = {"id": name, "started": None, "scene": "cubes", "instruction": "", "check": None,
-         "steps": 0, "cost_usd": 0.0, "in_tokens": 0, "out_tokens": 0, "status": "unfinished"}
+         "steps": 0, "cost_usd": 0.0, "in_tokens": 0, "out_tokens": 0, "status": "unfinished",
+         "mode": "run", "exec_status": None}
     for ev in events:
         kind = ev.get("kind")
         if s["started"] is None:
@@ -48,6 +49,7 @@ def summarize(name: str, events: Iterator[dict]) -> dict:
             s["scene"] = ev.get("scene") or "cubes"  # runs from before the scene field
             s["instruction"] = ev.get("instruction") or ""
             s["check"] = ev.get("check")
+            s["mode"] = "plan" if ev.get("mode") == "plan" else "run"
         elif kind in STEP_KINDS:
             s["steps"] += 1
             u = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
@@ -56,6 +58,10 @@ def summarize(name: str, events: Iterator[dict]) -> dict:
             s["out_tokens"] += _num(u.get("out"))
         elif kind == "run_end":
             s["status"] = ev.get("status") or "unfinished"
+        elif kind == "exec_start":
+            s["exec_status"] = "unfinished"
+        elif kind == "exec_end":
+            s["exec_status"] = ev.get("status") or "unfinished"
     s["cost_usd"] = round(s["cost_usd"], 6)
     return s
 
@@ -142,3 +148,22 @@ class RunStore:
                     msg[key] = image_url(run_id, value) if valid_image_name(value) else None
             out.append(msg)
         return out
+
+    def plan(self, run_id: str) -> dict | None:
+        """The run_start and the plan event of a finished plan run, or None."""
+        folder = self.folder(run_id)
+        if folder is None:
+            return None
+        start = plan = None
+        try:
+            for ev in read_events(folder / "events.jsonl"):
+                if ev.get("kind") == "run_start":
+                    start = ev
+                elif ev.get("kind") == "plan":
+                    plan = ev
+        except OSError:
+            return None
+        if not (start and start.get("mode") == "plan" and plan and isinstance(plan.get("view"), dict)
+                and isinstance(plan.get("keyframes"), list)):
+            return None
+        return {"start": start, "plan": plan, "folder": folder}

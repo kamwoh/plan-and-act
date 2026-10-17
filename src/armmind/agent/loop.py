@@ -9,8 +9,16 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 
-from armmind.agent.parse import Reply, ReplyError, parse_reply
-from armmind.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_text
+from armmind.agent.parse import PlanReply, Reply, ReplyError, parse_plan, parse_reply
+from armmind.agent.prompts import (
+    PLAN_REPLY_SCHEMA,
+    PLAN_SYSTEM,
+    REPLY_SCHEMA,
+    SYSTEM,
+    StepSummary,
+    build_plan_text,
+    build_user_text,
+)
 from armmind.env import Env
 from armmind.llm.protocol import Conversation, Final, LLMBackend, LLMError, Message, Usage
 from armmind.store.lessons import LessonStore
@@ -196,6 +204,50 @@ class Agent:
                 status = "stopped"
         return status
 
+    async def plan(self, env: Env, call: Call, emit: Emit, seed: int = 0) -> str:
+        """One model call: the belief of the scene and the keyframes of the whole task. The code then scores
+        the plan and builds the view of the page. Nothing moves."""
+        self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
+        emit("run_start", {"mode": "plan", "scene": env.scene_name, "instruction": env.instruction, "seed": seed,
+                           "run_id": self.run_id, "max_steps": 1, "check": env.check_name,
+                           "system_prompt": PLAN_SYSTEM, "use_lessons": self.use_lessons,
+                           "saved_lessons": list(self.saved_lessons)})
+        status = "error"
+        try:
+            status = await self._plan(env, call, emit)
+        finally:
+            emit("run_end", {"status": status})
+        return status
+
+    async def _plan(self, env: Env, call: Call, emit: Emit) -> str:
+        obs = await call(env.observe)
+        emit("observation", {"step": 1, "front_png": obs.front_png, "top_png": obs.top_png})
+        text = build_plan_text(env.scene_text, env.instruction, obs, env.image_text, self.saved_lessons)
+        self._conv = await self.backend.open(PLAN_SYSTEM)
+        attempts: list[dict] = []
+        try:
+            reply, error, _ = await self._ask(
+                Message("user", text, (obs.front_png, obs.top_png)), attempts,
+                lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), PLAN_REPLY_SCHEMA, parse_plan)
+        finally:
+            conv, self._conv = self._conv, None
+            await conv.close()
+        if self._stop.is_set():
+            return "stopped"
+        detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts)}
+        if reply is None and error is not None and error.kind != "schema":
+            emit("llm_error", {"step": 1, "error_kind": error.kind, "message": error.message, **detail})
+            return "llm_error"
+        if reply is None:
+            emit("bad_reply", {"step": 1, "error": error.message if error else "no reply", **detail})
+            return "bad_reply"
+        scores = await call(env.check_plan, reply.objects, reply.keyframes)
+        view = await call(env.plan_view, reply.objects, reply.keyframes, scores["marks"])
+        emit("plan", {"step": 1, "summary": reply.summary, "objects": [o.to_dict() for o in reply.objects],
+                      "keyframes": [k.to_dict() for k in reply.keyframes], "warnings": list(reply.warnings),
+                      "scores": scores, "view": view, **detail})
+        return "planned"
+
     def _save_lessons(self, scene: str, status: str) -> None:
         """Save the new lessons of the run. A failed write gives a warning and does not stop the run."""
         if self.store is None or not self.run_lessons:
@@ -205,21 +257,24 @@ class Agent:
         except OSError as e:
             logging.getLogger(__name__).warning("cannot save the lessons of scene %s: %s", scene, e)
 
-    async def _ask(self, msg: Message, attempts: list[dict], on_ask: Callable[[Message, int], None]
-                   ) -> tuple[Reply | None, LLMError | None, Usage | None]:
-        """Send the step message, and once more after a reply in the wrong format. on_ask runs before each send."""
+    async def _ask(self, msg: Message, attempts: list[dict], on_ask: Callable[[Message, int], None],
+                   schema: dict = REPLY_SCHEMA, parse: Callable | None = None
+                   ) -> tuple[Reply | PlanReply | None, LLMError | None, Usage | None]:
+        """Send the message, and once more after a reply in the wrong format. on_ask runs before each send."""
+        parse = parse or (lambda obj: parse_reply(obj, self.cfg.max_actions))
         on_ask(msg, 1)
-        reply, error, usage = await self._send(msg, attempts)
+        reply, error, usage = await self._send(msg, attempts, schema, parse)
         if error is not None and error.kind == "schema" and not self._stop.is_set():
             retry = Message("user", f"Your last reply was not valid: {error.message[:300]}. "
                                     "Reply again in the required format.")
             on_ask(retry, 2)
-            reply, error, usage = await self._send(retry, attempts)
+            reply, error, usage = await self._send(retry, attempts, schema, parse)
         return reply, error, usage
 
-    async def _send(self, msg: Message, attempts: list[dict]) -> tuple[Reply | None, LLMError | None, Usage | None]:
+    async def _send(self, msg: Message, attempts: list[dict], schema: dict, parse: Callable
+                    ) -> tuple[Reply | PlanReply | None, LLMError | None, Usage | None]:
         """Send one message and record the attempt (what went out, what came back) in `attempts`."""
-        reply, error, usage, final = await self._send_raw(msg)
+        reply, error, usage, final = await self._send_raw(msg, schema, parse)
         shown = None
         if final is not None:
             shown = json.dumps(final.parsed, ensure_ascii=False, indent=2) if final.parsed is not None else final.text
@@ -227,14 +282,15 @@ class Agent:
                          "error": error.message if error else None, "usage": _usage_dict(usage)})
         return reply, error, usage
 
-    async def _send_raw(self, msg: Message) -> tuple[Reply | None, LLMError | None, Usage | None, Final | None]:
+    async def _send_raw(self, msg: Message, schema: dict, parse: Callable
+                        ) -> tuple[Reply | PlanReply | None, LLMError | None, Usage | None, Final | None]:
         if self._stop.is_set():
             return None, LLMError("cancelled", "stopped"), None, None
         final, usage, error = None, None, None
 
         async def consume() -> None:
             nonlocal final, usage, error
-            async for ev in self._conv.send(msg, REPLY_SCHEMA):
+            async for ev in self._conv.send(msg, schema):
                 if isinstance(ev, Final):
                     final = ev
                 elif isinstance(ev, Usage):
@@ -260,6 +316,6 @@ class Agent:
         if final is None or final.parsed is None:
             return None, LLMError("schema", "no structured answer"), usage, final
         try:
-            return parse_reply(final.parsed, self.cfg.max_actions), None, usage, final
+            return parse(final.parsed), None, usage, final
         except ReplyError as e:
             return None, LLMError("schema", str(e)), usage, final
