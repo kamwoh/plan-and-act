@@ -100,13 +100,13 @@ class Arm:
         self._run(SETTLE_S)
 
     def held(self) -> tuple[str, ...]:
-        """The scene objects that the gripper holds now: it is closed, both fingers touch the object, and the
-        width is not about 0. An open gripper, a push with the closed fingers or one finger on an edge holds
-        nothing."""
+        """The scene objects that the gripper holds now: it is closed, the width is not about 0, and a part of
+        the gripper touches the object. An open gripper, or a push with the closed empty fingers, holds nothing.
+        A mesh object often touches only one finger and the palm, so one finger is enough."""
         if self.w.data.ctrl[7] != GRIP_CLOSED or self.w.gripper_width() < CLOSED_ON_NOTHING_M:
             return ()
         names = {o.name for o in self.w.objects}
-        return tuple(n for n in self.w.pinched() if n in names)
+        return tuple(n for n in self.w.gripper_contacts() if n in names)
 
     def act(self, action: Action) -> ActionResult:
         before = self.held()

@@ -41,7 +41,7 @@ class ActionResult:
     contacts: tuple[str, ...] = ()
     note: str = ""
     gripper_yaw: float = 0.0  # degrees
-    # The scene objects that the gripper holds before and after the action: closed, between both fingers.
+    # The scene objects that the gripper holds before and after the action: closed, not empty, touching.
     # None means unknown.
     held_before: tuple[str, ...] | None = None
     held_after: tuple[str, ...] | None = None

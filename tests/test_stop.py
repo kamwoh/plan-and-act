@@ -221,3 +221,34 @@ async def test_a_stop_on_the_last_action_says_it_failed():
 def test_system_says_how_to_close_on_purpose():
     assert 'To close the gripper on purpose with nothing inside, for example to press or push, add ' \
            '"expect": {"holding": "nothing"}.' in SYSTEM
+
+
+@pytest.mark.assets
+def test_real_kitchen_bottle_grasp_on_seed_1_is_held():
+    results, _ = _run_actions("kitchen", "bottle_in_bowl", seed=1)
+    first_close = next(r for r in results if r.action.type == "close")
+    assert first_close.held_after == ("bottle",)
+
+
+def _solution_cases():
+    from armmind.scenes import SCENES
+    return [(s, t, seed) for s, sc in SCENES.items() for t in sc.tasks for seed in range(3)]
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize(("scene", "task", "seed"), _solution_cases())
+def test_real_solutions_hold_every_grasp_and_never_stop_after_the_first_close(scene, task, seed):
+    from armmind.scenes import SCENES
+    from armmind.types import CLOSED_ON_NOTHING_M
+    results, _ = _run_actions(scene, task, seed=seed)
+    objects = {o.name for o in SCENES[scene].objects}
+    closes = [i for i, r in enumerate(results) if r.action.type == "close"]
+    for i in closes:
+        r = results[i]
+        touched = tuple(c for c in r.contacts if c in objects)
+        if touched and r.gripper_width >= CLOSED_ON_NOTHING_M:
+            assert r.held_after == touched, f"close {i}: {r.summary()}"
+    from armmind.agent.loop import check_result
+    labels = {o.name: o.label for o in SCENES[scene].objects}
+    late = [(i, check_result(r.action, r, labels)[1]) for i, r in enumerate(results) if closes and i > closes[0]]
+    assert [x for x in late if x[1]] == []
