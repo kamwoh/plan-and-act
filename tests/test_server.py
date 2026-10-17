@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -288,3 +289,19 @@ def test_tray_example_checks_only_in_the_tray_scene(tmp_path):
 
 def test_run_defaults_to_the_cubes_scene(tmp_path):
     assert _run_start(tmp_path, REACH)["scene"] == "cubes"
+
+
+def test_preview_without_assets_is_503_with_the_message(tmp_path):
+    from armmind.sim.assets import AssetsMissing
+
+    def preview(scene, seed):
+        raise AssetsMissing("scanned object X not found. Run scripts/fetch_objects.sh")
+
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path, preview=preview)) as c:
+        r = c.get("/api/preview", params={"scene": "kitchen"})
+    assert r.status_code == 503 and "fetch_objects.sh" in r.json()["detail"]
+
+
+def test_page_shows_the_preview_error():
+    js = (Path(__file__).resolve().parents[1] / "web" / "app.js").read_text()
+    assert "r.status === 503" in js and "showPreviewError" in js

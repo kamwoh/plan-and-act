@@ -45,7 +45,13 @@ def have_meshes(meshes) -> bool:
 
 def pieces(mesh: str) -> list[int]:
     """The numbers of the collision pieces, in order."""
-    return sorted(int(m.group(1)) for f in mesh_dir(mesh).iterdir() if (m := _PIECE.fullmatch(f.name)))
+    return list(_pieces(mesh_dir(mesh)))
+
+
+@cache
+def _pieces(folder: Path) -> tuple[int, ...]:
+    """The folder listing is slow on a Windows drive, so read it once."""
+    return tuple(sorted(int(m.group(1)) for f in folder.iterdir() if (m := _PIECE.fullmatch(f.name))))
 
 
 def asset_xml(name: str, mesh: str) -> str:
@@ -116,12 +122,25 @@ class MeshInfo:
         return tuple(float((lo + h) / 2) for lo, h in zip(self.lo, self.hi, strict=True))
 
 
-@cache
 def measure(mesh: str) -> MeshInfo:
-    """Compiles the collision pieces of one object alone and measures them."""
-    folder = mesh_dir(mesh)
-    assets = "".join(f'<mesh name="c{i}" file="{folder / f"model_collision_{i}.obj"}"/>' for i in pieces(mesh))
-    geoms = "".join(f'<geom type="mesh" mesh="c{i}"/>' for i in pieces(mesh))
+    """Compiles the collision pieces of one object alone and measures them. The result is cached for each
+    folder, so a change of ARMMIND_OBJECTS measures again."""
+    return _measure(mesh, mesh_dir(mesh))
+
+
+def warm(meshes) -> None:
+    """Measures the objects now, so that the first preview of a scene is faster. Missing objects are skipped."""
+    for m in meshes:
+        try:
+            measure(m)
+        except AssetsMissing:
+            pass
+
+
+@cache
+def _measure(mesh: str, folder: Path) -> MeshInfo:
+    assets = "".join(f'<mesh name="c{i}" file="{folder / f"model_collision_{i}.obj"}"/>' for i in _pieces(folder))
+    geoms = "".join(f'<geom type="mesh" mesh="c{i}"/>' for i in _pieces(folder))
     model = mujoco.MjModel.from_xml_string(
         f'<mujoco><asset>{assets}</asset><worldbody><body name="o">{geoms}</body></worldbody></mujoco>')
     body = model.body("o").id

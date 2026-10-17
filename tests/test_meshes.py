@@ -226,3 +226,56 @@ def test_mesh_label_has_the_measured_size():
     w, d, h = (round(v * 100, 1) for v in bottle.dims)
     assert bottle.text() == f"white bottle, {w:.1f} cm wide, {d:.1f} cm deep, {h:.1f} cm tall"
     assert bottle.text() in SCENES["kitchen"].describe()
+
+
+class _FakeWorld:
+    def __init__(self, height):
+        self.h = height
+
+    def object_info(self, name):
+        from armmind.sim.world import ObjInfo
+        return ObjInfo(0.04, 0.04, self.h, -self.h / 2, "x")
+
+
+@pytest.mark.parametrize("height,want", [(0.03, 0.02), (0.04, 0.02), (0.06, 0.03), (0.07, 0.035),
+                                         (0.109, 0.074), (0.15, 0.115)])
+def test_grip_height_is_the_centre_or_3_5_cm_below_a_tall_top(height, want):
+    from armmind.scenes.handling import grip_height
+    assert grip_height(_FakeWorld(height), "x") == pytest.approx(want)
+
+
+def test_measure_and_pieces_follow_the_objects_dir(tmp_path, monkeypatch):
+    from armmind.sim import meshes
+    for d, n in (("a", 2), ("b", 3)):
+        folder = tmp_path / d / FAKE
+        folder.mkdir(parents=True)
+        (folder / "model.obj").write_text("")
+        for i in range(n):
+            (folder / f"model_collision_{i}.obj").write_text("")
+    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path / "a"))
+    assert meshes.pieces(FAKE) == [0, 1]
+    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path / "b"))
+    assert meshes.pieces(FAKE) == [0, 1, 2]
+    (tmp_path / "b" / FAKE / "model_collision_3.obj").write_text("")
+    assert meshes.pieces(FAKE) == [0, 1, 2]  # the listing is cached
+
+
+@pytest.mark.objects
+def test_measure_cache_key_has_the_objects_dir(monkeypatch, tmp_path):
+    from armmind.sim import meshes
+    mesh = "Krill_Oil"
+    real = meshes.measure(mesh)
+    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path))
+    with pytest.raises(AssetsMissing):
+        meshes.measure(mesh)
+    monkeypatch.undo()
+    assert meshes.measure(mesh) is real
+
+
+@pytest.mark.assets
+def test_worlds_of_one_scene_share_the_compiled_model():
+    from armmind.scenes import SCENES
+    from armmind.sim.world import World
+    a, b = World(SCENES["cubes"]), World(SCENES["cubes"])
+    assert a.model is b.model and a.data is not b.data
+    assert World(SCENES["tray"]).model is not a.model

@@ -184,6 +184,13 @@ function showImage(id, src) {
   $(id).hidden = false;
 }
 
+function showPreviewError(message) {  // hide the images and put the message where they were
+  for (const [fig, img] of [["cam_front", "live"], ["cam_top", "top"]]) {
+    $(img).hidden = true;
+    $(fig).querySelector(".placeholder").textContent = message;
+  }
+}
+
 // ---- Step details ----
 function kvTiles(rows) {
   const box = el("div", "", "tiles");
@@ -413,7 +420,12 @@ async function renderPreview(seq) {
     if (running) return;
     const q = `scene=${encodeURIComponent(sceneName)}&seed=${encodeURIComponent($("seed").value || 0)}`;
     const r = await fetch(`/api/preview?${q}`);
-    if (!r.ok || seq !== previewSeq || running) return;
+    if (seq !== previewSeq || running) return;
+    if (r.status === 503) {  // files are missing: say which, and how to get them
+      showPreviewError((await r.json()).detail);
+      return;
+    }
+    if (!r.ok) return;
     const p = await r.json();
     if (seq !== previewSeq || running) return;
     showImage("live", `data:image/jpeg;base64,${p.front}`);

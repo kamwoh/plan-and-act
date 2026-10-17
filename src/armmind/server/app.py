@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import threading
 import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager
@@ -18,6 +19,8 @@ from armmind.agent.prompts import SYSTEM, example_step_text
 from armmind.env import Env, SimThread
 from armmind.llm.protocol import LLMBackend
 from armmind.scenes import SCENES, Scene, Task
+from armmind.sim.assets import AssetsMissing
+from armmind.sim.meshes import warm
 from armmind.store.runlog import RunLog
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
@@ -175,6 +178,9 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         hub.loop = asyncio.get_running_loop()
+        if env_factory is None:  # the real server: measure the scanned objects early, without a wait
+            threading.Thread(target=warm, args=({m for sc in SCENES.values() for m in sc.meshes},),
+                             daemon=True, name="warm-meshes").start()
         yield
         await runner.stop()
 
@@ -218,6 +224,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         sim = SimThread()  # a fresh thread, because the EGL context belongs to the thread that made it
         try:
             return await sim.call(preview or default_preview, chosen, seed)
+        except AssetsMissing as e:  # the Panda model or a scanned object is not downloaded
+            raise HTTPException(503, str(e)) from e
         finally:
             sim.shutdown()
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from string import Template
@@ -69,15 +70,29 @@ def scene_xml(scene: Scene) -> str:
                                                      assets=assets)
 
 
+_MODELS: dict[tuple[Path, str], mujoco.MjModel] = {}  # (folder, scene XML) -> the compiled model
+_MODELS_LOCK = threading.Lock()
+
+
+def _compiled(scene: Scene, folder: Path, scene_file: Path) -> mujoco.MjModel:
+    """The compiled model of a scene. Each scene XML compiles once. The worlds share the model and never
+    change it: each world has its own MjData."""
+    xml = scene_xml(scene)
+    with _MODELS_LOCK:
+        if (folder, xml) not in _MODELS:
+            tmp = folder / f".armmind_scene_{scene.name}.{os.getpid()}.xml"
+            tmp.write_text(xml)
+            os.replace(tmp, scene_file)  # a whole file at all times, also for another process
+            _MODELS[folder, xml] = mujoco.MjModel.from_xml_path(str(scene_file))
+        return _MODELS[folder, xml]
+
+
 class World:
     def __init__(self, scene: Scene, model_dir: Path | None = None):
         self.scene = scene
         folder = model_dir or panda_dir()
         self.scene_file = folder / f"armmind_scene_{scene.name}.xml"  # MJCF resolves <include> next to it
-        tmp = folder / f".armmind_scene_{scene.name}.{os.getpid()}.xml"
-        tmp.write_text(scene_xml(scene))
-        os.replace(tmp, self.scene_file)  # a whole file at all times, also for another process
-        self.model = mujoco.MjModel.from_xml_path(str(self.scene_file))
+        self.model = _compiled(scene, folder, self.scene_file)
         self.data = mujoco.MjData(self.model)
         self.hand_id = self.model.body("hand").id
         self._gripper = {self.model.body(n).id for n in GRIPPER_BODIES}
