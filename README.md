@@ -133,6 +133,20 @@ Start sends the edited prompt with the run. If you did not edit it, the app uses
 
 Each run log also holds this data. The `run_start` event has the system prompt. Each step event has the message and the list of calls.
 
+## History
+
+The clock button next to Lessons opens the run history. It lists the saved runs in `runs/`, newest first, up to 200. Each row shows the time, the scene, the instruction, the steps, the cost and the end status. A run that has no end event shows "unfinished".
+
+Click a row to read that run on the page. The chat, the memo, the totals and the cameras show the run as it was. The cameras show the images of the last step with a "Run" badge. Runs from older versions have no Sent entries in the chat. Their step details still open.
+
+The page goes back to a new run when you press Reset, choose a scene or a seed, or press Start. A run that starts in another tab also takes over the page. You cannot open the active run from the list. While a run is active, the list cannot open a saved run.
+
+The API has three endpoints for this:
+
+- `GET /api/runs` lists the runs with a summary of each run.
+- `GET /api/runs/{id}` gives the events of one run. Each image is a URL, not the image data.
+- `GET /api/runs/{id}/images/{name}` gives one image of the run.
+
 ## How it works
 
 Each step: the app renders a front and a top camera image with a grid on the table. Claude gets the images, the gripper position and the gripper yaw. It replies with up to 8 actions: `move_to [x, y, z]`, `open`, `close`, `wait`.
