@@ -233,7 +233,7 @@ function usageLine(u) {
 function openStepDetails(ev) {
   const kindText = ev.kind === "step" ? "" : ev.kind === "bad_reply" ? " · bad reply" : " · model error";
   $("step_title").textContent = `Step ${ev.step}${kindText}`;
-  const u = ev.usage;
+  const u = stepUsage(ev);
   const items = [el("h2", "Tokens (exact, from the API)")];
   if (u) {
     const total = (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0);
@@ -295,6 +295,7 @@ let stepEvents = {};     // step number -> the step, bad_reply or llm_error even
 let stepPrompts = {};    // step number -> the first message text, until the step event comes
 let thinking = null;     // { item, timer, start } while Claude thinks
 let runLessons = [];
+let replaying = false;   // true while loadRun sends the events of a saved run
 
 function atBottom() {
   const c = $("chat");
@@ -309,9 +310,10 @@ function scrollChat(force = false) {
 
 // Add an entry. Stay at the bottom when the reader is there. Otherwise do not move, and show "↓ latest".
 function addEntry(item) {
-  const stick = atBottom();
   const empty = $("chat").querySelector(".chat-empty");
   if (empty) empty.remove();
+  if (replaying) return $("chat").appendChild(item);  // no layout read for each entry: loadRun scrolls once
+  const stick = atBottom();
   $("chat").append(item);
   if (stick) scrollChat(true);
   else $("chat_latest").hidden = false;
@@ -845,6 +847,7 @@ function onEvent(ev, replay = false) {
     errorEntry(ev, `✕ Model error (${ev.error_kind})`, ev.message);
   } else if (ev.kind === "run_end") {
     if (!replay) setRunning(false);
+    if (!replay && $("history_dialog").open) fillHistory();  // the rows can open again
     setCamState("ended");
     onRunEnd(ev);
     loadLessons();
@@ -868,7 +871,8 @@ function sceneTitle(name) {
 }
 
 function historyRow(run) {
-  const status = run.active ? "running" : run.status;
+  const active = run.active && running;  // after run_end the server can list the run as active for a moment
+  const status = active ? "running" : run.status;
   const row = el("li");
   const b = el("button", "", "run-row");
   b.type = "button";
@@ -881,7 +885,7 @@ function historyRow(run) {
     el("span", status.replace("_", " "), `run-badge s-${status}`),
   );
   b.title = run.instruction;
-  if (run.active) {
+  if (active) {
     b.disabled = true;
     b.title = "This run is active. The page shows it live.";
   } else if (running) {
@@ -898,8 +902,12 @@ function historyRow(run) {
 
 async function openHistory() {
   $("history_list").replaceChildren();
-  $("history_msg").textContent = "Loading…";
   $("history_dialog").showModal();
+  await fillHistory();
+}
+
+async function fillHistory() {
+  $("history_msg").textContent = "Loading…";
   try {
     const r = await fetch("/api/runs");
     if (!r.ok) throw new Error(`error ${r.status}`);
@@ -933,7 +941,12 @@ async function loadRun(run) {
   resetChat();
   emptyMemo();
   resetTotals();
-  for (const ev of events) onEvent(ev, true);
+  replaying = true;
+  try {
+    for (const ev of events) onEvent(ev, true);
+  } finally {
+    replaying = false;
+  }
   endThinking();  // an unfinished run can end on a question
   scrollChat(true);
   const last = Math.max(...Object.keys(stepImages).map(Number));
@@ -944,7 +957,7 @@ async function loadRun(run) {
   }
   setCamState("run", `Run ${when}`);
   const ok = run.status === "success" || run.status === "done";
-  setStatus(`viewing run ${when} · ${run.status}`, ok ? "success" : run.status === "error" ? "bad" : "");
+  setStatus(`viewing run ${when} · ${run.status}`, ok ? "success" : run.status === "error" || run.status === "llm_error" ? "bad" : "");
 }
 
 $("history_btn").addEventListener("click", openHistory);

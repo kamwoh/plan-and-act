@@ -312,3 +312,41 @@ def test_id_and_name_patterns_are_ascii_and_exact():
     assert valid_image_name("step001_front.png") and valid_image_name("step200_top.png")
     for bad in ("step001_front.png\n", "step００1_front.png", "step1_front.png"):
         assert not valid_image_name(bad)
+
+
+def test_replay_skips_the_scroll_work_of_each_entry():
+    js = _web("app.js")
+    add = _body(js, "function addEntry")
+    assert add.index("if (replaying)") < add.index("atBottom()")
+    load = _body(js, "async function loadRun")
+    assert "replaying = true" in load and "finally" in load and "replaying = false" in load
+    assert load.index("replaying = false") < load.index("scrollChat(true)")
+
+
+def test_step_details_use_the_old_usage_too():
+    assert "const u = stepUsage(ev)" in _body(_web("app.js"), "function openStepDetails")
+
+
+def test_viewed_llm_error_run_gets_the_bad_pill():
+    load = _body(_web("app.js"), "async function loadRun")
+    assert 'run.status === "error" || run.status === "llm_error"' in load
+
+
+def test_open_history_list_refreshes_when_a_run_ends():
+    js = _web("app.js")
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    end = handler[handler.index('ev.kind === "run_end"'):]
+    assert 'if (!replay && $("history_dialog").open) fillHistory()' in end
+    assert "fillHistory()" in _body(js, "async function openHistory")
+
+
+def test_history_and_prompt_buttons_have_short_text_labels():
+    html = _web("index.html")
+    assert 'id="prompt_btn">Prompt <small' in html
+    history = html[html.index('id="history_btn"'):]
+    assert "</svg>History</button>" in history[:history.index("</button>") + 9]
+
+
+def test_a_run_that_ended_on_the_page_is_not_active_in_the_list():
+    # At run_end the server still cleans up and lists the run as active. The page knows it ended.
+    assert "const active = run.active && running" in _body(_web("app.js"), "function historyRow")

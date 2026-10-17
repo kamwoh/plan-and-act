@@ -135,7 +135,7 @@ Each run log also holds this data. The `run_start` event has the system prompt. 
 
 ## History
 
-The clock button next to Lessons opens the run history. It lists the saved runs in `runs/`, newest first, up to 200. Each row shows the time, the scene, the instruction, the steps, the cost and the end status. A run that has no end event shows "unfinished".
+The History button next to Lessons opens the run history. It lists the saved runs in `runs/`, newest first, up to 200. Each row shows the time, the scene, the instruction, the steps, the cost and the end status. A run that has no end event shows "unfinished".
 
 Click a row to read that run on the page. The chat, the memo, the totals and the cameras show the run as it was. The cameras show the images of the last step with a "Run" badge. Runs from older versions have no Sent entries in the chat. Their step details still open.
 

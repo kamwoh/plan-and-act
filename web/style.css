@@ -86,9 +86,9 @@ img[hidden] { display: none; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hint { color: var(--faint); font-size: 11px; }
 .controls { overflow: auto; padding: 12px; }
-.controls .buttons { gap: 6px; }
+.controls .buttons { gap: 5px; }
+#history_btn { gap: 5px; }
 .controls .buttons .btn { padding: 8px 9px; }
-.controls .buttons .btn.icon { padding: 7px 8px; }
 
 /* ---- Controls ---- */
 form { display: flex; flex-direction: column; gap: 8px; }
