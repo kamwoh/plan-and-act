@@ -941,9 +941,16 @@ async function loadRun(run) {
   resetChat();
   emptyMemo();
   resetTotals();
+  let skipped = 0;  // a corrupt event is left out, and the rest of the run still shows
   replaying = true;
   try {
-    for (const ev of events) onEvent(ev, true);
+    for (const ev of events) {
+      try {
+        onEvent(ev, true);
+      } catch (err) {
+        skipped += 1;
+      }
+    }
   } finally {
     replaying = false;
   }
@@ -957,7 +964,8 @@ async function loadRun(run) {
   }
   setCamState("run", `Run ${when}`);
   const ok = run.status === "success" || run.status === "done";
-  setStatus(`viewing run ${when} · ${run.status}`, ok ? "success" : run.status === "error" || run.status === "llm_error" ? "bad" : "");
+  const note = skipped ? ` · ${skipped} bad event${skipped > 1 ? "s" : ""} left out` : "";
+  setStatus(`viewing run ${when} · ${run.status}${note}`, ok && !skipped ? "success" : run.status === "error" || run.status === "llm_error" || skipped ? "bad" : "");
 }
 
 $("history_btn").addEventListener("click", openHistory);

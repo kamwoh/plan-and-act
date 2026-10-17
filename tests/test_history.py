@@ -350,3 +350,10 @@ def test_history_and_prompt_buttons_have_short_text_labels():
 def test_a_run_that_ended_on_the_page_is_not_active_in_the_list():
     # At run_end the server still cleans up and lists the run as active. The page knows it ended.
     assert "const active = run.active && running" in _body(_web("app.js"), "function historyRow")
+
+
+def test_replay_leaves_out_a_bad_event_and_says_so():
+    js = _web("app.js")
+    body = js[js.index("async function loadRun"):]
+    body = body[:body.index("\n}\n")]
+    assert "skipped += 1" in body and "bad event" in body
