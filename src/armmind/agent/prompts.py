@@ -31,8 +31,9 @@ counter-clockwise, seen from above. Without "yaw", the gripper keeps its current
 The arm can reach x from 0.25 to 0.75, y from -0.40 to 0.40, z from 0.01 to 0.50. \
 The arm moves a target outside this box to the nearest point inside it.
 To grasp an object: open, move 10 cm above it, move down to its centre height, close, then move up.
-An object can stand turned. Then turn the gripper with "yaw" so that the fingers close across its narrow side. \
-Hold a tall object a little below its centre, but keep its top less than 3.5 cm above the gripper position.
+For an object taller than 7 cm, close the gripper 3.5 cm below its top, not at its centre.
+An object can stand at an angle. Then turn the gripper with "yaw" so that the fingers close across \
+its narrow side.
 Each result says if the gripper reached the target, was blocked, or could not reach it.
 
 The simulation stops while you think. Use at most 8 actions in each step. \

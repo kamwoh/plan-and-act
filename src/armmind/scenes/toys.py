@@ -17,13 +17,13 @@ TOYS = (
     ObjSpec("pink_toy", "mesh", label="pink rubber toy", mass=0.05, mesh="Kong_Puppy_Teething_Rubber_Small_Pink",
             random_yaw=True),
 )
-# One spot for each toy in the tray. The gripper turns to yaw 0 before it lets go: the fingers open along x,
-# and the long side of a toy is along y. Two columns, 8 cm apart, so that an opening finger misses the
-# toy in the other column. Each column has a long toy and a short toy.
-SPOTS = {"green_robot": (CX - 0.04, CY - 0.03), "pink_toy": (CX - 0.04, CY + 0.035),
-         "orange_robot": (CX + 0.04, CY - 0.03), "panda": (CX + 0.04, CY + 0.033)}
-RELEASE_YAW = 0.0
-
+# One spot for each toy in the tray, in two rows 8 cm apart along y, in the order of placing. The gripper
+# turns to yaw 90 before it lets go: the fingers open along y, toward the other row, and stay clear of it.
+# The long side of a toy is along x. Each row has a long toy and a short toy. The short toys go first, on
+# the far side of each row.
+SPOTS = {"pink_toy": (CX + 0.037, CY - 0.04), "green_robot": (CX - 0.028, CY - 0.04),
+         "panda": (CX + 0.034, CY + 0.04), "orange_robot": (CX - 0.03, CY + 0.04)}
+RELEASE_YAW = 90.0
 
 def _to_tray(w, name: str, xy=(CX, CY), yaw: float | None = None):
     return place(w, name, xy, 2 * FLOOR_HALF_H + DROP, yaw)
@@ -35,8 +35,8 @@ def _all_plan(w):
 
 TOYS_SCENE = Scene(
     name="toys", title="Toys", objects=TOYS, fixtures_xml=FIXTURES,
-    fixtures_text=f"{TEXT} Turn the gripper so that the fingers close across the narrow side of a toy.",
-    region=(0.38, 0.65, -0.25, 0.12), min_gap=0.08,
+    fixtures_text=TEXT,
+    region=(0.38, 0.65, -0.25, 0.12), min_gap=0.10,
     tasks={t.name: t for t in (
         Task("panda_in_tray", f"Put the {TOYS[1].label} in the tray.", lambda w: in_tray(w, "panda"),
              lambda w: _to_tray(w, "panda")),

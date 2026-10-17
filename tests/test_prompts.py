@@ -75,4 +75,7 @@ def test_debug_positions_show_the_object_yaw():
 
 
 def test_system_says_to_turn_for_the_narrow_side():
-    assert "narrow side" in SYSTEM
+    assert "narrow side" in SYSTEM and "stand at an angle" in SYSTEM and "turned" not in SYSTEM
+    assert "For an object taller than 7 cm, close the gripper 3.5 cm below its top" in SYSTEM
+    from armmind.scenes import SCENES
+    assert all("narrow side" not in s.fixtures_text for s in SCENES.values())

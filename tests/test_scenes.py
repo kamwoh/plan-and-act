@@ -415,8 +415,10 @@ AWAY_T = {"orange_robot": (0.40, -0.20, 0.0), "green_robot": (0.60, -0.20, 0.0),
 TOY_CHECKS = [
     ("panda_in_tray", {"panda": (0.50, 0.28, 0.005), **AWAY_T}, True, True),
     ("panda_in_tray", {"panda": (0.50, 0.28 - 0.12, 0.0), **AWAY_T}, True, False),  # beside the tray
-    # On top of another toy, before it falls: the check wants it on the tray floor.
-    ("panda_in_tray", {**AWAY_T, "pink_toy": (0.50, 0.28, 0.005), "panda": (0.50, 0.28, 0.074)}, False, False),
+    # The height limit only: the panda is set above the pink toy and checked at once, before it can fall.
+    # A low point at 7.4 cm is too high for "in the tray".
+    pytest.param("panda_in_tray", {**AWAY_T, "pink_toy": (0.50, 0.28, 0.005), "panda": (0.50, 0.28, 0.074)},
+                 False, False, id="height-limit-only-not-settled"),
     ("all_toys_in_tray", {"green_robot": (0.46, 0.25, 0.005), "pink_toy": (0.46, 0.315, 0.005),
                           "orange_robot": (0.54, 0.25, 0.005), "panda": (0.54, 0.313, 0.005)}, True, True),
     ("all_toys_in_tray", {"green_robot": (0.46, 0.25, 0.005), "pink_toy": (0.46, 0.315, 0.005),
@@ -464,3 +466,21 @@ def test_objects_txt_lists_every_scanned_object_once():
     listed = Path(armmind.scenes.__file__).with_name("objects.txt").read_text().split()
     used = [m for s in SCENES.values() for m in s.meshes]
     assert sorted(listed) == sorted(set(listed)) == sorted(set(used))
+
+
+@pytest.mark.assets
+@pytest.mark.objects
+def test_on_plate_rejects_an_item_on_the_rim():
+    """The purple box rests with its bottom at the rim height, beside the plate centre. It must fail."""
+    w = _dropped("kitchen", {"bottle": (0.40, 0.0, 0.0), "yellow_box": (0.40, 0.12, 0.0)})
+    plate = w.object_pos("plate")
+    info = w.object_info("plate")
+    rim = plate[2] + info.bottom + info.height
+    adr = w.model.jnt_qposadr[w.model.joint("purple_box").id]
+    w.data.qpos[adr:adr + 7] = [plate[0], plate[1] - 0.05, rim - w.object_info("purple_box").bottom, 1, 0, 0, 0]
+    mujoco.mj_forward(w.model, w.data)
+    assert w.object_bottom("purple_box") == pytest.approx(rim, abs=1e-4)
+    assert not SCENES["kitchen"].tasks["purple_box_on_plate"].success(w)
+    w.data.qpos[adr + 2] -= rim - 0.011  # down to about the plate floor: then it passes
+    mujoco.mj_forward(w.model, w.data)
+    assert SCENES["kitchen"].tasks["purple_box_on_plate"].success(w)

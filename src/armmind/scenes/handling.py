@@ -8,16 +8,16 @@ import mujoco
 import numpy as np
 
 from armmind.scenes.base import ObjSpec, Scene
+from armmind.sim.meshes import collision_geoms
 from armmind.types import Action
 
 if TYPE_CHECKING:
     from armmind.sim.world import World
 
 CARRY_Z = 0.22  # high enough to carry a tall item over a bowl rim
-TALL = 0.06  # an item taller than this is held below its centre
-LOW_GRIP = 0.4  # the grasp height of a tall item, as a part of its height
-MIN_GRIP_Z = 0.02  # the lowest grasp height above the item bottom
+TALL = 0.07  # an item taller than this is held FINGER_REACH below its top, not at its centre
 FINGER_REACH = 0.035  # the item top must stay this close above the grasp point, or the hand hits it
+MIN_GRIP_Z = 0.02  # the lowest grasp height above the item bottom
 
 
 def grasp_yaw(obj_yaw: float, narrow: str) -> float:
@@ -33,10 +33,10 @@ def items(scene: Scene) -> tuple[ObjSpec, ...]:
 
 
 def grip_height(w: World, name: str) -> float:
-    """The grasp height above the item bottom: its centre, or lower for a tall item, but high enough that
-    the hand stays clear of the item top."""
+    """The grasp height above the item bottom: its centre, or 3.5 cm below the top of a tall item, so that
+    the hand stays clear of the top. Never lower than 2 cm, so that the fingers stay off the table."""
     h = w.object_info(name).height
-    return max(MIN_GRIP_Z, LOW_GRIP * h if h > TALL else h / 2, h - FINGER_REACH)
+    return max(MIN_GRIP_Z, h - FINGER_REACH if h > TALL else h / 2)
 
 
 def _at(p, z: float, yaw: float | None = None) -> Action:
@@ -68,3 +68,13 @@ def surface_z(w: World, xy, start_z: float = 0.5) -> float:
     dist = mujoco.mj_ray(w.model, w.data, np.array([xy[0], xy[1], start_z], dtype=float),
                          np.array([0.0, 0.0, -1.0]), groups, 1, -1, geomid)
     return start_z - dist if dist >= 0 else 0.0
+
+
+def body_top_z(w: World, body: str, xy, start_z: float = 0.5) -> float:
+    """The height of the first surface of one body below (x, y, start_z). Other bodies do not count,
+    so an item on a plate does not hide the plate. Returns -inf when the ray misses the body."""
+    m = w.model
+    pnt, down = np.array([xy[0], xy[1], start_z], dtype=float), np.array([0.0, 0.0, -1.0])
+    hits = [mujoco.mj_rayMesh(m, w.data, g, pnt, down) for g in collision_geoms(m, m.body(body).id)]
+    hits = [h for h in hits if h >= 0]
+    return start_z - min(hits) if hits else float("-inf")
