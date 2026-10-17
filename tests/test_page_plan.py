@@ -134,11 +134,24 @@ def test_clear_plan_forgets_the_plan_and_disables_execute():
     assert "chooseScene(ev.scene, true, !replay)" in start
 
 
-def test_scripts_are_deferred_in_order():
+def test_scripts_never_wait_for_the_cdn():
     html = _web("index.html")
     tags = re.findall(r"<script[^>]*>", html)
-    assert all(" defer" in t for t in tags) and len(tags) == 3
-    assert html.index("three.min.js") < html.index("plan3d.js") < html.index("app.js")
+    assert len(tags) == 3
+    assert " async" in tags[0] and "three.min.js" in tags[0]  # a slow CDN never holds the page
+    assert all(" defer" in t for t in tags[1:])
+    assert html.index("plan3d.js") < html.index("app.js")
+
+
+def test_the_player_reads_three_only_when_it_is_made():
+    js = _web("plan3d.js")
+    assert "const T = window.THREE" not in js
+    assert "T = window.THREE" in _body(js, "player(slots)", "\n    },\n")
+    assert "Plan3D.loaded()" in _body(_web("app.js"), "function ensurePlayer")
+
+
+def test_sleep_tells_the_play_button():
+    assert "this.seek(this.time)" in _body(_web("plan3d.js"), "sleep()", "\n    }\n")
 
 
 def test_without_a_player_the_bar_hides_and_the_message_stays():

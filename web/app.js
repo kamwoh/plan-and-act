@@ -942,6 +942,7 @@ function onEvent(ev, replay = false) {
 // ---- Plan first: the imagined video, the plan entries and Execute ----
 function ensurePlayer() {
   if (player || playerFailed) return player;
+  if (window.Plan3D && !Plan3D.loaded()) return null;  // three.js still loads: try again on the next plan
   try {
     if (!window.Plan3D || !Plan3D.available()) throw new Error("no WebGL");
     player = Plan3D.player([

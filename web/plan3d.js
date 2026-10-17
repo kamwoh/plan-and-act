@@ -2,7 +2,7 @@
 // track, and one canvas for each camera of the environment. All names and shapes come from the view data.
 (function () {
   "use strict";
-  const T = window.THREE;
+  let T = null;  // window.THREE, read when a player is made: three.js loads async and can come late
   const RAD = Math.PI / 180;
   const BELIEF_COLOR = 0x9aa3b2;
   const PATH_COLOR = 0x5b8cff;
@@ -422,6 +422,7 @@
       this.playing = false;
       if (this.raf !== null) cancelAnimationFrame(this.raf);
       this.raf = null;
+      if (this.view) this.seek(this.time);  // the tick listeners show the pause
     }
 
     wake() {
@@ -466,13 +467,18 @@
   window.Plan3D = {
     available() {
       try {
+        T = window.THREE || null;
         const c = document.createElement("canvas");
         return Boolean(T && (c.getContext("webgl2") || c.getContext("webgl")));
       } catch (err) {
         return false;
       }
     },
+    loaded() {
+      return Boolean(window.THREE);
+    },
     player(slots) {
+      T = window.THREE;
       return new Player(slots);
     },
     agentAt,
