@@ -130,6 +130,7 @@ function setRunning(value) {
   running = value;
   for (const c of $("scenes").children) c.disabled = value;
   $("shuffle").disabled = value;
+  $("reset").disabled = value;
 }
 let previewSeq = 0;
 
@@ -718,6 +719,18 @@ let previewTimer = null;
 $("shuffle").addEventListener("click", () => {
   if (running) return;
   $("seed").value = Math.floor(Math.random() * 100000);
+  loadPreview();
+});
+
+// Reset: show the start layout of this scene and seed again, and clear the last run from the page.
+// Saved runs and saved lessons stay.
+$("reset").addEventListener("click", () => {
+  if (running) return;
+  resetChat();
+  $("chat").replaceChildren(el("li", "Press Start. Each message to Claude and each reply shows here.", "chat-empty"));
+  emptyMemo();
+  resetTotals();
+  setStatus("idle");
   loadPreview();
 });
 

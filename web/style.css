@@ -116,7 +116,7 @@ textarea:focus, input[type="number"]:focus { border-color: var(--accent); box-sh
 .switches { display: flex; flex-direction: column; gap: 2px; }
 .switches .switch { padding-bottom: 2px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); font-weight: 500; }
-.field input { width: 92px; padding: 6px 9px; font-family: var(--mono); font-size: 13px; }
+.field input { width: 76px; padding: 6px 9px; font-family: var(--mono); font-size: 13px; }
 .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; padding-bottom: 6px; }
 .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .track { width: 30px; height: 17px; border-radius: 999px; background: var(--line-2); position: relative; transition: background 0.15s; flex: none; }
@@ -142,8 +142,9 @@ textarea:focus, input[type="number"]:focus { border-color: var(--accent); box-sh
 .tag.edited { background: rgba(240, 176, 74, 0.16); color: var(--warn); }
 
 /* ---- Memo: to-do, notes, lessons ---- */
-.memo { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; overflow: auto; padding: 12px; align-content: start; }
-.memo-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* contain: size keeps long lessons from growing the row and pushing the cameras smaller. Each column scrolls. */
+.memo { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 12px; overflow: auto; padding: 12px; contain: size; }
+.memo-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; min-height: 0; overflow: auto; }
 .todo, .lessons { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
 .todo li, .lessons li { display: flex; gap: 7px; }
 .todo li::before { content: "○"; color: var(--faint); }
@@ -271,6 +272,7 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
   .views { grid-template-columns: 1fr; }
   .frame { aspect-ratio: 4 / 3; flex: none; width: 100%; }
   .chat-card { height: 70vh; }
+  .memo { contain: none; grid-auto-rows: auto; }
   .totals { display: none; }
 }
 
@@ -284,5 +286,5 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 }
 .cam.loading .placeholder { visibility: hidden; }
 
-.seed-row { display: flex; gap: 6px; }
+.seed-row { display: flex; gap: 4px; }
 .btn.icon { padding: 4px 9px; line-height: 0; }

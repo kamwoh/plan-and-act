@@ -419,3 +419,22 @@ def test_page_result_lines_wrap_and_open_the_step():
 def test_only_the_status_pill_is_a_live_region():
     html = _web("index.html")
     assert html.count("aria-live") == 1 and 'id="status" class="pill" aria-live="polite"' in html
+
+
+def test_memo_scrolls_and_never_grows_the_layout():
+    import re
+    css = _web("style.css")
+    memo = re.search(r"\.memo \{([^}]*)\}", css).group(1)
+    assert "contain: size" in memo  # long lessons must not push the cameras smaller
+    col = re.search(r"\.memo-col \{([^}]*)\}", css).group(1)
+    assert "overflow: auto" in col and "min-height: 0" in col
+
+
+def test_reset_button_shows_the_start_again():
+    html, js = _web("index.html"), _web("app.js")
+    assert 'id="reset"' in html
+    assert '$("reset").disabled = value' in js
+    body = js[js.index('$("reset").addEventListener'):]
+    body = body[:body.index("\n});\n")]
+    for call in ("resetChat()", "emptyMemo()", "resetTotals()", "loadPreview()"):
+        assert call in body

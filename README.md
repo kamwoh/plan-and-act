@@ -32,9 +32,9 @@ Pick a scene from the Scene row first. Then type an instruction in the text box.
 
 A line under the box shows the mode. If your text matches an example of the scene exactly, the line reads "Auto-check: " and the task name. The app then checks the physics and ends the run on success. If your text is different, the line reads "No auto-check". Claude then sets "done" in its reply when it thinks the task is complete, and the run ends.
 
-Before you press Start, the page shows the starting scene for the seed in both camera views. It updates when you change the seed or the scene. The view shows the object layout and the arm in the ready pose.
+Before you press Start, the page shows the starting scene for the seed in both camera views. It updates when you change the seed or the scene. The view shows the object layout and the arm in the ready pose. After a run, the cameras keep the last frame. Every run still starts from a fresh scene. The reset button next to the dice shows the start layout again and clears the last run from the page. It keeps the saved runs and the saved lessons.
 
-Set a seed and a step limit, then press Start. The left column shows the front camera and the top camera live, with a grid on the top view. Under the cameras are the controls and the memo: Claude's to-do list, notes and lessons. The right column holds the chat.
+Set a seed and a step limit, then press Start. The left column shows the front camera and the top camera live, with a grid on the top view. Under the cameras are the controls and the memo: Claude's to-do list, notes and lessons. Each memo column scrolls on its own, so a long list does not make the cameras smaller. The right column holds the chat.
 
 The debug switch gives Claude the true object positions. Use it to find out if a failure comes from vision or from planning.
 
