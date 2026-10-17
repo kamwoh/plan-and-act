@@ -236,9 +236,3 @@ async def test_run_lessons_are_not_limited_by_history_steps():
     backend = FakeBackend(replies)
     await Agent(backend, AgentConfig(max_steps=4, history_steps=1)).run(FakeEnv(), direct, Recorder())
     assert all(f"- lesson {i}" in backend.sent[3][0].text for i in range(3))
-
-
-async def test_saved_lessons_come_first_in_the_message():
-    backend = FakeBackend([good(lessons=["new"]), good()])
-    await Agent(backend, AgentConfig(max_steps=2), saved_lessons=["old"]).run(FakeEnv(), direct, Recorder())
-    assert "Lessons:\n- old\n- new\n" in backend.sent[1][0].text

@@ -1,4 +1,5 @@
 runs/
+lessons/
 .venv/
 venv/
 __pycache__/

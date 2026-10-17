@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
@@ -12,6 +13,7 @@ from armmind.agent.parse import Reply, ReplyError, parse_reply
 from armmind.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_text
 from armmind.env import Env
 from armmind.llm.protocol import Conversation, Final, LLMBackend, LLMError, Message, Usage
+from armmind.store.lessons import LessonStore
 from armmind.types import Action, ActionResult, fmt
 
 Emit = Callable[[str, dict], None]
@@ -79,9 +81,10 @@ def check_result(action: Action, result: ActionResult, labels: dict[str, str]) -
 
 class Agent:
     def __init__(self, backend: LLMBackend, config: AgentConfig | None = None, system: str | None = None,
-                 saved_lessons: list[str] | tuple[str, ...] = ()):
+                 store: LessonStore | None = None, use_lessons: bool = True, run_id: str = ""):
         self.backend, self.cfg = backend, config or AgentConfig()
-        self.saved_lessons = tuple(saved_lessons)  # from earlier runs of the scene, oldest first
+        self.store, self.use_lessons, self.run_id = store, use_lessons, run_id
+        self.saved_lessons: tuple[str, ...] = ()  # from earlier runs of the scene, oldest first
         self.run_lessons: list[str] = []  # the new lessons of this run, oldest first, without duplicates
         self.system = system or SYSTEM
         self._stop = asyncio.Event()
@@ -95,10 +98,12 @@ class Agent:
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
         history: deque[StepSummary] = deque(maxlen=self.cfg.history_steps)
         self.run_lessons = []
+        self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
         notes, todo, status, check_failed, stopped_reason = "", (), "step_limit", False, None
         labels = getattr(env, "object_labels", None) or {}
         emit("run_start", {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
-                           "check": env.check_name, "system_prompt": self.system})
+                           "check": env.check_name, "system_prompt": self.system,
+                           "use_lessons": self.use_lessons, "saved_lessons": list(self.saved_lessons)})
         for n in range(1, self.cfg.max_steps + 1):
             if self._stop.is_set():
                 status = "stopped"
@@ -173,8 +178,18 @@ class Agent:
         else:
             if self._stop.is_set():
                 status = "stopped"
+        self._save_lessons(env.scene_name, status)
         emit("run_end", {"status": status})
         return status
+
+    def _save_lessons(self, scene: str, status: str) -> None:
+        """Save the new lessons of the run. A failed write gives a warning and does not stop the run."""
+        if self.store is None or not self.run_lessons:
+            return
+        try:
+            self.store.append(scene, self.run_lessons, run=self.run_id, outcome=status)
+        except OSError as e:
+            logging.getLogger(__name__).warning("cannot save the lessons of scene %s: %s", scene, e)
 
     async def _ask(self, msg: Message, attempts: list[dict]) -> tuple[Reply | None, LLMError | None, Usage | None]:
         reply, error, usage = await self._send(msg, attempts)

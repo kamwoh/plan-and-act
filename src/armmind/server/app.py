@@ -21,6 +21,7 @@ from armmind.llm.protocol import LLMBackend
 from armmind.scenes import SCENES, Scene, Task
 from armmind.sim.assets import AssetsMissing
 from armmind.sim.meshes import warm
+from armmind.store.lessons import LessonStore
 from armmind.store.runlog import RunLog
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
@@ -35,6 +36,7 @@ class RunRequest(BaseModel):
     max_steps: int = Field(30, ge=1, le=200)
     show_positions: bool = False
     system_prompt: str | None = Field(None, max_length=10000)
+    use_lessons: bool = True
 
     @field_validator("instruction")
     @classmethod
@@ -109,8 +111,9 @@ def _b64(b: bytes) -> str:
 
 
 class Runner:
-    def __init__(self, backend: LLMBackend, env_factory: EnvFactory, runs_dir: Path, hub: Hub):
+    def __init__(self, backend: LLMBackend, env_factory: EnvFactory, runs_dir: Path, hub: Hub, lessons: LessonStore):
         self.backend, self.env_factory, self.runs_dir, self.hub = backend, env_factory, runs_dir, hub
+        self.lessons = lessons
         self.task: asyncio.Task | None = None
         self.agent: Agent | None = None
         self.run_dir: Path | None = None
@@ -138,7 +141,8 @@ class Runner:
                     msg[key] = _b64(value)
             self.hub.publish_threadsafe(msg)
 
-        self.agent = Agent(self.backend, AgentConfig(max_steps=req.max_steps), system=req.system_prompt)
+        self.agent = Agent(self.backend, AgentConfig(max_steps=req.max_steps), system=req.system_prompt,
+                           store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
         agent = self.agent
 
         async def go() -> None:
@@ -171,9 +175,10 @@ class Runner:
 
 
 def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_dir: Path = Path("runs"),
-               web_dir: Path = WEB_DIR, preview: Preview | None = None) -> FastAPI:
+               web_dir: Path = WEB_DIR, preview: Preview | None = None, lessons_dir: Path | None = None) -> FastAPI:
     hub = Hub()
-    runner = Runner(backend, env_factory or default_env_factory, Path(runs_dir), hub)
+    lessons = LessonStore(Path(lessons_dir) if lessons_dir is not None else Path(runs_dir).parent / "lessons")
+    runner = Runner(backend, env_factory or default_env_factory, Path(runs_dir), hub, lessons)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -228,6 +233,21 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
             raise HTTPException(503, str(e)) from e
         finally:
             sim.shutdown()
+
+    @app.get("/api/lessons")
+    def get_lessons(scene: str) -> list[dict]:
+        return lessons.load(_scene(scene).name)
+
+    @app.delete("/api/lessons", dependencies=[Depends(same_origin)])
+    def delete_lessons(scene: str, index: int | None = None) -> dict:
+        name = _scene(scene).name
+        if runner.running:
+            raise HTTPException(409, "a run is active")
+        try:
+            lessons.delete(name, index)
+        except IndexError as e:
+            raise HTTPException(404, str(e)) from e
+        return {"ok": True}
 
     @app.post("/api/stop", dependencies=[Depends(same_origin)])
     async def stop() -> dict:

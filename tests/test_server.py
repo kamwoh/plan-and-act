@@ -305,3 +305,59 @@ def test_preview_without_assets_is_503_with_the_message(tmp_path):
 def test_page_shows_the_preview_error():
     js = (Path(__file__).resolve().parents[1] / "web" / "app.js").read_text()
     assert "r.status === 503" in js and "showPreviewError" in js
+
+
+def _lesson_app(tmp_path, backend=None):
+    return create_app(backend or FakeBackend([]), fake_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")
+
+
+def test_run_saves_lessons_and_the_api_lists_and_deletes_them(tmp_path):
+    backend = FakeBackend([good(lessons=["a"]), good(lessons=["b", "c"])])
+    with TestClient(_lesson_app(tmp_path, backend)) as c:
+        assert c.post("/api/run", json={"instruction": "Touch it.", "max_steps": 2}).status_code == 200
+        wait_idle(c)
+        body = c.get("/api/lessons", params={"scene": "cubes"}).json()
+        assert [i["text"] for i in body] == ["a", "b", "c"] and body[0]["run"] and body[0]["outcome"] == "step_limit"
+        assert c.get("/api/lessons", params={"scene": "tray"}).json() == []
+        assert c.delete("/api/lessons", params={"scene": "cubes", "index": 1}).status_code == 200
+        assert [i["text"] for i in c.get("/api/lessons", params={"scene": "cubes"}).json()] == ["a", "c"]
+        assert c.delete("/api/lessons", params={"scene": "cubes", "index": 9}).status_code == 404
+        assert c.delete("/api/lessons", params={"scene": "cubes"}).status_code == 200
+        assert c.get("/api/lessons", params={"scene": "cubes"}).json() == []
+    assert (tmp_path / "lessons" / "cubes.json").exists()
+
+
+def test_lessons_api_unknown_scene_is_404(tmp_path):
+    with TestClient(_lesson_app(tmp_path)) as c:
+        assert c.get("/api/lessons", params={"scene": "nope"}).status_code == 404
+        assert c.delete("/api/lessons", params={"scene": "nope"}).status_code == 404
+
+
+def test_lessons_delete_is_refused_during_a_run_and_cross_site(tmp_path):
+    with TestClient(_lesson_app(tmp_path, HangingBackend())) as c:
+        evil = {"Origin": "http://evil.example"}
+        assert c.request("DELETE", "/api/lessons", params={"scene": "cubes"}, headers=evil).status_code == 403
+        assert c.post("/api/run", json={"instruction": REACH}).status_code == 200
+        assert c.delete("/api/lessons", params={"scene": "cubes"}).status_code == 409
+        assert c.get("/api/lessons", params={"scene": "cubes"}).status_code == 200
+        c.post("/api/stop")
+        wait_idle(c)
+
+
+def test_use_lessons_reaches_the_run_start(tmp_path):
+    (tmp_path / "lessons").mkdir()
+    (tmp_path / "lessons" / "cubes.json").write_text(json.dumps([{"text": "old", "run": "r", "outcome": "done", "t": 1.0}]))
+    for flag, saved in ((False, []), (True, ["old"])):
+        backend = FakeBackend([good(done=True)])
+        with TestClient(_lesson_app(tmp_path, backend)) as c:
+            assert c.post("/api/run", json={"instruction": "Touch it.", "use_lessons": flag}).status_code == 200
+            wait_idle(c)
+            run_dir = Path(c.get("/api/state").json()["run_dir"])
+        start = json.loads((run_dir / "events.jsonl").read_text().splitlines()[0])
+        assert start["use_lessons"] is flag and start["saved_lessons"] == saved
+        assert ("old" in backend.sent[0][0].text) is flag
+
+
+def test_lessons_dir_defaults_to_next_to_the_runs(tmp_path):
+    app = create_app(FakeBackend([]), fake_factory, tmp_path / "runs")
+    assert app.state.runner.lessons.root == tmp_path / "lessons"
