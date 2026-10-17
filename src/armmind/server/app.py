@@ -21,7 +21,7 @@ from armmind.llm.protocol import LLMBackend
 from armmind.scenes import SCENES, Scene, Task
 from armmind.sim.assets import AssetsMissing
 from armmind.sim.meshes import warm
-from armmind.store.lessons import LessonStore
+from armmind.store.lessons import LessonChanged, LessonStore
 from armmind.store.runlog import RunLog
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
@@ -239,14 +239,16 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         return lessons.load(_scene(scene).name)
 
     @app.delete("/api/lessons", dependencies=[Depends(same_origin)])
-    def delete_lessons(scene: str, index: int | None = None) -> dict:
+    def delete_lessons(scene: str, index: int | None = None, text: str | None = None) -> dict:
         name = _scene(scene).name
         if runner.running:
             raise HTTPException(409, "a run is active")
         try:
-            lessons.delete(name, index)
+            lessons.delete(name, index, text)
         except IndexError as e:
             raise HTTPException(404, str(e)) from e
+        except LessonChanged as e:  # another tab or a run end changed the list: reload it
+            raise HTTPException(409, str(e)) from e
         return {"ok": True}
 
     @app.post("/api/stop", dependencies=[Depends(same_origin)])

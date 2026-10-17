@@ -13,6 +13,10 @@ MAX_SAVED = 30  # lessons per scene; the oldest go first
 log = logging.getLogger(__name__)
 
 
+class LessonChanged(ValueError):
+    """The lesson at an index is not the lesson that the caller saw."""
+
+
 def _valid(items) -> bool:
     return isinstance(items, list) and all(isinstance(i, dict) and isinstance(i.get("text"), str) for i in items)
 
@@ -53,12 +57,15 @@ class LessonStore:
                 known.add(text)
         self._write(scene, items[-MAX_SAVED:])
 
-    def delete(self, scene: str, index: int | None = None) -> None:
-        """Remove one lesson, or all of the scene when index is None. A bad index raises IndexError."""
+    def delete(self, scene: str, index: int | None = None, text: str | None = None) -> None:
+        """Remove one lesson, or all of the scene when index is None. A bad index raises IndexError.
+        With text, the lesson at the index must have this text, or LessonChanged is raised."""
         items = self.load(scene)
         if index is None:
             items = []
         elif 0 <= index < len(items):
+            if text is not None and items[index]["text"] != text:
+                raise LessonChanged(f"lesson {index} of scene {scene!r} changed")
             del items[index]
         else:
             raise IndexError(f"no lesson {index} in scene {scene!r}")

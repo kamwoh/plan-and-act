@@ -134,7 +134,14 @@ function setRunning(value) {
 let previewSeq = 0;
 
 // ---- Run totals ----
-let stepImages = {};   // step number -> { front, top } (base64 PNG), from the observation events
+let stepImages = {};   // step number -> { front, top }: object URLs of the PNG images of the observation events
+
+function pngUrl(b64) {  // one Blob and one object URL for each image, shared by the chat and the step dialog
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+}
 let runSystemPrompt = "";
 let totals;
 
@@ -250,7 +257,7 @@ function openStepDetails(ev) {
     for (const [name, data] of [[`Image 1 · ${runCameras.front}`, imgs.front], [`Image 2 · ${runCameras.top}`, imgs.top]]) {
       const fig = el("figure");
       const img = document.createElement("img");
-      img.src = `data:image/png;base64,${data}`;
+      img.src = data;
       img.alt = name;
       fig.append(img, el("figcaption", name));
       pair.append(fig);
@@ -355,7 +362,7 @@ function thumbs(step) {
   if (!imgs) return row;
   for (const [label, data] of [[runCameras.front, imgs.front], [runCameras.top, imgs.top]]) {
     const img = document.createElement("img");
-    img.src = `data:image/png;base64,${data}`;
+    img.src = data;
     img.alt = `${label} image of step ${step}`;
     img.title = label;
     row.append(img);
@@ -456,7 +463,7 @@ function onStepResults(ev) {
   if (ev.success) item.append(el("span", "Task solved", "badge success"));
   else if (ev.done) item.append(el("span", "Claude says done", "badge done"));
   if (ev.truncated) item.append(el("span", "Plan cut to 8 actions", "badge warn"));
-  addEntry(item);
+  addEntry(stepLink(item, ev.step));
   if (ev.stopped) {
     const warn = entry("stopped", `⚠ Stopped after action ${ev.stopped.after} of ${ev.stopped.of}`, ev.step);
     warn.append(el("div", ev.stopped.reason));
@@ -497,6 +504,8 @@ function onRunEnd(ev) {
 
 function resetChat() {
   endThinking();
+  for (const imgs of Object.values(stepImages)) for (const url of Object.values(imgs)) URL.revokeObjectURL(url);
+  stepImages = {};
   stepEvents = {};
   stepPrompts = {};
   $("chat").replaceChildren();
@@ -574,11 +583,13 @@ function fillLessonsDialog() {
   }));
 }
 
+// The text goes with the index: if the list changed in the meantime, the server refuses with 409.
 async function deleteLessons(index = null) {
-  const q = `scene=${encodeURIComponent(sceneName)}${index === null ? "" : `&index=${index}`}`;
+  let q = `scene=${encodeURIComponent(sceneName)}`;
+  if (index !== null) q += `&index=${index}&text=${encodeURIComponent(savedLessons[index].text)}`;
   try {
     const r = await fetch(`/api/lessons?${q}`, { method: "DELETE" });
-    $("lessons_msg").textContent = r.ok ? "" : r.status === 409 ? "Wait until the run ends" : `error ${r.status}`;
+    $("lessons_msg").textContent = r.ok ? "" : r.status === 409 ? "The list changed or a run is active. Look again." : `error ${r.status}`;
   } catch (err) {
     $("lessons_msg").textContent = `error: ${err.message}`;
   }
@@ -734,7 +745,6 @@ $("run").addEventListener("submit", async (e) => {
   previewSeq++;  // drop a preview that is still on its way
   setLoading(false);
   // Reset before the POST: events of the new run can arrive before the response.
-  stepImages = {};
   runSystemPrompt = "";
   resetTotals();
   resetChat();
@@ -766,9 +776,12 @@ function onEvent(ev) {
     runCameras = cameraLabels(ev.scene);
     setRunning(true);
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true);
+    resetChat();
     onRunStart(ev);
   } else if (ev.kind === "observation") {
-    stepImages[ev.step] = { front: ev.front_png, top: ev.top_png };  // for the chat and the step details
+    const old = stepImages[ev.step];
+    if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);
+    stepImages[ev.step] = { front: pngUrl(ev.front_png), top: pngUrl(ev.top_png) };  // for the chat and the step details
     setStatus(`step ${ev.step} · thinking`, "thinking");
   } else if (ev.kind === "ask") {
     onAsk(ev);

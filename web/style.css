@@ -207,7 +207,7 @@ pre.msg.short { max-height: calc(4 * 1.45em + 8px); padding-bottom: 0; overflow:
 .lines.mono { font: 11px/1.5 var(--mono); color: #aeb6c4; }
 .lesson-lines li { color: #f3d9a8; }
 .results { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font: 11px/1.45 var(--mono); }
-.results li { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.results li { color: var(--faint); overflow-wrap: anywhere; }
 .results .act { color: #aeb6c4; }
 .btn.latest { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); padding: 5px 12px; font-size: 12px;
               border-radius: 999px; background: var(--accent); border-color: var(--accent); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5); }

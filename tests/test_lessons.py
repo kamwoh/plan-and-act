@@ -131,3 +131,13 @@ async def test_only_the_newest_30_run_lessons_go_to_the_model():
     last = backend.sent[12][0].text
     assert "lesson 35" in last and "lesson 06" in last
     assert all(f"lesson {i:02d}" not in last for i in range(6))
+
+
+def test_delete_checks_the_text_of_the_lesson(tmp_path):
+    from armmind.store.lessons import LessonChanged
+    store = LessonStore(tmp_path)
+    store.append("cubes", ["a", "b"], run="r", outcome="done")
+    with pytest.raises(LessonChanged):
+        store.delete("cubes", 0, text="b")
+    store.delete("cubes", 1, text="b")
+    assert store.texts("cubes") == ["a"]

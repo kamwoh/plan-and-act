@@ -377,3 +377,45 @@ def test_page_has_the_chat_and_the_lessons_parts():
         assert part in html
     assert 'id="steps"' not in html
     assert 'ev.kind === "ask"' in js and "use_lessons" in js and 'method: "DELETE"' in js
+
+
+def test_lessons_delete_with_a_stale_text_is_409(tmp_path):
+    backend = FakeBackend([good(lessons=["a", "b"])])
+    with TestClient(_lesson_app(tmp_path, backend)) as c:
+        assert c.post("/api/run", json={"instruction": "Touch it.", "max_steps": 1}).status_code == 200
+        wait_idle(c)
+        assert c.delete("/api/lessons", params={"scene": "cubes", "index": 0, "text": "b"}).status_code == 409
+        assert c.delete("/api/lessons", params={"scene": "cubes", "index": 1, "text": "b"}).status_code == 200
+        assert [i["text"] for i in c.get("/api/lessons", params={"scene": "cubes"}).json()] == ["a"]
+
+
+def test_page_sends_the_lesson_text_with_a_delete():
+    js = (Path(__file__).resolve().parents[1] / "web" / "app.js").read_text()
+    body = js[js.index("async function deleteLessons"):]
+    assert "&text=" in body[:body.index("\n}\n")]
+
+
+def _web(name):
+    return (Path(__file__).resolve().parents[1] / "web" / name).read_text()
+
+
+def test_page_keeps_one_object_url_per_image_and_revokes_them():
+    js = _web("app.js")
+    assert "URL.createObjectURL" in js and "data:image/png;base64,${data}" not in js
+    reset = js[js.index("function resetChat"):]
+    assert "URL.revokeObjectURL" in reset[:reset.index("\n}\n")]
+
+
+def test_page_result_lines_wrap_and_open_the_step():
+    import re
+    css = _web("style.css")
+    rule = re.search(r"\.results li \{([^}]*)\}", css).group(1)
+    assert "nowrap" not in rule and "ellipsis" not in rule
+    js = _web("app.js")
+    body = js[js.index("function onStepResults"):]
+    assert "stepLink(item, ev.step)" in body[:body.index("\n}\n")]
+
+
+def test_only_the_status_pill_is_a_live_region():
+    html = _web("index.html")
+    assert html.count("aria-live") == 1 and 'id="status" class="pill" aria-live="polite"' in html
