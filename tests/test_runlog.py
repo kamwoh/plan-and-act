@@ -28,3 +28,18 @@ def test_reserved_keys_are_refused(tmp_path):
         with pytest.raises(ValueError):
             log.event("x", {key: 1})
     log.close()
+
+
+def test_folder_suffix_has_at_most_4_digits(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    tried = []
+
+    def taken(self, *a, **kw):
+        tried.append(self.name)
+        raise FileExistsError(self)
+
+    monkeypatch.setattr(Path, "mkdir", taken)
+    with pytest.raises(RuntimeError):
+        RunLog(tmp_path)
+    assert len(tried) == 10000 and tried[-1].endswith("-9999")

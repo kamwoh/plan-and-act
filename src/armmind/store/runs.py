@@ -6,10 +6,18 @@ import re
 from collections.abc import Iterator
 from pathlib import Path
 
-RUN_ID = re.compile(r"^\d{8}-\d{6}(-\d+)?$")  # the folder names that RunLog writes
-IMAGE_NAME = re.compile(r"^step\d{3}_(front|top)\.png$")
+RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}(-[0-9]{1,4})?")  # the folder names that RunLog writes
+IMAGE_NAME = re.compile(r"step[0-9]{3}_(front|top)\.png")
 STEP_KINDS = ("step", "bad_reply", "llm_error")  # one of these ends each step
 MAX_RUNS = 200
+
+
+def valid_run_id(name: str) -> bool:
+    return RUN_ID.fullmatch(name) is not None
+
+
+def valid_image_name(name: str) -> bool:
+    return IMAGE_NAME.fullmatch(name) is not None
 
 
 def read_events(path: Path) -> Iterator[dict]:
@@ -63,26 +71,24 @@ class RunStore:
 
     def folder(self, run_id: str) -> Path | None:
         """The folder of a run, or None for a bad id or a path out of the runs folder."""
-        if not RUN_ID.match(run_id):
+        if not valid_run_id(run_id):
             return None
         try:
             root = self.root.resolve()
             folder = (self.root / run_id).resolve()
-        except OSError:
+            return folder if folder.parent == root and folder.is_dir() else None
+        except OSError:  # for example a name that is too long for the file system
             return None
-        if folder.parent != root or not folder.is_dir():
-            return None
-        return folder
 
     def image(self, run_id: str, name: str) -> Path | None:
         folder = self.folder(run_id)
-        if folder is None or not IMAGE_NAME.match(name):
+        if folder is None or not valid_image_name(name):
             return None
         try:
             path = (folder / name).resolve()
+            return path if path.parent == folder and path.is_file() else None
         except OSError:
             return None
-        return path if path.parent == folder and path.is_file() else None
 
     def summary(self, run_id: str) -> dict | None:
         folder = self.folder(run_id)
@@ -103,7 +109,7 @@ class RunStore:
 
     def runs(self, active: str | None = None) -> list[dict]:
         try:
-            names = [p.name for p in self.root.iterdir() if RUN_ID.match(p.name)]
+            names = [p.name for p in self.root.iterdir() if valid_run_id(p.name)]
         except OSError:
             return []
         out = []
@@ -133,6 +139,6 @@ class RunStore:
                 msg["scene"] = "cubes"
             for key, value in ev.items():
                 if key.endswith("_png") and isinstance(value, str):
-                    msg[key] = image_url(run_id, value) if IMAGE_NAME.match(value) else None
+                    msg[key] = image_url(run_id, value) if valid_image_name(value) else None
             out.append(msg)
         return out

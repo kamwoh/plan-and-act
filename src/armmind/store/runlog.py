@@ -9,14 +9,15 @@ from pathlib import Path
 class RunLog:
     def __init__(self, root: Path):
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        n = 0
-        while True:
+        for n in range(10000):  # the runs API accepts a suffix of at most 4 digits
             folder = Path(root) / (stamp if n == 0 else f"{stamp}-{n}")
             try:
                 folder.mkdir(parents=True)
                 break
             except FileExistsError:
-                n += 1
+                continue
+        else:
+            raise RuntimeError(f"no free run folder for {stamp}")
         self.dir = folder
         self._f = (folder / "events.jsonl").open("a", encoding="utf-8")
 

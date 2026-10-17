@@ -269,3 +269,46 @@ def test_history_rows_cannot_open_the_active_run():
     js = _web("app.js")
     body = _body(js, "function historyRow")
     assert "run.active" in body and "running" in body
+
+
+@pytest.mark.parametrize("run_id", [
+    "20261016-181045-" + "1" * 300,  # too long for the file system: never a 500
+    "20261016-181045-12345",  # RunLog writes at most 4 digits after the second dash
+    "２０２６１０１６-１８１０４５",  # Unicode digits
+    "20261016-181045%0A",  # a trailing newline
+])
+def test_odd_run_ids_are_404(tmp_path, run_id):
+    runs = tmp_path / "runs"
+    write_run(runs, "20261016-181045", old_run(), IMAGES)
+    with client(runs) as c:
+        assert c.get(f"/api/runs/{run_id}").status_code == 404
+        assert c.get(f"/api/runs/{run_id}/images/step001_front.png").status_code == 404
+
+
+@pytest.mark.parametrize("name", ["step００1_front.png", "step001_front.png%0A"])
+def test_odd_image_names_are_404(tmp_path, name):
+    runs = tmp_path / "runs"
+    write_run(runs, "20261016-181045", old_run(), IMAGES)
+    with client(runs) as c:
+        assert c.get(f"/api/runs/20261016-181045/images/{name}").status_code == 404
+
+
+def test_store_rejects_a_trailing_newline_and_unicode_digits(tmp_path):
+    from armmind.store.runs import RunStore
+    runs = tmp_path / "runs"
+    write_run(runs, "20261016-181045", old_run(), IMAGES)
+    store = RunStore(runs)
+    assert store.folder("20261016-181045") is not None
+    assert store.folder("20261016-181045\n") is None
+    assert store.folder("２０２６１０１６-１８１０４５") is None
+    assert store.image("20261016-181045", "step001_front.png\n") is None
+
+
+def test_id_and_name_patterns_are_ascii_and_exact():
+    from armmind.store.runs import valid_image_name, valid_run_id
+    assert valid_run_id("20261016-181045") and valid_run_id("20261016-181045-9999")
+    for bad in ("20261016-181045\n", "２０２６１０１６-１８１０４５", "20261016-181045-12345", "x20261016-181045"):
+        assert not valid_run_id(bad)
+    assert valid_image_name("step001_front.png") and valid_image_name("step200_top.png")
+    for bad in ("step001_front.png\n", "step００1_front.png", "step1_front.png"):
+        assert not valid_image_name(bad)
