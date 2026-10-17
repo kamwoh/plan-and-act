@@ -34,9 +34,45 @@ A line under the box shows the mode. If your text matches an example of the scen
 
 Before you press Start, the page shows the starting scene for the seed in both camera views. It updates when you change the seed or the scene. The view shows the object layout and the arm in the ready pose.
 
-Set a seed and a step limit, then press Start. The left side shows the front camera and the top camera live, with a grid on the top view. The right side shows Claude's to-do list, notes and each step.
+Set a seed and a step limit, then press Start. The left column shows the front camera and the top camera live, with a grid on the top view. Under the cameras are the controls and the memo: Claude's to-do list, notes and lessons. The right column holds the chat.
 
 The debug switch gives Claude the true object positions. Use it to find out if a failure comes from vision or from planning.
+
+## Chat
+
+The chat on the right shows each run as a conversation:
+
+- **Run started:** the instruction and the system prompt, folded.
+- **→ Sent:** the step message and the two images. A long message shows 4 lines and a "show all" button.
+- **Claude is thinking…:** a live timer in seconds, until the reply or an error comes.
+- **← Claude:** the observation, the plan, the actions, the notes, the to-do list and the lessons. The last line gives the tokens and the cost.
+- **⚙ Results:** one line for each action result.
+- **⚠ Stopped:** the reason when the code stops the action list early.
+
+A retry, a bad reply, a model error and the run end each get their own entry. The chat stays at the bottom while you read the bottom. If you scroll up, it does not move, and a "↓ latest" button appears. Click a Sent or Claude entry to open the details of that step.
+
+## Stop at the first surprise
+
+The code runs the actions of a reply in order. It stops the list at the first surprise:
+
+1. A `move_to` is blocked or unreachable.
+2. A `close` ends on no object, with a width below 0.005 m.
+3. The gripper held an object before an action and does not hold it after. An `open` is not a drop.
+4. An action has an `expect` that does not match.
+
+An action can carry `"expect": {"holding": "<object>"}` or `{"holding": "nothing"}`. The object is an object name or its label, in any case. An unknown name gives a note in the result and does not stop the list. A close with `expect` nothing does not stop. Use it to press a button with the closed gripper.
+
+After a stop, the results list the skipped actions. The next step message says why the list stopped. The gripper holds an object only when it is closed and touches the object.
+
+## Lessons
+
+Claude can write up to 3 lessons in a reply. A lesson describes a cause and its effect, for example "Closing 9 cm up on the bottle slipped. 6 cm up held." Each step message lists the lessons under "Lessons:".
+
+At the end of a run, the app saves the new lessons in `lessons/<scene>.json`, next to the `runs/` folder. Each scene keeps its newest 30 lessons. The folder is not in git.
+
+The "Use saved lessons" switch sends the saved lessons of the scene to Claude. When it is off, Claude gets only the lessons of this run. The app still saves the new lessons. The Lessons memo column shows the lessons of this run and the number of saved lessons. The Lessons button opens a list of the saved lessons. You can delete one lesson or clear all of them.
+
+The API has two endpoints for this. `GET /api/lessons?scene=X` lists the saved lessons. `DELETE /api/lessons?scene=X&index=N` deletes one lesson. Without `index`, it deletes all lessons of the scene. During a run, a delete gives 409.
 
 ## Scenes
 
@@ -87,7 +123,7 @@ Each task has a scripted solution that reads the true positions. Use it to check
 
 The header shows the totals of the run. They list the steps, the input and output tokens, the cost and the average time per step.
 
-Click a step in the list to open its details. The window shows the exact token counts from the API. It also shows an estimate of how many input tokens the two images use. The estimate is not exact.
+Click a Sent or Claude entry in the chat to open the details of its step. The window shows the exact token counts from the API. It also shows an estimate of how many input tokens the two images use. The estimate is not exact.
 
 The window shows the system prompt, the message of the step and both images. It also lists every model call of the step. A retry after a bad reply appears as a second call. Each call shows the raw reply or the error and its token counts.
 
@@ -108,6 +144,8 @@ Each run writes `runs/<time>/events.jsonl` and the observation images.
 ## Development
 
     ./scripts/check.sh
+
+To check the page without a model, start the server with `ARMMIND_FAKE_LLM=1`. A demo backend then gives invented replies. Use it only for tests.
 
 Tests marked `assets` skip when the Panda model is missing. Tests of the kitchen and toys scenes skip when the scanned objects are missing.
 
