@@ -119,7 +119,7 @@ MIT. The Panda model is not in this repository. MuJoCo Menagerie supplies it und
 
 The scanned objects are not in this repository. `scripts/fetch_objects.sh` downloads them.
 
-- Object scans: Google Scanned Objects (Downs et al., 2022), CC-BY 4.0. See [Google Scanned Objects](https://research.google/blog/scanned-objects-by-google-research-a-dataset-of-3d-scanned-common-household-items/).
+- Object scans: Google Scanned Objects (Downs et al., 2022), CC-BY 4.0. See [Google Scanned Objects](https://research.google/blog/scanned-objects-by-google-research-a-dataset-of-3d-scanned-common-household-items/) and the [CC-BY 4.0 license](https://creativecommons.org/licenses/by/4.0/). arm-mind uses the scans without changes.
 - MJCF conversion: Kevin Zakka, mujoco_scanned_objects, MIT. See [mujoco_scanned_objects](https://github.com/kevinzakka/mujoco_scanned_objects).
 
 The prompt labels of the objects are our own neutral names, such as "white bottle". They do not use product names.
