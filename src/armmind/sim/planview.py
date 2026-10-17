@@ -4,10 +4,12 @@ from __future__ import annotations
 import numpy as np
 
 from armmind.plan.formats import Entity, Keyframe, build_track, match_entities, norm_name
+from armmind.plan.scores import perception, plan_checks
 from armmind.scenes.base import rgba
-from armmind.sim.arm import GRIP_S, SETTLE_S, clamp_target, move_duration
+from armmind.sim.arm import GRIP_S, SETTLE_S, Arm, clamp_target, move_duration
 from armmind.sim.render import GRID_X, GRID_Y
 from armmind.sim.world import World
+from armmind.types import fmt
 
 VIEW_VERSION = 1
 TABLE = Entity("table", "box", (2.0, 2.0, 0.01), (0.0, 0.0, -0.005), 0.0, (0.55, 0.5, 0.42, 1.0))
@@ -113,3 +115,24 @@ def build_view(world: World, belief, keyframes, marks: list[dict] | None, width:
         "track": track,
         "marks": list(marks or []),
     }
+
+
+def check_plan(world: World, arm: Arm, belief, keyframes) -> dict:
+    """Score the belief against the true scene now, and check each keyframe (call it before any motion)."""
+    truth, names = true_entities(world), aliases(world)
+    round_names = {o.name for o in world.objects if o.round}
+    believed = list(belief)
+    p = perception(believed, truth, names, round_names)
+
+    def reach(xyz, yaw: float) -> str | None:
+        target = clamp_target(xyz)
+        if not np.allclose(target, xyz):
+            return f"outside the workspace: the arm goes to {fmt(target)}"
+        return None if arm.reachable(target, yaw) else "no joint solution for this point"
+
+    start = {"xyz": tuple(float(v) for v in world.tcp()), "yaw": world.gripper_yaw(), "state": "open"}
+    match = match_entities([b.name for b in believed], names)
+    marks = plan_checks(start, list(keyframes), truth, names, round_names, agent()["parts"], reach,
+                        {b: t for t, b in match.items()})
+    return {"perception": p["rows"], "missing": p["missing"], "invented": p["invented"],
+            "summary": {**p["summary"], "failed_keyframes": sum(not m["ok"] for m in marks)}, "marks": marks}

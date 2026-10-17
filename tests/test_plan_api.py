@@ -140,3 +140,28 @@ def test_demo_backend_answers_a_plan(tmp_path):
     plan = next(e for e in events(tmp_path) if e["kind"] == "plan")
     assert plan["objects"] and plan["keyframes"] and plan["summary"]
 
+
+
+@pytest.mark.assets
+def test_a_real_plan_has_scores_a_view_and_png_images(tmp_path):
+    from armmind.llm.fake import DEMO_PLAN
+    from armmind.server.app import default_env_factory
+    app = create_app(FakeBackend([good_plan(DEMO_PLAN)]), default_env_factory, tmp_path / "runs",
+                     lessons_dir=tmp_path / "lessons")
+    with TestClient(app) as c:
+        with c.websocket_connect("/ws") as ws:
+            run_id = c.post("/api/plan", json={"instruction": PICK, "seed": 0}).json()["run_id"]
+            msgs = []
+            while not msgs or msgs[-1].get("kind") != "run_end":
+                msgs.append(ws.receive_json())
+        wait_idle(c)
+        view = c.get(f"/api/plan/{run_id}/view").json()
+    plan = next(e for e in events(tmp_path) if e["kind"] == "plan")
+    assert events(tmp_path)[-1]["status"] == "planned"
+    assert any(m["type"] == "frame" for m in msgs)
+    assert (tmp_path / "runs" / run_id / "step001_front.png").read_bytes()[:4] == b"\x89PNG"
+    rows = {r["true_name"]: r for r in plan["scores"]["perception"]}
+    assert set(rows) == {"red_cube", "blue_cube", "green_cube"}  # the labels match
+    assert rows["red_cube"]["xy_cm"] > 0 and len(plan["scores"]["marks"]) == 3
+    assert view == plan["view"] and [c["name"] for c in view["cameras"]] == ["front", "top"]
+    assert view["track"]["keyframes"][1]["carrying"] == "red cube"

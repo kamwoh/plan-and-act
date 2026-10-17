@@ -1,0 +1,229 @@
+"""Scores of a plan: the belief against the true scene, and the checks of each keyframe."""
+import pytest
+
+from armmind.plan.formats import Entity, Keyframe
+from armmind.plan.scores import drop, perception, plan_checks, yaw_error
+from armmind.scenes import SCENES
+from armmind.types import Action
+
+PARTS = [  # the agent of the arm environment, as in sim/planview.py
+    {"name": "hand", "shape": "box", "size": [0.20, 0.058, 0.075], "xyz": [0.0, 0.0, 0.0825], "slide": 0},
+    {"name": "finger_left", "shape": "box", "size": [0.027, 0.021, 0.057], "xyz": [0.0135, 0.0, 0.0185], "slide": 1},
+    {"name": "finger_right", "shape": "box", "size": [0.027, 0.021, 0.057], "xyz": [-0.0135, 0.0, 0.0185], "slide": -1},
+]
+START = {"xyz": (0.3, 0.0, 0.4), "yaw": 0.0, "state": "open"}
+CUBE = Entity("red_cube", "box", (0.04, 0.04, 0.04), (0.5, -0.1, 0.02), 0.0)
+BLUE = Entity("blue_cube", "box", (0.04, 0.04, 0.04), (0.5, 0.1, 0.02), 0.0)
+LONG = Entity("long_box", "box", (0.04, 0.10, 0.05), (0.5, 0.0, 0.025), 0.0)
+ALIASES = {"red_cube": ["red cube, 4 cm", "red cube"], "blue_cube": ["blue cube, 4 cm", "blue cube"],
+           "long_box": ["long box"], "can": ["tin can"]}
+
+
+def no_reach_limit(xyz, yaw):
+    return None
+
+
+def checks(keyframes, truth, round_names=()):
+    return plan_checks(START, keyframes, truth, ALIASES, set(round_names), PARTS, no_reach_limit)
+
+
+# ---- Perception ----
+def test_a_perfect_belief_has_no_error():
+    p = perception([CUBE, BLUE], [CUBE, BLUE], ALIASES, set())
+    assert [r["true_name"] for r in p["rows"]] == ["red_cube", "blue_cube"]
+    for r in p["rows"]:
+        assert r["xy_cm"] == 0 and r["z_cm"] == 0 and r["size_cm"] == [0, 0, 0] and r["yaw_deg"] == 0
+    assert p["missing"] == [] and p["invented"] == []
+    assert p["summary"] == {"mean_xy_cm": 0.0, "max_xy_cm": 0.0, "matched": 2, "missing": 0, "invented": 0}
+
+
+def test_a_5_cm_shift_gives_a_5_cm_xy_error():
+    moved = Entity("Red Cube", "box", (0.05, 0.04, 0.03), (0.53, -0.06, 0.03), 0.0)
+    p = perception([moved], [CUBE], ALIASES, set())
+    [r] = p["rows"]
+    assert r["name"] == "Red Cube" and r["xy_cm"] == pytest.approx(5.0)
+    assert r["z_cm"] == pytest.approx(1.0) and r["size_cm"] == pytest.approx([1.0, 0.0, -1.0])
+    assert p["summary"]["mean_xy_cm"] == pytest.approx(5.0) and p["summary"]["max_xy_cm"] == pytest.approx(5.0)
+
+
+@pytest.mark.parametrize("true, believed, want", [
+    (CUBE, 95.0, 5.0),  # a square footprint repeats every 90°
+    (CUBE, 44.0, 44.0),
+    (CUBE, 46.0, 44.0),
+    (LONG, 185.0, 5.0),  # a box repeats every 180°
+    (LONG, 90.0, 90.0),
+    (LONG, -170.0, 10.0),
+    (Entity("can", "cylinder", (0.06, 0.06, 0.1), (0.5, 0, 0.05)), 77.0, None),  # round: no yaw error
+])
+def test_yaw_error_folds_by_the_symmetry(true, believed, want):
+    got = yaw_error(true, believed, round_names=set())
+    assert got == pytest.approx(want) if want is not None else got is None
+
+
+def test_a_round_mesh_has_no_yaw_error():
+    bowl = Entity("bowl", "box", (0.15, 0.15, 0.06), (0.6, 0.2, 0.03), 30.0)
+    assert yaw_error(bowl, 0.0, round_names={"bowl"}) is None
+
+
+def test_missing_and_invented_objects():
+    ghost = Entity("purple ball", "box", (0.04, 0.04, 0.04), (0.4, 0.0, 0.02), 0.0)
+    blue_label = Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.1, 0.02), 0.0)
+    p = perception([ghost, blue_label], [CUBE, BLUE], ALIASES, set())
+    assert [r["true_name"] for r in p["rows"]] == ["blue_cube"]  # the label matches too
+    assert p["missing"] == ["red_cube"] and p["invented"] == ["purple ball"]
+    assert p["summary"]["missing"] == 1 and p["summary"]["invented"] == 1
+
+
+# ---- Keyframe checks ----
+def pick(obj: Entity, yaw=0.0):
+    x, y, z = obj.xyz
+    return [Keyframe((x, y, 0.15), yaw, "open", None, "above"), Keyframe((x, y, z), yaw, "closed", obj.name, "grasp"),
+            Keyframe((x, y, 0.2), yaw, "closed", obj.name, "lift")]
+
+
+def test_a_clean_pick_passes_every_check():
+    marks = checks(pick(CUBE), [CUBE, BLUE])
+    assert all(m["ok"] for m in marks)
+    assert marks[1]["checks"] == {"reach": "ok", "collision": "ok", "grasp": "ok"}
+
+
+def test_a_path_through_a_true_object_fails_collision():
+    # Along x the open fingers hit the cube. Along y they would straddle it.
+    kfs = [Keyframe((0.35, 0.1, 0.15), 0.0, "open", None), Keyframe((0.35, 0.1, 0.02), 0.0, "open", None),
+           Keyframe((0.65, 0.1, 0.02), 0.0, "open", None, "sweep through the blue cube")]
+    marks = checks(kfs, [CUBE, BLUE])
+    assert [m["ok"] for m in marks] == [True, True, False]
+    assert "blue_cube" in marks[2]["checks"]["collision"]
+
+
+def test_the_grasp_target_is_ignored_in_the_last_3_cm_before_a_close():
+    # A grasp at the centre of a 12 cm tall box: the hand passes the box top 1.5 cm before the close.
+    tall = Entity("long_box", "box", (0.04, 0.04, 0.12), (0.5, 0.0, 0.06), 0.0)
+    marks = checks(pick(tall), [tall])
+    assert marks[1]["checks"]["collision"] == "ok" and marks[1]["checks"]["grasp"] == "ok"
+    no_close = [pick(tall)[0], Keyframe((0.5, 0.0, 0.06), 0.0, "open", None)]
+    assert "long_box" in checks(no_close, [tall])[1]["checks"]["collision"]  # without a close, the box counts
+
+
+def test_the_held_object_does_not_collide_and_moves_with_the_hand():
+    kfs = [*pick(CUBE), Keyframe((0.5, 0.25, 0.2), 0.0, "closed", "red cube"),
+           Keyframe((0.5, 0.25, 0.022), 0.0, "open", None, "put it down"),
+           Keyframe((0.5, 0.25, 0.2), 0.0, "open", None),
+           Keyframe((0.55, 0.25, 0.02), 0.0, "open", None, "down beside the cube: a finger hits it")]
+    marks = checks(kfs, [CUBE, BLUE])
+    assert all(m["ok"] for m in marks[:6])
+    assert marks[4]["checks"]["release"] == "ok" and "0.2 cm above the table" in marks[4]["info"]
+    assert "red_cube" in marks[6]["checks"]["collision"]  # the cube now stands at the release point
+
+
+def test_a_released_object_falls_and_never_rises():
+    high = [*pick(CUBE), Keyframe((0.5, 0.25, 0.2), 0.0, "closed", "red cube"),
+            Keyframe((0.5, 0.25, 0.12), 0.0, "open", None, "let go 10 cm up"),
+            Keyframe((0.55, 0.25, 0.12), 0.0, "open", None, "a finger would hit the cube in the air")]
+    marks = checks(high, [CUBE, BLUE])
+    assert marks[4]["info"] == "red_cube: 10.0 cm above the table" and marks[5]["ok"]  # the cube fell
+    bowl = Entity("bowl", "cylinder", (0.16, 0.16, 0.06), (0.5, 0.25, 0.03), 0.0)
+    by_name = {"red_cube": CUBE, "bowl": bowl}
+    sunk = {"red_cube": ((0.5, 0.25, 0.075), 0.0), "bowl": (bowl.xyz, 0.0)}  # its bottom is inside the bowl
+    assert drop("red_cube", by_name, sunk) == ((0.5, 0.25, 0.075), 0.0)  # not lifted onto the rim
+    above = {"red_cube": ((0.5, 0.25, 0.2), 30.0), "bowl": (bowl.xyz, 0.0)}
+    assert drop("red_cube", by_name, above) == ((0.5, 0.25, pytest.approx(0.08)), 30.0)  # it lands on the bowl
+
+
+def test_a_grasp_across_the_wide_side_fails():
+    marks = checks(pick(LONG, yaw=90.0), [LONG])
+    assert marks[1]["ok"] is False and "narrow side" in marks[1]["checks"]["grasp"]
+    assert checks(pick(LONG, yaw=0.0), [LONG])[1]["checks"]["grasp"] == "ok"
+    assert checks(pick(LONG, yaw=-15.0), [LONG])[1]["checks"]["grasp"] == "ok"  # within 20°
+
+
+def test_a_grasp_needs_a_narrow_object_and_the_centre():
+    wide = Entity("long_box", "box", (0.09, 0.12, 0.05), (0.5, 0.0, 0.025), 0.0)
+    assert "too wide" in checks(pick(wide), [wide])[1]["checks"]["grasp"]
+    off = pick(CUBE)
+    off[1] = Keyframe((0.5, -0.07, 0.02), 0.0, "closed", "red_cube")
+    assert "cm from the centre" in checks(off, [CUBE])[1]["checks"]["grasp"]
+    unknown = pick(CUBE)
+    unknown[1] = Keyframe((0.5, -0.1, 0.02), 0.0, "closed", "teapot")
+    assert "teapot" in checks(unknown, [CUBE])[1]["checks"]["grasp"]
+
+
+def test_a_round_object_takes_any_grasp_angle():
+    can = Entity("can", "cylinder", (0.06, 0.06, 0.1), (0.5, 0.0, 0.05), 0.0)
+    assert checks(pick(can, yaw=55.0), [can], round_names={"can"})[1]["checks"]["grasp"] == "ok"
+
+
+def test_reach_uses_the_environment_rule():
+    def reach(xyz, yaw):
+        return "no joint solution for this point" if xyz[1] > 0.3 else None
+
+    kfs = [Keyframe((0.5, 0.35, 0.2), 0.0, "open", None)]
+    marks = plan_checks(START, kfs, [], ALIASES, set(), PARTS, reach)
+    assert marks[0]["ok"] is False and marks[0]["checks"]["reach"] == "no joint solution for this point"
+
+
+# ---- The MuJoCo environment ----
+def scripted_keyframes(actions: list[Action]) -> list[Keyframe]:
+    """The keyframes of a scripted solution: a move is a keyframe, an open or close changes the last one."""
+    kfs, state, holding, yaw = [], "open", None, 0.0
+    for a in actions:
+        if a.type == "move_to":
+            yaw = a.yaw if a.yaw is not None else yaw
+            kfs.append(Keyframe(tuple(float(v) for v in a.xyz), yaw, state, holding))
+        elif a.type in ("open", "close") and kfs:
+            state = "open" if a.type == "open" else "closed"
+            k = kfs[-1]
+            kfs[-1] = Keyframe(k.xyz, k.yaw, state, k.carrying, k.note)
+    return kfs
+
+
+def with_holding(kfs: list[Keyframe], world) -> list[Keyframe]:
+    """Set "holding" at each close to the object within 3 cm of the hand in xy, as the scripted plan means."""
+    import numpy as np
+    out, held, state = [], None, "open"
+    for k in kfs:
+        if k.state == "closed" and state == "open":
+            dist = {o.name: float(np.hypot(*(world.object_pos(o.name)[:2] - np.array(k.xyz[:2]))))
+                    for o in world.objects}
+            near = min(dist, key=dist.get)
+            held = near if dist[near] < 0.03 else None
+        held = held if k.state == "closed" else None
+        out.append(Keyframe(k.xyz, k.yaw, k.state, held, k.note))
+        state = k.state
+    return out
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("scene, task", [("cubes", "pick"), ("tray", "red_in_tray"), ("cubes", "stack"),
+                                         ("tray", "all_in_tray"), ("drawer", "cube_in_drawer")])
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_a_true_belief_and_a_scripted_plan_score_clean(scene, task, seed):
+    from armmind.env import MujocoEnv
+    from armmind.sim.planview import true_entities
+    sc = SCENES[scene]
+    env = MujocoEnv(sc, sc.tasks[task], seed, sc.tasks[task].instruction)
+    try:
+        belief = tuple(true_entities(env.world))
+        kfs = tuple(with_holding(scripted_keyframes(sc.tasks[task].solution(env.world)), env.world))
+        scores = env.check_plan(belief, kfs)
+    finally:
+        env.close()
+    for r in scores["perception"]:
+        assert r["xy_cm"] < 0.01 and abs(r["z_cm"]) < 0.01 and r["yaw_deg"] == pytest.approx(0, abs=0.01)
+    assert scores["missing"] == [] and scores["invented"] == []
+    bad = [(i, m) for i, m in enumerate(scores["marks"]) if not m["ok"]]
+    assert bad == [] and scores["summary"]["failed_keyframes"] == 0
+
+
+@pytest.mark.assets
+def test_reach_fails_outside_the_workspace():
+    from armmind.env import MujocoEnv
+    env = MujocoEnv(SCENES["cubes"], None, 0, "")
+    try:
+        scores = env.check_plan((), (Keyframe((0.95, 0.0, 0.2), 0.0, "open", None),
+                                     Keyframe((0.5, 0.0, 0.2), 0.0, "open", None)))
+    finally:
+        env.close()
+    assert "outside the workspace" in scores["marks"][0]["checks"]["reach"]
+    assert scores["marks"][1]["checks"]["reach"] == "ok"
+    assert len(scores["missing"]) == 3 and scores["summary"]["failed_keyframes"] == 1

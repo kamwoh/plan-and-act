@@ -83,6 +83,11 @@ class MujocoEnv:
         from armmind.sim.planview import build_view
         return build_view(self.world, belief, keyframes, marks, self.cams.w, self.cams.h)
 
+    def check_plan(self, belief, keyframes) -> dict:
+        """The scores of a plan against the true scene now (call it before any motion)."""
+        from armmind.sim.planview import check_plan
+        return check_plan(self.world, self.arm, belief, keyframes)
+
     def close(self) -> None:
         self.cams.close()
 

@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_generic_modules_import_no_mujoco():
-    code = ("import sys, armmind.plan.formats; "
+    code = ("import sys, armmind.plan.formats, armmind.plan.scores; "
             "bad = [m for m in sys.modules if m.split('.')[0] in ('mujoco', 'numpy') or m.startswith('armmind.sim')]; "
             "print(bad); sys.exit(1 if bad else 0)")
     r = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True, cwd=ROOT)

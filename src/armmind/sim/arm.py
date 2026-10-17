@@ -81,6 +81,10 @@ class Arm:
             d.qpos[:7] = np.clip(q + dq, lo, hi)
         return None
 
+    def reachable(self, target, yaw: float) -> bool:
+        """True when IK finds the target with this yaw, from the current pose or from home. Nothing moves."""
+        return self._reachable(np.asarray(target, dtype=float), yaw)
+
     def _reachable(self, target, yaw: float) -> bool:
         """True when IK finds the target with this yaw, from the current pose or else from home."""
         return (self._walk(target, self._yaw, yaw, None) is not None
