@@ -1241,12 +1241,15 @@ function planCheckEntry(scores, keyframes = []) {
   if ((scores.missing || []).length) item.append(field("missing", el("span", scores.missing.join(", "))));
   if ((scores.invented || []).length) item.append(field("invented", el("span", scores.invented.join(", "))));
   const marks = el("ol", "", "kf-lines");
+  let shownPredicted = new Set();  // say "at its predicted pose" once, on the first keyframe that uses it
   (scores.marks || []).forEach((m, i) => {
     const row = li("", m.ok ? "" : "bad");
     const why = Object.entries(m.checks || {}).filter(([, v]) => v !== "ok").map(([k, v]) => `${k}: ${v}`);
     row.append(el("span", m.ok ? "✓" : "✕", m.ok ? "mark-ok" : "mark-bad"), el("span", ` ${i + 1}`, "n"),
                document.createTextNode([...why, m.info].filter(Boolean).join("; ") || "ok"));
-    if ((m.predicted || []).length) row.append(el("span", ` · ${m.predicted.map((n) => `${n}: at its predicted pose`).join(", ")}`, "kf-muted"));
+    const fresh = (m.predicted || []).filter((n) => !shownPredicted.has(n));
+    shownPredicted = new Set(m.predicted || []);
+    if (fresh.length) row.append(el("span", ` · from here, ${fresh.join(", ")} at the predicted pose`, "kf-muted"));
     marks.append(row);
   });
   item.append(field("checks", marks));

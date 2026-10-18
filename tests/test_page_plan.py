@@ -266,7 +266,8 @@ def test_real_start_picks_up_a_true_object_from_its_shifted_pose():
 def test_the_plan_check_shows_predicted_poses_and_the_prediction_shows_missed_objects():
     app = _web("app.js")
     check = _body(app, "function planCheckEntry")
-    assert "at its predicted pose" in check and "kf-muted" in check
+    assert "at the predicted pose" in check and "kf-muted" in check
+    assert "shownPredicted.has(n)" in check  # the note shows once, not on every later keyframe
     assert "Real start uses the predicted moves after a push." in check
     pred = _body(app, "function predictionEntry")
     assert "not in the belief: " in pred and "xy more than 2 cm" in pred
