@@ -37,7 +37,7 @@ class Usage:
 
 @dataclass(frozen=True)
 class LLMError:
-    kind: Literal["timeout", "cancelled", "backend", "auth", "limit", "schema"]
+    kind: Literal["timeout", "cancelled", "backend", "auth", "limit", "schema", "resume"]  # resume: the chat is gone
     message: str
 
 
@@ -53,6 +53,8 @@ LLMEvent = Delta | Final | Usage | LLMError | Progress
 
 @runtime_checkable
 class Conversation(Protocol):
+    session_id: str | None  # the saved chat of a chain, once it is known. None for a chat that is not saved
+
     def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]: ...
     async def cancel(self) -> None: ...
     async def close(self) -> None: ...
@@ -62,4 +64,7 @@ class Conversation(Protocol):
 class LLMBackend(Protocol):
     name: str
 
-    async def open(self, system: str) -> Conversation: ...
+    async def open(self, system: str, chain: str | None = None, resume: str | None = None) -> Conversation:
+        """A new chat, or with `chain` a saved chat of that chain. With `resume`, it continues that saved chat.
+        When the saved chat is gone, the first send gives an LLMError of kind "resume"."""
+        ...

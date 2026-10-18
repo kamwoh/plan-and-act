@@ -1,6 +1,8 @@
 """Claude Code CLI backend: one long-lived `claude -p` process per conversation (no API key needed).
 
 Locked down: no tools, no MCP servers, no user/project settings or hooks, empty working directory.
+A conversation of a chain is a CLI session: it runs in a fixed folder per chain, and each new process
+continues it with --resume. Any other conversation is not saved.
 """
 from __future__ import annotations
 
@@ -9,17 +11,21 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import tempfile
 import time
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 from armmind.llm.protocol import Delta, Final, LLMError, LLMEvent, Message, Progress, Usage
 
 BASE_ARGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-             "--include-partial-messages", "--tools", "", "--strict-mcp-config", "--no-session-persistence",
-             "--setting-sources", ""]
+             "--include-partial-messages", "--tools", "", "--strict-mcp-config", "--setting-sources", ""]
+NO_SESSION = ["--no-session-persistence"]  # a conversation outside a chain
+SESSIONS_DIR = Path.home() / ".cache" / "armmind" / "sessions"  # one working folder for each chain
+CHAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
 
 
 PROGRESS_INTERVAL_S = 0.3  # at most one "receiving" update per this many seconds
@@ -35,6 +41,8 @@ def usage_from_result(ev: dict, default_model: str, latency_s: float) -> Usage:
 
 def classify(text: str) -> str:
     t = text.lower()
+    if "no conversation found" in t:  # --resume of a session that is not there
+        return "resume"
     if "limit" in t or "429" in t:
         return "limit"
     if "login" in t or "auth" in t or "401" in t or "api key" in t:
@@ -43,11 +51,22 @@ def classify(text: str) -> str:
 
 
 class ClaudeCLIConversation:
-    def __init__(self, backend: ClaudeCLIBackend, system: str):
+    def __init__(self, backend: ClaudeCLIBackend, system: str, chain: str | None = None, resume: str | None = None):
+        """With `chain`, the conversation is a saved CLI session in the folder of the chain. `resume` is the
+        id of a session to continue. The CLI gives the id of a new session in its first output line."""
         self.b, self.system = backend, system
         self._proc: asyncio.subprocess.Process | None = None
         self._schema_key: str | None = None
-        self._cwd = tempfile.mkdtemp(prefix="armmind-claude-")
+        self._saved = chain is not None
+        self.session_id = resume if self._saved else None
+        if chain is not None:
+            if not CHAIN_NAME.fullmatch(chain):
+                raise ValueError(f"bad chain name {chain!r}")
+            folder = Path(backend.sessions_dir) / chain
+            folder.mkdir(parents=True, exist_ok=True)
+            self._cwd = str(folder)
+        else:
+            self._cwd = tempfile.mkdtemp(prefix="armmind-claude-")
         self._lock = asyncio.Lock()
         self._cancelled = False
         self._stderr_tail = b""
@@ -63,7 +82,9 @@ class ClaudeCLIConversation:
         if self._proc and self._proc.returncode is None and key == self._schema_key:
             return self._proc
         await self._kill()
-        args = [*self.b.command, *BASE_ARGS, "--system-prompt", self.system]
+        args = [*self.b.command, *BASE_ARGS, *([] if self._saved else NO_SESSION), "--system-prompt", self.system]
+        if self.session_id:
+            args += ["--resume", self.session_id]
         if schema:
             args += ["--json-schema", json.dumps(schema)]
         if self.b.model:
@@ -144,7 +165,7 @@ class ClaudeCLIConversation:
                         await asyncio.wait_for(asyncio.shield(self._stderr_task), 1)
                 err = self._stderr_tail.decode(errors="replace").strip()
                 self._proc = None
-                yield LLMError(classify(err), err[-500:] or f"claude CLI exited with code {proc.returncode}")
+                yield self._error(classify(err), err[-500:] or f"claude CLI exited with code {proc.returncode}")
                 return
             try:
                 ev = json.loads(line)
@@ -153,6 +174,8 @@ class ClaudeCLIConversation:
             if not isinstance(ev, dict):
                 continue
             kind = ev.get("type")
+            if self._saved and isinstance(ev.get("session_id"), str) and kind != "result":
+                self.session_id = ev["session_id"]
             if not started:  # the first line of a turn (system/init or the first stream event) means it is running
                 started = True
                 yield Progress("started")
@@ -170,10 +193,12 @@ class ClaudeCLIConversation:
                         last_progress = now
                         yield Progress("receiving", received)
             elif kind == "result":
-                text = ev.get("result") or ""
+                text = ev.get("result") or "; ".join(str(e) for e in ev.get("errors") or [])
                 if ev.get("is_error") or ev.get("subtype") != "success":
-                    yield LLMError(classify(text), text or "the model returned an error")
+                    yield self._error(classify(text), text or "the model returned an error")
                     return
+                if self._saved and isinstance(ev.get("session_id"), str):
+                    self.session_id = ev["session_id"]
                 parsed = ev.get("structured_output")
                 if schema and not isinstance(parsed, dict):
                     yield LLMError("schema", f"answer did not match the requested format: {text[:300]}")
@@ -181,6 +206,11 @@ class ClaudeCLIConversation:
                 yield Final(text, parsed if schema else None)
                 yield usage_from_result(ev, self.b.model or "claude", time.monotonic() - t0)
                 return
+
+    def _error(self, kind: str, message: str) -> LLMError:
+        if kind == "resume":  # the session is gone: a later send starts a new process and a new session
+            self.session_id, self._schema_key = None, None
+        return LLMError(kind, message)
 
     async def cancel(self) -> None:
         self._cancelled = True
@@ -199,16 +229,19 @@ class ClaudeCLIConversation:
 
     async def close(self) -> None:
         await self._kill()
-        shutil.rmtree(self._cwd, ignore_errors=True)
+        if not self._saved:  # the folder of a chain keeps the session for the next round
+            shutil.rmtree(self._cwd, ignore_errors=True)
 
 
 class ClaudeCLIBackend:
     name = "claude_cli"
 
-    def __init__(self, command: list[str] | None = None, model: str | None = None, timeout_s: float = 90.0):
+    def __init__(self, command: list[str] | None = None, model: str | None = None, timeout_s: float = 90.0,
+                 sessions_dir: Path = SESSIONS_DIR):
         self.command = command or ["claude"]
         self.model = model
         self.timeout_s = timeout_s
+        self.sessions_dir = sessions_dir
 
-    async def open(self, system: str) -> ClaudeCLIConversation:
-        return ClaudeCLIConversation(self, system)
+    async def open(self, system: str, chain: str | None = None, resume: str | None = None) -> ClaudeCLIConversation:
+        return ClaudeCLIConversation(self, system, chain, resume)
