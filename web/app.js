@@ -950,7 +950,7 @@ function onEvent(ev, replay = false) {
     addTotals(ev.usage);
     onPlan(ev);
     planView = ev.view || null;
-    addEntry(planCheckEntry(ev.scores || {}));
+    addEntry(planCheckEntry(ev.scores || {}, ev.keyframes || []));
     if (ev.view) showPlan(ev.view);
   } else if (ev.kind === "exec_start") {
     const own = planView && ev.run_id === planRunId;  // the cameras and the start pose of the plan on the page
@@ -1158,7 +1158,8 @@ function showPlayerTime({ time, duration, index, keyframe, playing }) {
   $("play_slider").value = String(time);
   $("play_time").textContent = `${time.toFixed(1)} / ${duration.toFixed(1)} s`;
   const n = player && player.view ? player.view.track.keyframes.length : 0;
-  $("play_kf").textContent = keyframe ? `${index + 1}/${n} · ${keyframe.note || "(no note)"}` : "";
+  const moved = keyframe && (keyframe.moves || []).length ? ` · moves ${keyframe.moves.map((m) => m.name).join(", ")}` : "";
+  $("play_kf").textContent = keyframe ? `${index + 1}/${n} · ${keyframe.note || "(no note)"}${moved}` : "";
   $("play_kf").title = $("play_kf").textContent;
   $("play_btn").textContent = playing ? "❚❚" : "▶";
 }
@@ -1191,7 +1192,8 @@ function onPlan(ev) {
   (ev.keyframes || []).forEach((k, i) => {
     const row = li("");
     const holds = k.carrying ? ` · holds ${k.carrying}` : "";
-    row.append(el("span", String(i + 1), "n"), document.createTextNode(`${k.note || "(no note)"} · ${xyzText(k.xyz)} yaw ${Math.round(k.yaw)}° · ${k.state}${holds}`));
+    const moves = (k.moves || []).length ? ` · moves ${movesText(k.moves)}` : "";
+    row.append(el("span", String(i + 1), "n"), document.createTextNode(`${k.note || "(no note)"} · ${xyzText(k.xyz)} yaw ${Math.round(k.yaw)}° · ${k.state}${holds}${moves}`));
     keys.append(row);
   });
   item.append(field("keys", keys));
@@ -1200,7 +1202,12 @@ function onPlan(ev) {
   addEntry(stepLink(item, ev.step));
 }
 
-function planCheckEntry(scores) {
+// The predicted moves of a keyframe in short form, for example "bowl → (0.62, 0.10)".
+function movesText(moves) {
+  return (moves || []).map((m) => `${m.name} → (${m.xyz[0].toFixed(2)}, ${m.xyz[1].toFixed(2)})`).join(", ");
+}
+
+function planCheckEntry(scores, keyframes = []) {
   const item = entry("plan", "◎ Plan check");
   const rows = scores.perception || [];
   if (rows.length) {
@@ -1240,6 +1247,9 @@ function planCheckEntry(scores) {
     marks.append(row);
   });
   item.append(field("checks", marks));
+  const moved = keyframes.map((k, i) => [i, k.moves || []]).filter(([, m]) => m.length)
+    .map(([i, m]) => `${i + 1} · moves ${movesText(m)}`);
+  if (moved.length) item.append(field("moves", lines(moved, "mono")));
   const exec = el("button", "▶ Execute plan", "btn exec-btn");
   exec.type = "button";
   exec.disabled = running;

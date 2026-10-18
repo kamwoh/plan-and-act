@@ -86,3 +86,25 @@ def test_timed_keyframes_keep_the_moves_of_believed_entities_only():
     k = Keyframe((0.5, 0.0, 0.02), 0.0, "open", None, "push",
                  (Move("Blue_Cube", (0.5, 0.15, 0.02), 5.0), Move("ghost", (0.4, 0.0, 0.02))))
     assert timed_keyframes(belief, [k])[0].moves == (Move("blue cube", (0.5, 0.15, 0.02), 5.0),)
+
+
+# ---- The same poses in the page player ----
+def test_python_and_the_page_player_give_the_same_poses():
+    import json
+    import subprocess
+    from pathlib import Path
+    case_file = Path(__file__).parent / "js" / "track_case.json"
+    case = json.loads(case_file.read_text())
+    out = subprocess.run(["node", str(case_file.parent / "track_check.js"), str(case_file)], check=True,
+                         capture_output=True, text=True).stdout
+    page = json.loads(out)
+    assert len(page) == len(case["times"])
+    for t, js in zip(case["times"], page, strict=True):
+        py = poses_at(case["track"], case["entities"], t)
+        assert set(py) == set(js)
+        for name in py:
+            assert py[name]["xyz"] == pytest.approx(js[name]["xyz"], abs=1e-9), (t, name)
+            assert py[name]["yaw"] == pytest.approx(js[name]["yaw"], abs=1e-9), (t, name)
+    for e in case["expect"]:
+        p = poses_at(case["track"], case["entities"], e["t"])[e["name"]]
+        assert p["xyz"] == pytest.approx(e["xyz"], abs=1e-9) and p["yaw"] == pytest.approx(e["yaw"], abs=1e-9)

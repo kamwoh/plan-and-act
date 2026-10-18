@@ -144,6 +144,7 @@ def check_plan(world: World, arm: Arm, belief, keyframes) -> dict:
     start = {"xyz": tuple(float(v) for v in world.tcp()), "yaw": world.gripper_yaw(), "state": "open"}
     match = match_entities([b.name for b in believed], names)
     marks = plan_checks(start, list(keyframes), truth, names, round_names, agent()["parts"], reach,
-                        open_state="open", gap=true_gap, believed_to_true={b: t for t, b in match.items()})
+                        open_state="open", gap=true_gap, believed_to_true={b: t for t, b in match.items()},
+                        belief=believed)
     return {"perception": p["rows"], "missing": p["missing"], "invented": p["invented"],
             "summary": {**p["summary"], "failed_keyframes": sum(not m["ok"] for m in marks)}, "marks": marks}

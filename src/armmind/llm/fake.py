@@ -56,18 +56,24 @@ DEMO_REPLIES = [  # invented replies for a demo run of the cubes scene
 ]
 
 
-DEMO_PLAN = {  # an invented plan for the cubes scene: pick up the red cube
+DEMO_PLAN = {  # an invented plan for seed 0 of the cubes scene: push the green cube, then pick up the red cube
     "objects": [
-        {"name": "red cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.5, -0.1, 0.02], "yaw": 0},
-        {"name": "blue cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.55, 0.12, 0.02], "yaw": 10},
-        {"name": "green cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.45, 0.2, 0.02], "yaw": 0},
+        {"name": "red cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.56, -0.11, 0.02], "yaw": 0},
+        {"name": "blue cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.41, -0.24, 0.02], "yaw": 10},
+        {"name": "green cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.60, 0.21, 0.02], "yaw": 0},
     ],
     "keyframes": [
-        {"xyz": [0.5, -0.1, 0.15], "yaw": 0, "gripper": "open", "holding": "nothing", "note": "above the red cube"},
-        {"xyz": [0.5, -0.1, 0.02], "yaw": 0, "gripper": "closed", "holding": "red cube", "note": "grasp it"},
-        {"xyz": [0.5, -0.1, 0.2], "yaw": 0, "gripper": "closed", "holding": "red cube", "note": "lift it"},
+        {"xyz": [0.6, 0.27, 0.15], "yaw": 0, "gripper": "closed", "holding": "nothing",
+         "note": "above, right of the green cube, fingers closed"},
+        {"xyz": [0.6, 0.27, 0.02], "yaw": 0, "gripper": "closed", "holding": "nothing", "note": "down beside it"},
+        {"xyz": [0.6, 0.19, 0.02], "yaw": 0, "gripper": "closed", "holding": "nothing", "note": "push it 5 cm",
+         "moves": [{"object": "green cube", "xyz": [0.6, 0.16, 0.02], "yaw": 0}]},
+        {"xyz": [0.6, 0.19, 0.15], "yaw": 0, "gripper": "closed", "holding": "nothing", "note": "up"},
+        {"xyz": [0.56, -0.11, 0.15], "yaw": 0, "gripper": "open", "holding": "nothing", "note": "above the red cube"},
+        {"xyz": [0.56, -0.11, 0.02], "yaw": 0, "gripper": "closed", "holding": "red cube", "note": "grasp it"},
+        {"xyz": [0.56, -0.11, 0.2], "yaw": 0, "gripper": "closed", "holding": "red cube", "note": "lift it"},
     ],
-    "summary": "Grasp the red cube from above and lift it 18 cm.",
+    "summary": "Push the green cube 5 cm to the left, then grasp the red cube from above and lift it 18 cm.",
 }
 
 

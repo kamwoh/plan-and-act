@@ -7,6 +7,7 @@
   const BELIEF_COLOR = 0x9aa3b2;
   const PATH_COLOR = 0x5b8cff;
   const FAIL_COLOR = 0xff4d4d;
+  const MOVE_COLOR = 0xffb020;  // a keyframe that moves an entity without carrying it
   const DEFAULT_COLOR = [0.78, 0.78, 0.78, 1];
 
   const clamp01 = (a) => Math.min(1, Math.max(0, a));
@@ -87,29 +88,55 @@
     };
   }
 
+  // The angle in (-180, 180].
+  function wrapDeg(a) {
+    const w = (((a + 180) % 360) + 360) % 360 - 180;
+    return w === -180 ? 180 : w;
+  }
+
+  // A pose part of the way to a move target. The yaw takes the short way round.
+  function movePose(pose, m, s) {
+    const target = pose.yaw + wrapDeg(m.yaw - pose.yaw);
+    return { xyz: lerp3(pose.xyz, m.xyz, s), yaw: lerp(pose.yaw, target, s) };
+  }
+
   // The poses of a set of entities at time t. carriedAt(k, keyframe) names the entity of the set that the
-  // agent carries after keyframe k, or gives null.
-  function posesAt(track, entities, t, carriedAt) {
+  // agent carries after keyframe k, or gives null. movesAt(k, keyframe) gives the predicted moves of keyframe
+  // k: [{ name, xyz, yaw }]. On the segment into keyframe k, each moved entity goes to its new pose with the
+  // timing of the agent. A carried entity does not move. src/armmind/plan/track.py has the same rules.
+  function posesAt(track, entities, t, carriedAt, movesAt) {
     const poses = {};
     for (const e of entities) poses[e.name] = { xyz: e.xyz.slice(), yaw: e.yaw || 0 };
     let carried = null;
-    track.keyframes.forEach((kf, k) => {
-      if (t < kf.t) return;
+    let t0 = 0;
+    const kfs = track.keyframes;
+    const free = (name) => poses[name] && !(carried && carried.name === name);
+    for (let k = 0; k < kfs.length; k++) {
+      const kf = kfs[k];
+      const moves = (movesAt && movesAt(k, kf)) || [];
+      if (t < kf.t) {
+        const s = smooth(clamp01((t - t0) / Math.max(1e-6, kf.t - t0)));
+        for (const m of moves) if (free(m.name)) poses[m.name] = movePose(poses[m.name], m, s);
+        break;
+      }
       const at = { xyz: kf.xyz, yaw: kf.yaw };
       const want = carriedAt(k, kf) || null;
       if (carried && carried.name !== want) {
         poses[carried.name] = toWorld(at, carried.local);
         carried = null;
       }
+      for (const m of moves) if (free(m.name)) poses[m.name] = movePose(poses[m.name], m, 1);
       if (want && !carried && poses[want]) carried = { name: want, local: toLocal(at, poses[want]), from: k };
-    });
+      t0 = kf.t_done;
+    }
     if (carried) poses[carried.name] = toWorld(agentAt(track, t), carried.local);
     return poses;
   }
 
-  // Who carries what. The belief follows the track. The true entities follow the marks: a mark names the true
-  // entity that the agent holds after its keyframe, so a failed grasp moves nothing. A view without that
-  // field falls back to the name match.
+  // Who carries and moves what. The belief follows the track, with its predicted moves. The true entities
+  // follow the marks: a mark names the true entity that the agent holds after its keyframe, so a failed grasp
+  // moves nothing. A view without that field falls back to the name match. A prediction never moves a true
+  // entity: the truth is unknown until the plan runs.
   function carriers(view) {
     const back = {};
     for (const [trueName, believed] of Object.entries(view.true_match || {})) back[believed] = trueName;
@@ -117,6 +144,8 @@
     return {
       believed: (k, kf) => kf.carrying,
       truth: (k, kf) => (marks[k] && "holds" in marks[k] ? marks[k].holds : (kf.carrying && back[kf.carrying]) || null),
+      believedMoves: (k, kf) => kf.moves || [],
+      trueMoves: () => [],
     };
   }
 
@@ -205,8 +234,10 @@
       const marks = view.marks || [];
       track.keyframes.forEach((k, i) => {
         const bad = marks[i] && marks[i].ok === false;
-        const dot = new T.Mesh(new T.SphereGeometry(bad ? 0.009 : 0.005, 16, 8),
-                               new T.MeshBasicMaterial({ color: bad ? FAIL_COLOR : PATH_COLOR, depthTest: false, transparent: true }));
+        const moves = (k.moves || []).length > 0;
+        const color = bad ? FAIL_COLOR : moves ? MOVE_COLOR : PATH_COLOR;
+        const dot = new T.Mesh(new T.SphereGeometry(bad ? 0.009 : moves ? 0.007 : 0.005, 16, 8),
+                               new T.MeshBasicMaterial({ color, depthTest: false, transparent: true }));
         dot.position.set(k.xyz[0], k.xyz[1], k.xyz[2]);
         dot.renderOrder = 11;
         this.scene.add(dot);
@@ -392,8 +423,8 @@
       this.time = Math.min(Math.max(0, t), this.duration);
       const track = this.view.track;
       const agent = agentAt(track, this.time);
-      const believed = posesAt(track, this.view.believed, this.time, this.carry.believed);
-      const truth = posesAt(track, this.view.true_start, this.time, this.carry.truth);
+      const believed = posesAt(track, this.view.believed, this.time, this.carry.believed, this.carry.believedMoves);
+      const truth = posesAt(track, this.view.true_start, this.time, this.carry.truth, this.carry.trueMoves);
       for (const v of this.views) v.update(agent, believed, truth);
       const kf = track.keyframes[agent.index];
       for (const fn of this.listeners) fn({ time: this.time, duration: this.duration, index: agent.index, keyframe: kf, playing: this.playing });
@@ -492,5 +523,6 @@
     agentAt,
     posesAt,
     carriers,
+    wrapDeg,
   };
 })();

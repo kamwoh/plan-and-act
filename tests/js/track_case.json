@@ -1,0 +1,35 @@
+{
+  "about": "One track for the poses of web/plan3d.js and src/armmind/plan/track.py. Keyframe 2 pushes the cube, keyframe 3 grasps it, keyframe 5 lets go and keyframe 6 knocks it again. Keyframe 4 turns the ball.",
+  "track": {
+    "start": {"xyz": [0.3, 0.0, 0.4], "yaw": 0.0, "state": "open", "gap": 0.08},
+    "keyframes": [
+      {"xyz": [0.5, -0.06, 0.02], "yaw": 0.0, "state": "closed", "carrying": null, "gap": 0.0, "changes": true,
+       "t": 1.0, "t_done": 1.9, "moves": []},
+      {"xyz": [0.5, 0.05, 0.02], "yaw": 0.0, "state": "closed", "carrying": null, "gap": 0.0, "changes": false,
+       "t": 2.5, "t_done": 2.8, "moves": [{"name": "cube", "xyz": [0.5, 0.08, 0.02], "yaw": 12.0}]},
+      {"xyz": [0.5, 0.08, 0.02], "yaw": 30.0, "state": "closed", "carrying": "cube", "gap": 0.04, "changes": true,
+       "t": 3.4, "t_done": 4.3, "moves": []},
+      {"xyz": [0.55, 0.2, 0.15], "yaw": -20.0, "state": "closed", "carrying": "cube", "gap": 0.04, "changes": false,
+       "t": 5.2, "t_done": 5.5, "moves": [{"name": "ball", "xyz": [0.62, 0.25, 0.02], "yaw": -170.0}]},
+      {"xyz": [0.55, 0.2, 0.05], "yaw": -20.0, "state": "open", "carrying": null, "gap": 0.08, "changes": true,
+       "t": 6.0, "t_done": 6.9, "moves": []},
+      {"xyz": [0.4, 0.2, 0.05], "yaw": -20.0, "state": "open", "carrying": null, "gap": 0.08, "changes": false,
+       "t": 7.6, "t_done": 7.9, "moves": [{"name": "cube", "xyz": [0.45, 0.21, 0.02], "yaw": 175.0}]}
+    ],
+    "duration": 7.9
+  },
+  "entities": [
+    {"name": "cube", "xyz": [0.5, 0.0, 0.02], "yaw": 0.0},
+    {"name": "ball", "xyz": [0.6, 0.25, 0.02], "yaw": 160.0},
+    {"name": "box", "xyz": [0.7, -0.2, 0.03], "yaw": 5.0}
+  ],
+  "times": [0.0, 0.5, 1.9, 2.2, 2.5, 3.0, 3.4, 4.0, 4.8, 5.5, 6.0, 6.5, 7.0, 7.3, 7.9, 9.0],
+  "expect": [
+    {"t": 2.5, "name": "cube", "xyz": [0.5, 0.08, 0.02], "yaw": 12.0},
+    {"t": 5.5, "name": "cube", "xyz": [0.55, 0.2, 0.15], "yaw": -38.0},
+    {"t": 5.5, "name": "ball", "xyz": [0.62, 0.25, 0.02], "yaw": 190.0},
+    {"t": 6.9, "name": "cube", "xyz": [0.55, 0.2, 0.05], "yaw": -38.0},
+    {"t": 7.9, "name": "cube", "xyz": [0.45, 0.21, 0.02], "yaw": -185.0},
+    {"t": 9.0, "name": "box", "xyz": [0.7, -0.2, 0.03], "yaw": 5.0}
+  ]
+}

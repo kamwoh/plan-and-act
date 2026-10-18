@@ -162,6 +162,8 @@ def test_a_real_plan_has_scores_a_view_and_png_images(tmp_path):
     assert (tmp_path / "runs" / run_id / "step001_front.png").read_bytes()[:4] == b"\x89PNG"
     rows = {r["true_name"]: r for r in plan["scores"]["perception"]}
     assert set(rows) == {"red_cube", "blue_cube", "green_cube"}  # the labels match
-    assert rows["red_cube"]["xy_cm"] > 0 and len(plan["scores"]["marks"]) == 3
+    assert rows["red_cube"]["xy_cm"] > 0 and len(plan["scores"]["marks"]) == 7
+    assert all(m["ok"] for m in plan["scores"]["marks"])  # the push may touch the green cube
     assert view == plan["view"] and [c["name"] for c in view["cameras"]] == ["front", "top"]
-    assert view["track"]["keyframes"][1]["carrying"] == "red cube"
+    assert view["track"]["keyframes"][5]["carrying"] == "red cube"
+    assert view["track"]["keyframes"][2]["moves"] == [{"name": "green cube", "xyz": [0.6, 0.16, 0.02], "yaw": 0.0}]

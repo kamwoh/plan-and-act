@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
+from dataclasses import replace
 
-from armmind.plan.formats import Entity, Keyframe, match_entities, norm_name
+from armmind.plan.formats import Entity, Keyframe, build_track, match_entities, norm_name
+from armmind.plan.track import poses_after
 
 SQUARE_TOL = 0.10  # two horizontal sizes within 10 % make a square footprint
 SAMPLE_M = 0.01  # the path check looks at the agent every 1 cm
@@ -121,14 +123,17 @@ def _narrow_width(e: Entity) -> float:
 def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, list[str]], round_names: set[str],
                 parts: list[dict], reach: Callable[[tuple, float], str | None], *, open_state: str,
                 gap: Callable[[str, Entity | None], float],
-                believed_to_true: dict[str, str] | None = None) -> list[dict]:
+                believed_to_true: dict[str, str] | None = None, belief: list[Entity] | None = None) -> list[dict]:
     """One mark for each keyframe: {"ok", "checks": {name: "ok" or a reason}, "info", "holds"}.
 
     The environment gives these rules:
     - reach(xyz, yaw): None, or the reason why it cannot reach the pose.
     - open_state: the state that holds nothing. A change away from it grasps, a change back to it releases.
     - gap(state, held): the slide gap of the agent parts in a state, with the held true entity or None.
-    "holds" is the true object in the agent after the keyframe, or None."""
+    "holds" is the true object in the agent after the keyframe, or None.
+    The path into a keyframe may touch the objects in the moves of that keyframe. After it, each moved true
+    object shifts by the predicted displacement: the move against the believed pose before the keyframe in
+    `belief`, as the page player has it. Without a belief, it goes to the move pose."""
     by_name = {t.name: t for t in truth}
     poses = {t.name: (t.xyz, t.yaw) for t in truth}  # where each true object is, as the plan moves them
     keys = {name: {norm_name(name), *(norm_name(a) for a in aliases.get(name, []) if a)} for name in by_name}
@@ -146,6 +151,7 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
     xyz, yaw, state = tuple(start["xyz"]), float(start["yaw"]), start["state"]
     held, local = None, None  # the true object in the hand, and its pose in the hand frame
     keyframes = list(keyframes)
+    believed = _believed_before(start, keyframes, belief or [])
     marks = []
     for i, k in enumerate(keyframes):
         k: Keyframe
@@ -157,10 +163,14 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
         # A descent that stops open, with a close in place at the next keyframe, may touch its target too.
         nxt = keyframes[i + 1] if i + 1 < len(keyframes) else None
         near = target or (true_name(nxt.carrying) if nxt is not None and closes(k.state, nxt) else None)
+        moved = {t for m in k.moves if (t := true_name(m.name)) is not None}  # contact is expected there
         checks["collision"] = _path_check(xyz, yaw, k, parts, gap(state, by_name.get(held)), held, near,
-                                          by_name, poses)
+                                          by_name, poses, moved)
         if held is not None:  # the held object moves with the hand to the keyframe
             poses[held] = _to_world(k.xyz, k.yaw, local)
+        for m in k.moves:
+            if (t := true_name(m.name)) is not None and t != held:
+                poses[t] = _shift(poses[t], m, believed[i].get(norm_name(m.name)))
         if closing and k.carrying is not None:
             checks["grasp"] = _grasp_check(k, target, by_name, poses, round_names)
             if target is not None and checks["grasp"] == "ok":
@@ -174,6 +184,30 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
         marks.append({"ok": all(v == "ok" for v in checks.values()), "checks": checks, "info": info, "holds": held})
         xyz, yaw, state = k.xyz, k.yaw, k.state
     return marks
+
+
+def _believed_before(start: dict, keyframes: list[Keyframe], belief: list[Entity]) -> list[dict]:
+    """The believed pose of each entity before each keyframe, by norm_name, with the rules of the player."""
+    if not belief:
+        return [{} for _ in keyframes]
+    names = {norm_name(b.name): b.name for b in belief}
+    resolved = [replace(k, carrying=names.get(norm_name(k.carrying)) if k.carrying else None,
+                        moves=tuple(replace(m, name=names.get(norm_name(m.name), m.name)) for m in k.moves))
+                for k in keyframes]
+    track = build_track(start, resolved, move_s=lambda *_: 1.0, settle_s=0.0, change_s=0.0, gap=lambda _: 0.0)
+    entities = [b.to_dict() for b in belief]
+    after = poses_after(track, entities)
+    first = {e["name"]: {"xyz": e["xyz"], "yaw": e["yaw"]} for e in entities}
+    return [{norm_name(n): p for n, p in poses.items()} for poses in [first, *after[:-1]]] if keyframes else []
+
+
+def _shift(pose, move, before: dict | None):
+    """A true pose after a predicted move: shifted by the move against the believed pose before it."""
+    if before is None:
+        return (tuple(move.xyz), move.yaw)
+    (x, y, z), yaw = pose
+    d = [move.xyz[j] - before["xyz"][j] for j in range(3)]
+    return ((x + d[0], y + d[1], z + d[2]), yaw + move.yaw - before["yaw"])
 
 
 def drop(name: str, by_name: dict[str, Entity], poses: dict):
@@ -205,7 +239,7 @@ def _to_world(xyz, yaw: float, local):
 
 
 def _path_check(xyz, yaw: float, k: Keyframe, parts, gap: float, held: str | None, target: str | None,
-                by_name: dict[str, Entity], poses: dict) -> str:
+                by_name: dict[str, Entity], poses: dict, ignore: set[str] = frozenset()) -> str:
     # Sample every 1 cm of the move, and every 1 cm of the arc of the outer part corner for a turn.
     radius = max((math.hypot(abs(p["xyz"][0]) + abs(p.get("slide", 0)) * gap / 2 + p["size"][0] / 2,
                              abs(p["xyz"][1]) + p["size"][1] / 2) for p in parts), default=0.0)
@@ -217,7 +251,7 @@ def _path_check(xyz, yaw: float, k: Keyframe, parts, gap: float, held: str | Non
         y = yaw + a * (k.yaw - yaw)
         near_target = math.dist(p, k.xyz) <= IGNORE_TARGET_M
         for name, e in by_name.items():
-            if name == held or (name == target and near_target):
+            if name == held or name in ignore or (name == target and near_target):
                 continue
             box = _entity_box(e, poses[name])
             for part, agent_box in agent_boxes(parts, p, y, gap):

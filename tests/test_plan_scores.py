@@ -274,3 +274,35 @@ def test_marks_say_what_the_true_scene_holds():
     missed = pick(CUBE)
     missed[1] = Keyframe((0.5, -0.06, 0.02), 0.0, "closed", "red_cube")  # 4 cm off: the grasp fails
     assert [m["holds"] for m in checks(missed, [CUBE, BLUE])] == [None, None, None]
+
+
+# ---- v1.11: a predicted move allows contact on its own keyframe only ----
+def test_the_collision_check_ignores_a_moved_object_only_on_that_keyframe():
+    from armmind.plan.formats import Move
+    down = [Keyframe((0.5, 0.03, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None)]
+    push = Move("blue cube", (0.5, 0.15, 0.02))
+    kfs = [*down, Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (push,)),
+           Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None, "back"),
+           Keyframe((0.5, 0.16, 0.02), 0.0, "closed", None, "push again, with no move")]
+    marks = checks(kfs, [CUBE, BLUE])
+    assert [m["checks"]["collision"] == "ok" for m in marks] == [True, True, True, True, False]
+    assert "blue_cube" in marks[4]["checks"]["collision"]
+    assert marks[3]["ok"]  # the true cube now stands where the push leaves it
+    other = Move("red cube", (0.5, -0.05, 0.02))  # a move of another object does not excuse the blue cube
+    marks = checks([*down, Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (other,))], [CUBE, BLUE])
+    assert "blue_cube" in marks[2]["checks"]["collision"]
+
+
+def test_a_moved_true_object_shifts_by_the_predicted_displacement():
+    from armmind.plan.formats import Move
+    belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.08, 0.02))]  # 2 cm short of the truth
+    kfs = [Keyframe((0.5, 0.01, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.01, 0.02), 0.0, "closed", None),
+           Keyframe((0.5, 0.10, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.12, 0.02)),)),
+           Keyframe((0.5, 0.10, 0.10), 0.0, "closed", None, "up")]
+    marks = plan_checks(START, kfs, [CUBE, BLUE], ALIASES, set(), PARTS, no_reach_limit, open_state="open",
+                        gap=arm_gap, belief=belief)
+    assert all(m["ok"] for m in marks)  # the true cube went 4 cm, to y 0.14: the hand leaves it freely
+    down = Keyframe((0.5, 0.14, 0.02), 0.0, "closed", None, "down onto the moved cube")
+    marks = plan_checks(START, [*kfs, Keyframe((0.5, 0.14, 0.10), 0.0, "closed", None), down], [CUBE, BLUE],
+                        ALIASES, set(), PARTS, no_reach_limit, open_state="open", gap=arm_gap, belief=belief)
+    assert "blue_cube" in marks[5]["checks"]["collision"]

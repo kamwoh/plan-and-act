@@ -3,6 +3,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 WEB = Path(__file__).resolve().parents[1] / "web"
 
 
@@ -172,3 +174,46 @@ def test_a_slider_drag_reads_the_new_time_before_the_pause():
     body = _body(_web("app.js"), '$("play_slider").addEventListener("input"', "\n});\n")
     assert body.index('const t = Number($("play_slider").value)') < body.index("player.pause()")
     assert "player.seek(t)" in body
+
+
+# ---- v1.11: predicted moves in the video and the Plan check ----
+NODE_MOVES = r"""
+const vm = require("vm"), fs = require("fs");
+const ctx = { window: {}, console };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), ctx);
+const P = ctx.window.Plan3D;
+const move = { name: "green cube", xyz: [0.6, 0.16, 0.02], yaw: 0 };
+const view = {
+  track: { start: { xyz: [0.6, 0.27, 0.02], yaw: 0, gap: 0 },
+           keyframes: [{ xyz: [0.6, 0.19, 0.02], yaw: 0, carrying: null, gap: 0, changes: false, t: 1, t_done: 1.3,
+                         moves: [move] }], duration: 1.3 },
+  believed: [{ name: "green cube", xyz: [0.6, 0.21, 0.02], yaw: 0 }],
+  true_start: [{ name: "green_cube", xyz: [0.603, 0.206, 0.02], yaw: 0 }],
+  true_match: { green_cube: "green cube" },
+  marks: [{ ok: true, holds: null }],
+};
+const c = P.carriers(view);
+const at = (t) => [P.posesAt(view.track, view.believed, t, c.believed, c.believedMoves)["green cube"].xyz[1],
+                   P.posesAt(view.track, view.true_start, t, c.truth, c.trueMoves)["green_cube"].xyz[1]];
+console.log(JSON.stringify([at(0), at(0.5), at(1.3)]));
+"""
+
+
+def test_the_belief_follows_the_moves_and_the_truth_stays():
+    import json
+    out = subprocess.run(["node", "-e", NODE_MOVES, str(WEB / "plan3d.js")], check=True, capture_output=True,
+                         text=True).stdout
+    (b0, t0), (b1, t1), (b2, t2) = json.loads(out)
+    assert b0 == pytest.approx(0.21) and b1 == pytest.approx(0.185) and b2 == pytest.approx(0.16)
+    assert t0 == t1 == t2 == pytest.approx(0.206)  # "Real start" never shows a prediction
+
+
+def test_a_moves_keyframe_has_its_own_marker_and_text():
+    js = _web("plan3d.js")
+    assert "MOVE_COLOR" in _body(js, "    addPath(view) {", "\n    }\n")
+    app = _web("app.js")
+    assert "moves" in _body(app, "function showPlayerTime")
+    body = _body(app, "function planCheckEntry")
+    assert 'field("moves"' in body and "movesText" in body
+    assert "planCheckEntry(ev.scores || {}, ev.keyframes || [])" in app
