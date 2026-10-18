@@ -141,3 +141,10 @@ def test_replan_text_after_a_cancelled_execution():
 def test_replan_text_after_an_error_has_no_check_line():
     text = build_plan_text("s", "t", OBS, None, (), feedback(status="error", stopped=None, stopped_action=None))
     assert "automatic check" not in text and "All actions ran." not in text
+
+
+def test_replan_text_after_a_stop_before_the_first_action():
+    text = build_plan_text("s", "t", OBS, None, (),
+                           feedback(status="cancelled", stopped=None, stopped_action=None, ran=0, total=10))
+    assert "The person stopped the execution before the first action of 10." in text
+    assert "after action 0" not in text

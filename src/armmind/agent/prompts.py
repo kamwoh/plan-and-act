@@ -257,7 +257,8 @@ def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
         lines.append(f"The automatic check says the task is {'solved' if f.success else 'not solved'}."
                      if f.check else "There is no automatic check for this task.")
     if f.status == "cancelled":
-        lines.append(f"The person stopped the execution after action {f.ran} of {f.total}.")
+        lines.append(f"The person stopped the execution after action {f.ran} of {f.total}." if f.ran
+                     else f"The person stopped the execution before the first action of {f.total}.")
     elif f.status == "error":
         lines.append("The execution failed with an error in the simulation.")
     elif f.stopped:

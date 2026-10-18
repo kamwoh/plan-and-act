@@ -327,7 +327,6 @@ class Runner:
 
         async def loop() -> None:
             feedback, rounds_run, success, reason, folder = None, 0, False, "", log.dir
-            self.auto = True
             try:
                 while True:
                     rounds_run += 1
@@ -382,6 +381,7 @@ class Runner:
                     end_log.close()
                     self.auto = False
 
+        self.auto = True  # before the launch, so /api/state never shows the loop as running without auto
         self._launch(log, stopper, loop())
 
     def _emitter(self, log: RunLog) -> Callable[[str, dict], None]:

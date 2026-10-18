@@ -176,3 +176,14 @@ def test_the_demo_loop_fails_round_1_and_solves_round_2(tmp_path):
     assert [e["status"] for e in ends] == ["failed", "success"]
     assert loop_end(rounds)["success"] is True and loop_end(rounds)["rounds_run"] == 2
     assert [(s["run"], s["outcome"]) for s in saved] == [(rounds[1][0]["run_id"], "failed")]
+
+
+def test_state_shows_auto_at_once(tmp_path):
+    OUTCOMES[:] = ["hang"]
+    with loop_client(tmp_path, FakeBackend([good_plan()])) as c:
+        c.post("/api/plan", json={"instruction": PICK, "auto": True, "rounds": 1})
+        state = c.get("/api/state").json()
+        assert state["running"] is True and state["auto"] is True
+        c.post("/api/stop")
+        wait_idle(c)
+        assert c.get("/api/state").json()["auto"] is False
