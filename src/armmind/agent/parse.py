@@ -4,7 +4,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, replace
 
-from armmind.plan.formats import Entity, Keyframe, norm_name
+from armmind.plan.formats import Entity, Keyframe, Move, norm_name
+from armmind.plan.track import wrap_deg
 from armmind.types import Action
 
 MAX_WAIT_S = 3.0
@@ -99,6 +100,7 @@ def parse_reply(obj, max_actions: int = 8) -> Reply:
 MAX_OBJECTS, MAX_KEYFRAMES = 12, 40
 YAW_LIMIT = 90.0  # degrees, as move_to clamps it
 NAME_CHARS, NOTE_CHARS, SUMMARY_CHARS = 80, 200, 1000
+MAX_MOVES = 4  # moved objects in one keyframe
 
 
 @dataclass(frozen=True)
@@ -151,7 +153,35 @@ def _plan_object(i: int, o) -> Entity:
                   _vec(where, "xyz", _field(where, o, "xyz")), _yaw(where, o))
 
 
-def _plan_keyframe(i: int, k, warnings: list[str]) -> Keyframe:
+def _moves(where: str, k: dict, carrying: str | None, names: dict[str, str]) -> tuple[Move, ...]:
+    """The optional "moves" of a keyframe, with the believed object names. `names` maps norm_name to a name."""
+    if "moves" not in k:
+        return ()
+    raw = k["moves"]
+    if not isinstance(raw, list):
+        raise ReplyError(f"{where}: 'moves' must be a list")
+    if len(raw) > MAX_MOVES:
+        raise ReplyError(f"{where}: 'moves' has {len(raw)} items, at most {MAX_MOVES} are allowed")
+    out: list[Move] = []
+    for j, m in enumerate(raw):
+        at = f"{where}, move {j + 1}"
+        if not isinstance(m, dict) or set(m) != {"object", "xyz", "yaw"}:
+            raise ReplyError(f"{at}: each move must be {{\"object\": <name>, \"xyz\": [x, y, z], \"yaw\": <degrees>}}")
+        if not isinstance(m["object"], str):
+            raise ReplyError(f"{at}: 'object' must be a string")
+        key = norm_name(m["object"])
+        if key not in names:
+            raise ReplyError(f"{at}: {m['object']!r} is not one of the 'objects'")
+        if carrying is not None and key == norm_name(carrying):
+            raise ReplyError(f"{at}: the keyframe holds {m['object']!r}. The held object follows the hand, "
+                             "so do not list it in 'moves'")
+        if any(norm_name(o.name) == key for o in out):
+            raise ReplyError(f"{at}: {m['object']!r} is in 'moves' twice")
+        out.append(Move(names[key], _vec(at, "xyz", m["xyz"]), wrap_deg(_yaw(at, m))))
+    return tuple(out)
+
+
+def _plan_keyframe(i: int, k, warnings: list[str], names: dict[str, str]) -> Keyframe:
     where = f"keyframe {i + 1}"
     if not isinstance(k, dict):
         raise ReplyError(f"{where} is not an object")
@@ -165,7 +195,8 @@ def _plan_keyframe(i: int, k, warnings: list[str]) -> Keyframe:
         raise ReplyError(f"{where}: 'gripper' must be \"open\" or \"closed\"")
     holding = _text(where, k, "holding")
     carrying = None if holding.lower() in ("", "nothing") else holding[:NAME_CHARS]
-    return Keyframe(xyz, yaw, state, carrying, _text(where, k, "note")[:NOTE_CHARS])
+    return Keyframe(xyz, yaw, state, carrying, _text(where, k, "note")[:NOTE_CHARS],
+                    _moves(where, k, carrying, names))
 
 
 def parse_plan(obj) -> PlanReply:
@@ -195,5 +226,6 @@ def parse_plan(obj) -> PlanReply:
                              "Give each object its own name")
         seen[key] = e.name
     return PlanReply(entities,
-                     tuple(_plan_keyframe(i, k, warnings) for i, k in enumerate(keyframes)),
+                     tuple(_plan_keyframe(i, k, warnings, {norm_name(e.name): e.name for e in entities})
+                           for i, k in enumerate(keyframes)),
                      summary.strip()[:SUMMARY_CHARS], tuple(warnings))

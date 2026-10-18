@@ -58,7 +58,7 @@ async def test_plan_events_and_message(tmp_path):
         assert secret not in msg.text  # never the true state
     assert plan_ev["summary"] == "Go above the cube." and plan_ev["warnings"] == ["keyframe 1: yaw clamped to 90"]
     assert plan_ev["keyframes"][0] == {"xyz": [0.5, -0.1, 0.15], "yaw": 90.0, "state": "open", "carrying": None,
-                                       "note": "up"}
+                                       "note": "up", "moves": []}
     assert plan_ev["objects"][0]["name"] == "red_cube"
     assert plan_ev["scores"]["marks"] == [{"ok": True, "checks": {}}]
     assert plan_ev["view"] == {"believed": ["red_cube"], "marks": [{"ok": True, "checks": {}}]}

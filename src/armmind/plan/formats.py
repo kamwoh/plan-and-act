@@ -27,6 +27,21 @@ class Entity:
 
 
 @dataclass(frozen=True)
+class Move:
+    """A predicted pose of an entity at the end of a keyframe, for example after a push."""
+    name: str
+    xyz: Vec3
+    yaw: float = 0.0  # degrees
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "xyz": list(self.xyz), "yaw": self.yaw}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> Move:
+        return cls(str(d["name"]), tuple(float(v) for v in d["xyz"]), float(d.get("yaw", 0.0)))
+
+
+@dataclass(frozen=True)
 class Keyframe:
     """A pose of the agent. The agent goes there in a straight line, then changes to `state`."""
     xyz: Vec3
@@ -34,15 +49,16 @@ class Keyframe:
     state: str  # here "open" or "closed"
     carrying: str | None  # an entity name, or None
     note: str = ""
+    moves: tuple[Move, ...] = ()  # entities that the keyframe moves without carrying them
 
     def to_dict(self) -> dict:
         return {"xyz": list(self.xyz), "yaw": self.yaw, "state": self.state, "carrying": self.carrying,
-                "note": self.note}
+                "note": self.note, "moves": [m.to_dict() for m in self.moves]}
 
     @classmethod
     def from_dict(cls, d: dict) -> Keyframe:
         return cls(tuple(float(v) for v in d["xyz"]), float(d["yaw"]), str(d["state"]), d.get("carrying"),
-                   str(d.get("note", "")))
+                   str(d.get("note", "")), tuple(Move.from_dict(m) for m in d.get("moves") or []))
 
 
 def entity_from_dict(d: dict) -> Entity:

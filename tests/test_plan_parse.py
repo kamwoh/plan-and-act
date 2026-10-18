@@ -3,7 +3,7 @@ import pytest
 
 from armmind.agent.parse import ReplyError, parse_plan
 from armmind.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM, SYSTEM
-from armmind.plan.formats import Entity, Keyframe
+from armmind.plan.formats import Entity, Keyframe, Move
 
 
 def obj(**kw):
@@ -126,3 +126,68 @@ def test_duplicate_object_names_raise(names):
 def test_plan_system_has_no_step_message():
     assert "step message" not in PLAN_SYSTEM
     assert "the step message lists them with their sizes" in SYSTEM
+
+
+# ---- v1.11: the predicted "moves" of a keyframe ----
+def two_objects():
+    return [obj(), obj(name="blue cube", xyz=[0.55, 0.1, 0.02])]
+
+
+def mv(**kw):
+    return {"object": "Blue_Cube", "xyz": [0.55, 0.15, 0.02], "yaw": 0, **kw}
+
+
+def test_a_good_move_maps_to_the_believed_name():
+    p = parse_plan(plan(objects=two_objects(), keyframes=[kf(moves=[mv(yaw=10)]), kf()]))
+    assert p.keyframes[0].moves == (Move("blue cube", (0.55, 0.15, 0.02), 10.0),)
+    assert p.keyframes[1].moves == ()
+    assert p.keyframes[0].to_dict()["moves"] == [{"name": "blue cube", "xyz": [0.55, 0.15, 0.02], "yaw": 10.0}]
+    assert Keyframe.from_dict(p.keyframes[0].to_dict()) == p.keyframes[0]
+
+
+@pytest.mark.parametrize("yaw, want", [(190, -170.0), (-180, 180.0), (540, 180.0), (-200, 160.0), (45, 45.0)])
+def test_the_move_yaw_wraps_to_plus_minus_180(yaw, want):
+    p = parse_plan(plan(objects=two_objects(), keyframes=[kf(moves=[mv(yaw=yaw)])]))
+    assert p.keyframes[0].moves[0].yaw == pytest.approx(want)
+
+
+@pytest.mark.parametrize("moves, word", [
+    ([mv(object="green cube")], "not one of the 'objects'"),
+    ([mv(), mv(object="blue cube")], "twice"),
+    ([mv()] * 5, "at most 4"),
+    ("x", "must be a list"),
+    (["x"], "each move must be"),
+    ([{"object": "blue cube", "xyz": [0.5, 0.1, 0.02]}], "each move must be"),
+    ([mv(extra=1)], "each move must be"),
+    ([mv(object=3)], "'object' must be a string"),
+    ([mv(xyz=[0.5, 0.1])], "xyz"),
+    ([mv(xyz=[0.5, "a", 0.1])], "xyz"),
+    ([mv(yaw="0")], "yaw"),
+    ([mv(yaw=True)], "yaw"),
+])
+def test_bad_moves_raise(moves, word):
+    with pytest.raises(ReplyError, match=word):
+        parse_plan(plan(objects=two_objects(), keyframes=[kf(moves=moves)]))
+
+
+def test_a_move_of_the_held_object_raises():
+    held = kf(gripper="closed", holding="blue cube", moves=[mv()])
+    with pytest.raises(ReplyError, match="holds"):
+        parse_plan(plan(objects=two_objects(), keyframes=[held]))
+    other = kf(gripper="closed", holding="red cube", moves=[mv()])
+    assert parse_plan(plan(objects=two_objects(), keyframes=[other])).keyframes[0].moves[0].name == "blue cube"
+
+
+def test_the_schema_has_optional_strict_moves():
+    k = PLAN_REPLY_SCHEMA["properties"]["keyframes"]["items"]
+    m = k["properties"]["moves"]
+    assert "moves" not in k["required"] and m["maxItems"] == 4
+    assert m["items"]["additionalProperties"] is False and set(m["items"]["required"]) == {"object", "xyz", "yaw"}
+
+
+def test_system_is_unchanged_and_plan_system_tells_about_moves():
+    import hashlib
+    assert hashlib.sha256(SYSTEM.encode()).hexdigest() == \
+        "9dfe9f6753b2b90d980e24c17d1d5f13f595fbcfb7787926f2b0b329c5739792"
+    assert '"moves"' in PLAN_SYSTEM and "pushes, slides or knocks" in PLAN_SYSTEM
+    assert "end of the keyframe" in PLAN_SYSTEM and "\"moves\"" not in SYSTEM

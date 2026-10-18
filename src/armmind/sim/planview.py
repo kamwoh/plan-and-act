@@ -1,6 +1,8 @@
 """The plan view of the MuJoCo arm environment: cameras, fixtures, the agent shape and the timed track."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from armmind.plan.formats import Entity, Keyframe, build_track, match_entities, norm_name
@@ -95,12 +97,14 @@ def agent() -> dict:
 
 def timed_keyframes(belief, keyframes) -> list[Keyframe]:
     """The keyframes as the arm runs them: each target is moved into the workspace, and the carried name
-    becomes the believed entity's name (None when no believed entity has it)."""
-    out = []
+    becomes the believed entity's name (None when no believed entity has it). A move keeps only a believed
+    entity, under its own name."""
+    out, believed = [], list(belief)
     for k in keyframes:
-        held = resolve(k.carrying, list(belief))
+        held = resolve(k.carrying, believed)
+        moves = tuple(replace(m, name=e.name) for m in k.moves if (e := resolve(m.name, believed)) is not None)
         out.append(Keyframe(tuple(round(float(v), 6) for v in clamp_target(k.xyz)), k.yaw, k.state,
-                            held.name if held else None, k.note))
+                            held.name if held else None, k.note, moves))
     return out
 
 

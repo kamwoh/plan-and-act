@@ -80,6 +80,9 @@ The arm moves in a straight line from one keyframe to the next. Then it opens or
 if "gripper" changes. The gripper is open at the start, at x 0.30, y 0.00, z 0.40, yaw 0. \
 "holding" names the object that the gripper holds after the keyframe, or "nothing". \
 Give each keyframe a short "note", for example "above the red cube". \
+Add "moves" to a keyframe when the hand pushes, slides or knocks an object without holding it, \
+and for any other object that you expect to move. Each item is {{"object": <name>, "xyz": [x, y, z], \
+"yaw": <degrees>}}: the pose of the object at the end of the keyframe. Do not list the held object. \
 Write a "summary" of the plan in 1 or 2 sentences.
 The code scores your belief against the true scene and checks each keyframe. It can then run \
 the keyframes once in the physics, with no more images."""
@@ -152,6 +155,9 @@ PLAN_REPLY_SCHEMA = {
                     "gripper": {"enum": ["open", "closed"]},
                     "holding": {"type": "string"},
                     "note": {"type": "string"},
+                    "moves": {"type": "array", "maxItems": 4, "items": {
+                        "type": "object", "additionalProperties": False, "required": ["object", "xyz", "yaw"],
+                        "properties": {"object": {"type": "string"}, "xyz": _VEC3, "yaw": {"type": "number"}}}},
                 },
             },
         },
