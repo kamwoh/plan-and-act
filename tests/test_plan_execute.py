@@ -91,12 +91,12 @@ def test_execute_logs_into_the_plan_folder(tmp_path):
     assert env.executed[0].yaw == 90.0  # the saved, clamped keyframes
     assert any(m["type"] == "frame" for m in msgs)
     kinds = [e["kind"] for e in events(tmp_path)]
-    assert kinds[-3:] == ["exec_start", "step", "exec_end"]
-    step, end = events(tmp_path)[-2], events(tmp_path)[-1]
+    assert kinds[-4:] == ["exec_start", "step", "exec_end", "verdict"]  # the verdict call ends a manual Execute
+    step, end = events(tmp_path)[-3], events(tmp_path)[-2]
     assert step["results"] == ["move_to(...): reached"] and step["actions"] == ["move_to(0.500, -0.100, 0.150)"]
     assert end["status"] == "success" and end["success"] is True and end["stopped"] is None
     assert summary["exec_status"] == "success" and summary["status"] == "planned"
-    assert [e["kind"] for e in replay][-3:] == ["exec_start", "step", "exec_end"]
+    assert [e["kind"] for e in replay][-4:] == ["exec_start", "step", "exec_end", "verdict"]
 
 
 def test_execute_is_409_while_running_and_needs_same_origin(tmp_path):
@@ -165,7 +165,7 @@ def test_a_real_execution_streams_frames_and_logs_the_check(tmp_path):
         wait_idle(c, timeout=60)
     assert frames > 10 and kinds[0] == "exec_start" and kinds[-2:] == ["step", "exec_end"]
     actions = [e for e in events(tmp_path) if e["kind"] == "action"]
-    start, step, end = [e for e in events(tmp_path) if e["kind"] != "action"][-3:]
+    start, step, end = [e for e in events(tmp_path) if e["kind"] not in ("action", "verdict")][-3:]
     assert [(a["step"], a["index"], a["of"]) for a in actions] == [(2, i, 10) for i in range(len(actions))]
     assert kinds[1:-2] == ["action"] * len(actions) and 1 <= len(actions) <= 10  # a stop leaves out the rest
     assert start["check"] == "pick" and start["keyframes"] == 7 and start["step"] == 2
@@ -211,7 +211,7 @@ def test_execute_after_a_scene_change_uses_the_plan_scene(tmp_path):
         wait_idle(c)
     env = ENVS[-1]
     assert (env.scene_name, env.seed, env.check_name) == ("tray", 4, "red_in_tray")
-    assert events(tmp_path)[-3]["scene"] == "tray"
+    assert next(e for e in events(tmp_path) if e["kind"] == "exec_start")["scene"] == "tray"
 
 
 # ---- v1.11: a scripted push and its prediction score ----

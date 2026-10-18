@@ -52,8 +52,8 @@ def summarize(name: str, events: Iterator[dict]) -> dict:
             s["mode"] = "plan" if ev.get("mode") == "plan" else "run"
             s["round"] = ev.get("round") if isinstance(ev.get("round"), int) else 1
             s["parent"] = ev.get("parent") if isinstance(ev.get("parent"), str) else None
-        elif kind in STEP_KINDS:
-            s["steps"] += 1
+        elif kind in (*STEP_KINDS, "verdict"):
+            s["steps"] += kind != "verdict"  # a verdict call costs, but it is not a step
             u = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
             s["cost_usd"] += _num(u.get("cost_usd", ev.get("cost_usd")))  # old runs have no usage
             s["in_tokens"] += sum(_num(u.get(k)) for k in ("in", "cache_write", "cache_read"))

@@ -109,3 +109,8 @@ class ScriptEnv(FakeEnv):
         o = {"status": "reached", "gripper_width": 0.08, "contacts": (), "held_before": (), "held_after": (),
              **(self.outcomes.pop(0) if self.outcomes else {})}
         return ActionResult(action, o.pop("status"), (0.3, 0.0, 0.4), o.pop("gripper_width"), **o)
+
+
+def judged(done=False, reason="The images show the task is not complete."):
+    """A reply to the verdict call after an execution."""
+    return [Final("", {"done": done, "reason": reason}), Usage("fake", 0.1)]

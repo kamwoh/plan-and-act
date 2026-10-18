@@ -75,8 +75,9 @@ def test_the_loop_stops_at_success(tmp_path):
         kinds = [e["kind"] for e in r]
         assert kinds[:5] == ["run_start", "observation", "ask", "plan", "run_end"]
         assert "exec_start" in kinds and "exec_end" in kinds
-    assert loop_end(rounds) | {"t": 0} == {"t": 0, "kind": "loop_end", "rounds_run": 2, "rounds_max": 3,
-                                          "success": True, "reason": "the auto-check passed"}
+    end = loop_end(rounds)
+    assert {k: end[k] for k in ("rounds_run", "rounds_max", "success", "reason", "judge")} == {
+        "rounds_run": 2, "rounds_max": 3, "success": True, "reason": "the auto-check passed", "judge": "check"}
 
 
 def test_the_loop_stops_after_the_rounds(tmp_path):
@@ -95,12 +96,12 @@ def test_the_loop_stops_on_a_bad_reply(tmp_path):
     assert end["rounds_run"] == 2 and end["success"] is False and "bad_reply" in end["reason"]
 
 
-def test_the_loop_ends_after_round_1_without_an_auto_check(tmp_path):
-    _, rounds = run_loop(tmp_path, FakeBackend([good_plan(), good_plan()]), ["done"], instruction="Wave at me.")
-    assert len(rounds) == 1
+def test_without_an_auto_check_the_loop_goes_on_to_the_next_round(tmp_path):
+    _, rounds = run_loop(tmp_path, FakeBackend([good_plan(), good_plan()]), ["done", "done"], instruction="Wave at me.",
+                         rounds=2)
+    assert len(rounds) == 2  # v1.12 ended after round 1. Now Claude's done verdict ends the loop
     end = loop_end(rounds)
-    assert end["rounds_run"] == 1 and end["success"] is False and "no automatic check" in end["reason"]
-    assert "exec_end" in [e["kind"] for e in rounds[0]]
+    assert end["rounds_run"] == 2 and end["success"] is False and end["judge"] == "claude"
 
 
 def test_stop_ends_the_loop(tmp_path):
@@ -219,3 +220,7 @@ def test_the_demo_loop_continues_from_where_round_1_left_the_cube(tmp_path):
     assert len(plan["keyframes"]) == 1 and all(m["ok"] for m in plan["scores"]["marks"])
     end = loop_end(rounds)
     assert end["success"] is True and end["rounds_run"] == 2
+    # Round 1: the re-plan says not done, and the check agrees. Round 2: the verdict call says done, as the check.
+    assert [(v["claude"], v["check"]) for v in end["verdicts"]] == [(False, False), (True, True)]
+    assert (end["agree"], end["compared"]) == (2, 2)
+    assert next(e for e in rounds[1] if e["kind"] == "verdict")["done"] is True

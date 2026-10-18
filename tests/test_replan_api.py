@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from armmind.llm.fake import FakeBackend
 from armmind.server.app import create_app
-from tests.fakes import HangingBackend
+from tests.fakes import HangingBackend, judged
 from tests.test_agent_plan import PLAN, good_plan
 from tests.test_plan_api import ENVS, PICK, ApiPlanEnv, client
 from tests.test_server import make_env, wait_idle
@@ -58,15 +58,15 @@ def planned_and_executed(c):
 def test_execute_saves_the_end_images(tmp_path):
     with client(tmp_path, FakeBackend([good_plan()])) as c:
         run_id = planned_and_executed(c)
-        end = run_events(tmp_path, run_id)[-1]
-        assert end["kind"] == "exec_end" and end["step"] == 2
+        end = [e for e in run_events(tmp_path, run_id) if e["kind"] == "exec_end"][-1]
+        assert end["step"] == 2
         assert (end["front_png"], end["top_png"]) == ("step002_front.png", "step002_top.png")
         assert (tmp_path / "runs" / run_id / "step002_front.png").read_bytes() == b"front"
         assert c.get(f"/api/runs/{run_id}/images/step002_top.png").status_code == 200
 
 
 def test_replan_makes_a_new_round_with_the_feedback(tmp_path):
-    backend = FakeBackend([good_plan(), good_plan()])
+    backend = FakeBackend([good_plan(), judged(), good_plan()])
     with TestClient(create_app(backend, true_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
         first = planned_and_executed(c)
         r = c.post(f"/api/plan/{first}/replan", json={"mode": "start"})
@@ -115,7 +115,7 @@ def test_replan_during_a_run_is_409_and_needs_same_origin(tmp_path):
 
 
 def test_replan_of_round_5_is_409(tmp_path):
-    backend = FakeBackend([good_plan() for _ in range(5)])
+    backend = FakeBackend([r for _ in range(5) for r in (good_plan(), judged())])
     with client(tmp_path, backend) as c:
         run_id = planned_and_executed(c)
         for n in range(2, 6):
@@ -135,7 +135,7 @@ def test_replan_of_round_5_is_409(tmp_path):
 
 def test_replan_lessons_reach_the_store(tmp_path):
     body = {**PLAN, "lessons": ["Closing on the near edge slipped."]}
-    with client(tmp_path, FakeBackend([good_plan(), good_plan(body)])) as c:
+    with client(tmp_path, FakeBackend([good_plan(), judged(), good_plan(body)])) as c:
         first = planned_and_executed(c)
         second = c.post(f"/api/plan/{first}/replan", json={"mode": "start"}).json()["run_id"]
         wait_idle(c)

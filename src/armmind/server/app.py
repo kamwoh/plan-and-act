@@ -21,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from armmind.agent.loop import Agent, AgentConfig
+from armmind.agent.parse import Verdict
 from armmind.agent.prompts import SYSTEM, Feedback, example_step_text
 from armmind.env import Env, SimThread, keyframe_actions
 from armmind.llm.protocol import LLMBackend
@@ -294,7 +295,7 @@ class Runner:
         return log.dir
 
     def _execute_part(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
-                      keyframes: tuple[Keyframe, ...], step: int, view: dict | None, round_no: int = 1):
+                      keyframes: tuple[Keyframe, ...], step: int, view: dict | None, round_no: int = 1, verdict_next: bool = False):
         """The stopper, the before hook and the session body of one execution of a saved plan. The body saves
         the end state in END_STATE of the folder, also after a stop."""
         cancel = threading.Event()
@@ -332,8 +333,9 @@ class Runner:
                 images = {"front_png": obs.front_png, "top_png": obs.top_png}
             except Exception as e:  # noqa: BLE001  the result stays, a re-plan then has no end images
                 logging.getLogger(__name__).warning("no end images of the execution: %s: %s", type(e).__name__, e)
+            judged = verdict_next and bool(images) and out["status"] not in ("cancelled", "error")
             emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"],
-                              "prediction": _prediction(view, out), "step": step, **images})
+                              "prediction": _prediction(view, out), "step": step, "verdict_next": judged, **images})
 
         return stopper, before, body
 
@@ -341,18 +343,68 @@ class Runner:
                             keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None,
                             round_no: int = 1, start: Path | None = None) -> None:
         """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed, or from the state
-        file `start`. No model is called. The events go to the end of the plan's own log. With the plan view,
-        exec_end has the prediction score."""
+        file `start`. The events go to the end of the plan's own log. With the plan view, exec_end has the
+        prediction score. Then one short verdict call asks Claude if the end images show the task complete."""
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog.append_to(folder)
-        stopper, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view,
-                                                   round_no)
-        self._launch(log, stopper, self._session(log, scene, task, instruction, seed, False, body,
-                                                 end_kind="exec_end", before=before, start=start))
+        exec_stop, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view,
+                                                     round_no, verdict_next=True)
+        part: list[Callable[[], Awaitable[None]]] = [exec_stop]
+
+        async def stopper() -> None:
+            await part[0]()
+
+        async def job() -> None:
+            await self._session(log, scene, task, instruction, seed, False, body, end_kind="exec_end",
+                                before=before, start=start)
+            found = self.history.plan(folder.name)
+            end = found["execution"]["end"] if found and found["execution"] else None
+            if end and end.get("verdict_next"):
+                await self._judge(folder, scene, instruction, part)
+
+        self._launch(log, stopper, job())
+
+    async def _judge(self, folder: Path, scene: Scene, instruction: str,
+                     part: list[Callable[[], Awaitable[None]]]) -> Verdict | None:
+        """The verdict call after the last execution of a plan, when it ran to its end and has end images.
+        It sends the end images, the task and the plan: no true values. It writes a verdict event to the run
+        log. Gives the verdict, or None when no call ran or the call failed. part[0] becomes its stopper."""
+        found = self.history.plan(folder.name)
+        ex = found["execution"] if found else None
+        end = ex["end"] if ex else None
+        if not end or end.get("status") in ("cancelled", "error"):
+            return None
+        paths = [self.history.image(folder.name, end.get(k) if isinstance(end.get(k), str) else "")
+                 for k in ("front_png", "top_png")]
+        if not all(paths):
+            return None
+        log = RunLog.append_to(folder)
+        emit = self._emitter(log)
+        try:
+            images = tuple(p.read_bytes() for p in paths)
+            agent = Agent(self.backend, run_id=folder.name)
+            part[:] = [agent.stop]
+            objects, keyframes = _reply_format(found["plan"])
+            verdict, detail = await agent.verdict(scene.describe(), instruction, objects, keyframes, images,
+                                                  scene.image_text)
+        except Exception as e:  # noqa: BLE001  the execution result stays, the verdict says why it is missing
+            verdict, detail = None, {"error": f"{type(e).__name__}: {e}"}
+        try:
+            check = bool(end.get("success")) if ex["start"].get("check") else None
+            emit("verdict", {"done": verdict.done if verdict else None, "reason": verdict.reason if verdict else "",
+                             "check": check, "round": plan_round(found["start"]), "step": end.get("step"),
+                             **detail})
+        finally:
+            log.close()
+        return verdict
 
     def _start_loop(self, log: RunLog, req: PlanRequest, scene: Scene, task: Task | None) -> None:
-        """The Auto loop as one job: plan, execute, then re-plan, until the auto-check passes or the rounds end.
+        """The Auto loop as one job: plan, execute, then re-plan, until the task is solved or the rounds end.
+        With an auto-check, the check is the judge. Without one, Claude is. Claude judges each execution: the
+        "done" of the next re-plan, or a verdict call after the last execution. A done re-plan also ends a loop
+        with an auto-check, because Claude has no more to try. loop_end has Claude's verdict and the check of
+        each execution, and the count of agreements.
         Each round has its own run folder. The last round gets a loop_end event. Stop ends the loop."""
         stop = asyncio.Event()
         part: list[Callable[[], Awaitable[None]]] = []  # the stopper of the active plan or execution
@@ -365,6 +417,8 @@ class Runner:
         async def loop() -> None:
             feedback, rounds_run, success, reason, folder = None, 0, False, "", log.dir
             start = None  # the state file of a round that continues
+            verdicts: list[dict] = []  # for each judged execution: {"round", "claude", "reason", "check"}
+            pending: dict | None = None  # the last execution, until the next re-plan judges it
             try:
                 while True:
                     rounds_run += 1
@@ -380,6 +434,15 @@ class Runner:
                         reason = "stopped"
                         break
                     found = self.history.plan(folder.name)
+                    if pending is not None and status == "planned" and found:
+                        verdicts.append({**pending, "claude": bool(found["plan"].get("done")),
+                                         "reason": found["plan"].get("summary") or ""})
+                    pending = None
+                    if status == "planned" and found and found["plan"].get("done"):
+                        success = task is None  # with a check, the last execution was not solved
+                        reason = ("Claude says the task is done" if success
+                                  else "Claude says done, the auto-check says not solved")
+                        break
                     saved = saved_plan(found) if found else None
                     if status != "planned" or saved is None:
                         reason = f"the plan ended with {status or 'error'}"
@@ -399,27 +462,42 @@ class Runner:
                     result = _feedback(found, self.history, req.mode) if found else None
                     if stop.is_set():
                         reason = "stopped"
-                    elif result is None or result.status == "error":
+                        break
+                    if result is None or result.status == "error":
                         reason = "the execution failed"
-                    elif result.success:
+                        break
+                    check = result.success if task else None
+                    if result.success:
                         success, reason = True, "the auto-check passed"
-                    elif task is None:
-                        reason = "no automatic check: nothing can tell success, so the loop ends after round 1"
                     elif rounds_run >= req.rounds:
-                        reason = f"the {req.rounds} rounds ended without success"
+                        reason = f"the {req.rounds} rounds ended" + (" without success" if task else "")
                     elif req.mode == "continue" and (problem := state_problem(folder / END_STATE, scene, req.seed)):
                         reason = f"cannot continue: {problem}"
-                    else:
-                        feedback = result
+                    else:  # the next re-plan judges this execution
+                        feedback, pending = result, {"round": rounds_run, "check": check}
                         continue
+                    verdict = await self._judge(folder, scene, req.instruction, part)  # the last execution
+                    if stop.is_set():
+                        reason = "stopped"
+                    elif verdict is not None:
+                        verdicts.append({"round": rounds_run, "claude": verdict.done, "reason": verdict.reason,
+                                         "check": check})
+                    if task is None and not stop.is_set():
+                        success = bool(verdict and verdict.done)
+                        reason = ("Claude says the task is done" if success else
+                                  f"{reason}, and {'Claude says not done' if verdict else 'the verdict call failed'}")
                     break
             except Exception as e:  # noqa: BLE001  end the loop with a reason, never kill the server
                 reason = f"error: {type(e).__name__}: {e}"
             finally:
                 end_log = RunLog.append_to(folder)
                 try:
-                    self._emitter(end_log)("loop_end", {"rounds_run": rounds_run, "rounds_max": req.rounds,
-                                                        "success": success, "reason": reason})
+                    compared = [v for v in verdicts if v["check"] is not None]
+                    self._emitter(end_log)("loop_end", {
+                        "rounds_run": rounds_run, "rounds_max": req.rounds, "success": success, "reason": reason,
+                        "judge": "check" if task else "claude", "verdicts": verdicts,
+                        "claude": verdicts[-1] if verdicts else None,
+                        "agree": sum(v["claude"] == v["check"] for v in compared), "compared": len(compared)})
                 finally:
                     end_log.close()
                     self.auto = False
@@ -544,6 +622,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         if found is None:
             raise HTTPException(404, "no such plan")
         saved = saved_plan(found)
+        if saved is None and found["plan"].get("done") and not found["plan"]["keyframes"]:
+            raise HTTPException(404, "Claude says the task is done: the plan has no keyframes to execute")
         if saved is None:
             raise HTTPException(404, "the plan cannot run")
         scene, task, instruction, seed, keyframes = saved

@@ -100,6 +100,26 @@ def _lessons(obj: dict) -> tuple[str, ...]:
     return tuple([t.strip()[:LESSON_CHARS] for t in lessons if t.strip()][:MAX_LESSONS])
 
 
+@dataclass(frozen=True)
+class Verdict:
+    done: bool
+    reason: str
+
+
+VERDICT_CHARS = 300
+
+
+def parse_verdict(obj) -> Verdict:
+    """Check the reply of a verdict call: {"done": bool, "reason": string}."""
+    if not isinstance(obj, dict):
+        raise ReplyError("the reply is not a JSON object")
+    if not isinstance(obj.get("done"), bool):
+        raise ReplyError("'done' must be true or false")
+    if not isinstance(obj.get("reason"), str):
+        raise ReplyError("'reason' must be a string")
+    return Verdict(obj["done"], obj["reason"].strip()[:VERDICT_CHARS])
+
+
 # ---- The plan reply ----
 MAX_OBJECTS, MAX_KEYFRAMES = 12, 40
 YAW_LIMIT = 90.0  # degrees, as move_to clamps it
@@ -114,6 +134,7 @@ class PlanReply:
     summary: str
     warnings: tuple[str, ...] = ()  # e.g. "keyframe 2: yaw clamped to 90"
     lessons: tuple[str, ...] = ()
+    done: bool = False  # a re-plan says that the task is complete
 
 
 def _vec(where: str, key: str, v, positive: bool = False) -> tuple[float, float, float]:
@@ -216,8 +237,10 @@ def _released_not_moved(keyframes: tuple[Keyframe, ...]) -> tuple[Keyframe, ...]
     return keyframes
 
 
-def parse_plan(obj) -> PlanReply:
-    """Check a plan reply and turn it into entities and keyframes. A bad value raises ReplyError."""
+def parse_plan(obj, replan: bool = False) -> PlanReply:
+    """Check a plan reply and turn it into entities and keyframes. A bad value raises ReplyError.
+    In a re-plan, "done" true says that the task is complete, and the keyframes can then be empty.
+    A round 1 plan saw no result, so its "done" is ignored."""
     if not isinstance(obj, dict):
         raise ReplyError("the reply is not a JSON object")
     objects = _field("the reply", obj, "objects")
@@ -228,8 +251,14 @@ def parse_plan(obj) -> PlanReply:
     keyframes = _field("the reply", obj, "keyframes")
     if not isinstance(keyframes, list):
         raise ReplyError("'keyframes' must be a list")
-    if not 1 <= len(keyframes) <= MAX_KEYFRAMES:
-        raise ReplyError(f"'keyframes' must have 1 to {MAX_KEYFRAMES} items, not {len(keyframes)}")
+    done = obj.get("done", False)
+    if not isinstance(done, bool):
+        raise ReplyError("'done' must be true or false")
+    done = done and replan
+    least = 0 if done else 1
+    if not least <= len(keyframes) <= MAX_KEYFRAMES:
+        raise ReplyError(f"'keyframes' must have {least} to {MAX_KEYFRAMES} items, not {len(keyframes)}"
+                         + ("" if done else ". Only a re-plan with \"done\" true can have no keyframes"))
     summary = _field("the reply", obj, "summary")
     if not isinstance(summary, str):
         raise ReplyError("'summary' must be a string")
@@ -245,4 +274,4 @@ def parse_plan(obj) -> PlanReply:
     names = {norm_name(e.name): e.name for e in entities}
     return PlanReply(entities,
                      _released_not_moved(tuple(_plan_keyframe(i, k, warnings, names) for i, k in enumerate(keyframes))),
-                     summary.strip()[:SUMMARY_CHARS], tuple(warnings), _lessons(obj))
+                     summary.strip()[:SUMMARY_CHARS], tuple(warnings), _lessons(obj), done)

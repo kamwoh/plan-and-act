@@ -97,7 +97,7 @@ def test_schema_is_strict_and_matches_the_limits():
     s = PLAN_REPLY_SCHEMA
     assert s["additionalProperties"] is False and set(s["required"]) == {"objects", "keyframes", "summary"}
     o, k = s["properties"]["objects"], s["properties"]["keyframes"]
-    assert o["maxItems"] == 12 and (k["minItems"], k["maxItems"]) == (1, 40)
+    assert o["maxItems"] == 12 and "minItems" not in k and k["maxItems"] == 40  # a done re-plan can have 0
     assert o["items"]["additionalProperties"] is False and k["items"]["additionalProperties"] is False
     assert set(o["items"]["required"]) == {"name", "shape", "size", "xyz", "yaw"}
     assert set(k["items"]["required"]) == {"xyz", "yaw", "gripper", "holding", "note"}

@@ -9,16 +9,19 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from armmind.agent.parse import PlanReply, Reply, ReplyError, parse_plan, parse_reply
+from armmind.agent.parse import PlanReply, Reply, ReplyError, Verdict, parse_plan, parse_reply, parse_verdict
 from armmind.agent.prompts import (
     PLAN_REPLY_SCHEMA,
     PLAN_SYSTEM,
     REPLY_SCHEMA,
     SYSTEM,
+    VERDICT_SCHEMA,
+    VERDICT_SYSTEM,
     Feedback,
     StepSummary,
     build_plan_text,
     build_user_text,
+    build_verdict_text,
 )
 from armmind.agent.rules import check_result
 from armmind.env import Env
@@ -215,7 +218,8 @@ class Agent:
         try:
             reply, error, _ = await self._ask(
                 Message("user", text, images), attempts,
-                lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), PLAN_REPLY_SCHEMA, parse_plan)
+                lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), PLAN_REPLY_SCHEMA,
+                lambda obj: parse_plan(obj, replan=feedback is not None))
         finally:
             conv, self._conv = self._conv, None
             await conv.close()
@@ -233,8 +237,25 @@ class Agent:
         view = await call(env.plan_view, reply.objects, reply.keyframes, scores["marks"])
         emit("plan", {"step": 1, "summary": reply.summary, "objects": [o.to_dict() for o in reply.objects],
                       "keyframes": [k.to_dict() for k in reply.keyframes], "warnings": list(reply.warnings),
-                      "lessons": list(reply.lessons), "scores": scores, "view": view, **detail})
+                      "lessons": list(reply.lessons), "scores": scores, "view": view, "done": reply.done, **detail})
         return "planned"
+
+    async def verdict(self, scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],
+                      images: tuple[bytes, ...], image_text: str | None = None) -> tuple[Verdict | None, dict]:
+        """One short call after an execution: is the task complete in the end images? Gives the verdict, or
+        None after an error, and the event fields: the prompt, the attempts, the usage and an error text."""
+        text = build_verdict_text(scene, instruction, objects, keyframes, image_text)
+        self._conv = await self.backend.open(VERDICT_SYSTEM)
+        attempts: list[dict] = []
+        try:
+            reply, error, _ = await self._ask(Message("user", text, images), attempts, lambda m, i: None,
+                                              VERDICT_SCHEMA, parse_verdict)
+        finally:
+            conv, self._conv = self._conv, None
+            await conv.close()
+        detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts),
+                  "error": error.message if reply is None and error else None}
+        return reply, detail
 
     def _save_plan_lessons(self, scene: str, lessons: tuple[str, ...], feedback: Feedback | None) -> None:
         """Save the lessons of a re-plan with the status of the execution that the feedback describes.

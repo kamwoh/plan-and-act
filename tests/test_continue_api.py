@@ -7,6 +7,7 @@ from armmind.llm.fake import FakeBackend
 from armmind.scenes import SCENES
 from armmind.server.app import create_app
 from armmind.sim.state import END_STATE, START_STATE, scene_version
+from tests.fakes import judged
 from tests.test_agent_plan import good_plan
 from tests.test_plan_api import PICK
 from tests.test_replan_api import TrueStateEnv, run_events
@@ -72,7 +73,7 @@ def test_execute_saves_the_end_state(tmp_path):
 
 
 def test_a_continue_replan_starts_from_the_end_state(tmp_path):
-    backend = FakeBackend([good_plan(), good_plan()])
+    backend = FakeBackend([good_plan(), judged(), good_plan()])
     with client(tmp_path, backend) as c:
         first = plan_and_execute(c)
         r = c.post(f"/api/plan/{first}/replan")  # continue is the default
@@ -94,7 +95,7 @@ def test_a_continue_replan_starts_from_the_end_state(tmp_path):
 
 
 def test_a_start_replan_is_as_in_v1_12(tmp_path):
-    backend = FakeBackend([good_plan(), good_plan()])
+    backend = FakeBackend([good_plan(), judged(), good_plan()])
     with client(tmp_path, backend) as c:
         first = plan_and_execute(c)
         r = c.post(f"/api/plan/{first}/replan", json={"mode": "start"})
@@ -110,7 +111,7 @@ def test_a_start_replan_is_as_in_v1_12(tmp_path):
 
 
 def test_execute_of_a_continue_plan_starts_from_the_same_state_each_time(tmp_path):
-    with client(tmp_path, FakeBackend([good_plan(), good_plan()])) as c:
+    with client(tmp_path, FakeBackend([good_plan(), judged(), good_plan(), *[judged()] * 4])) as c:
         first = plan_and_execute(c)
         second = c.post(f"/api/plan/{first}/replan").json()["run_id"]
         wait_idle(c)
@@ -148,7 +149,7 @@ def test_continue_from_a_state_of_another_scene_is_409(tmp_path):
 
 
 def test_execute_of_a_continue_plan_without_its_start_state_is_409(tmp_path):
-    with client(tmp_path, FakeBackend([good_plan(), good_plan()])) as c:
+    with client(tmp_path, FakeBackend([good_plan(), judged(), good_plan(), judged()])) as c:
         first = plan_and_execute(c)
         second = c.post(f"/api/plan/{first}/replan").json()["run_id"]
         wait_idle(c)
@@ -166,7 +167,7 @@ def test_a_new_execution_removes_the_old_end_state_first(tmp_path, monkeypatch):
         monkeypatch.setattr(StateEnv, "save_state", full)
         assert c.post(f"/api/plan/{first}/execute").status_code == 200
         wait_idle(c)
-        assert run_events(tmp_path, first)[-1]["kind"] == "exec_end"  # the execution result stays
+        assert [e["kind"] for e in run_events(tmp_path, first)][-2:] == ["exec_end", "verdict"]  # the result stays
         r = c.post(f"/api/plan/{first}/replan")
         assert r.status_code == 409 and "end state" in r.json()["detail"]
 

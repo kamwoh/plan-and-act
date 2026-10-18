@@ -91,6 +91,8 @@ A re-plan message also has your last plan, the result of its execution and two e
 Compare your last plan with the end images and find what went wrong. Then give a new plan for the whole task \
 from the start. The scene is back at its start.
 A re-plan that continues has no end images: the scene did not reset, so plan only what is left, from images 1 and 2 and the gripper now.
+In a re-plan, set "done" to true when the images show that the task is complete. Then "keyframes" can be empty. \
+In every other case, give at least 1 keyframe.
 Write a "lessons" item only in a re-plan, and only when the last plan had a result you did not expect. \
 Write it as cause and effect, for example "A grasp 2 cm above the cube centre slipped. 1 cm held.\""""
 
@@ -150,7 +152,6 @@ PLAN_REPLY_SCHEMA = {
         },
         "keyframes": {
             "type": "array",
-            "minItems": 1,
             "maxItems": 40,
             "items": {
                 "type": "object",
@@ -170,7 +171,22 @@ PLAN_REPLY_SCHEMA = {
         },
         "summary": {"type": "string"},
         "lessons": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
+        "done": {"type": "boolean"},
     },
+}
+
+
+VERDICT_SYSTEM = """\
+You judge if a robot arm finished a task in a physics simulation. You get the task, the plan that the arm \
+ran, and two camera images of the scene after the run. Judge only from the images: the plan says what was \
+meant to happen, not what happened.
+Set "done" to true only when the images show that the task is complete. Give the "reason" in 1 short sentence."""
+
+VERDICT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["done", "reason"],
+    "properties": {"done": {"type": "boolean"}, "reason": {"type": "string"}},
 }
 
 
@@ -304,3 +320,14 @@ def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: 
     if feedback is not None:
         lines += _feedback_lines(feedback, "side" if "side camera" in images else "front")
     return "\n".join(lines)
+
+
+def build_verdict_text(scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],
+                       image_text: str | None = None) -> str:
+    """The message of the verdict call after an execution: the task, the plan that ran and the end images.
+    It has only what the model wrote and the images: never the true poses, the scores or the auto-check."""
+    plan = json.dumps({"objects": list(objects), "keyframes": list(keyframes)}, separators=(",", ":"),
+                      ensure_ascii=False)
+    return "\n".join([f"Scene: {scene}", f"Task: {instruction}", f"The plan that ran: {plan}",
+                      "The images show the scene after the run. " + (image_text or IMAGE_TEXT),
+                      "Is the task complete?"])

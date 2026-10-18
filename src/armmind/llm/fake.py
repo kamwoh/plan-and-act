@@ -94,11 +94,32 @@ DEMO_CONTINUE = {
 }
 
 
+# A re-plan of a task without an auto-check: the images show that it is complete.
+DEMO_DONE = {"objects": DEMO_CONTINUE["objects"], "keyframes": [], "done": True,
+             "summary": "The images show that the task is complete."}
+
+
 def demo_plan(text: str) -> dict:
     """The demo reply to a plan message."""
     if "This is a re-plan" not in text:
         return DEMO_PLAN_LOW
+    if "There is no automatic check" in text:
+        return DEMO_DONE
     return DEMO_CONTINUE if "did not reset" in text else DEMO_REPLAN
+
+
+def demo_verdict(text: str) -> dict:
+    """The demo reply to a verdict call: not done when the last keyframe holds an object less than 10 cm up."""
+    import json
+    line = next((x for x in text.splitlines() if x.startswith("The plan that ran: ")), "")
+    try:
+        last = json.loads(line.removeprefix("The plan that ran: "))["keyframes"][-1]
+        low = last.get("holding", "nothing") != "nothing" and float(last["xyz"][2]) < 0.1
+    except (ValueError, KeyError, IndexError, TypeError):
+        low = False
+    if low:
+        return {"done": False, "reason": "The cube is in the gripper, but less than 10 cm above the table."}
+    return {"done": True, "reason": "The images show that the task is complete."}
 
 
 class DemoConversation:
@@ -107,6 +128,10 @@ class DemoConversation:
 
     async def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]:
         await asyncio.sleep(self.backend.delay_s)
+        if schema is not None and set(schema.get("required", [])) == {"done", "reason"}:
+            yield Final("", demo_verdict(msg.text))
+            yield Usage("demo", self.backend.delay_s, 1200, 40, 0.002, 0, 0)
+            return
         if schema is not None and "keyframes" in schema.get("properties", {}):
             yield Final("", demo_plan(msg.text))
             yield Usage("demo", self.backend.delay_s, 2400, 400, 0.006, 0, 0)
