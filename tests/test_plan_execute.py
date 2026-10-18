@@ -24,6 +24,8 @@ def test_keyframes_become_moves_and_gripper_changes():
         Action("close", expect="red cube"), Action("move_to", (0.5, 0.2, 0.15), yaw=0.0),
         Action("move_to", (0.5, 0.2, 0.06), yaw=0.0), Action("open", expect="nothing"),
         Action("move_to", (0.5, 0.2, 0.06), yaw=0.0), Action("close", expect="nothing")]
+    from armmind.env import keyframe_ends
+    assert keyframe_ends(kfs) == [0, 2, 3, 5, 7]  # the last action of each keyframe
 
 
 def _execute(scene, task, seed, kfs_from=None, stop=lambda: False):
@@ -171,6 +173,12 @@ def test_a_real_execution_streams_frames_and_logs_the_check(tmp_path):
                                                          "move_to", "open", "move_to", "close", "move_to"]
     assert step["step"] == 2 and len(step["actions"]) == 10
     assert end["status"] in ("success", "stopped", "failed") and isinstance(end["success"], bool)
+    pred = end["prediction"]  # kept in the run log
+    assert {r["true_name"] for r in pred["rows"]} == {"red_cube", "blue_cube", "green_cube"}
+    if pred["summary"]["ran"] >= 3:
+        line = pred["keyframes"][0]
+        assert (line["keyframe"], line["name"], line["true_name"]) == (3, "green cube", "green_cube")
+        assert line["disp_cm"] < 2.0
 
 
 def test_exec_start_comes_before_the_env_is_made(tmp_path):
@@ -204,3 +212,63 @@ def test_execute_after_a_scene_change_uses_the_plan_scene(tmp_path):
     env = ENVS[-1]
     assert (env.scene_name, env.seed, env.check_name) == ("tray", 4, "red_in_tray")
     assert events(tmp_path)[-3]["scene"] == "tray"
+
+
+# ---- v1.11: a scripted push and its prediction score ----
+PUSH_START_M = 0.06  # the closed fingers start 6 cm from the cube centre, on the far side of the push
+PUSH_TRAVEL_M = 0.12  # then they travel 12 cm along y, so the cube goes about 9 cm
+PUSH_Z = 0.02
+FINGER_HALF_M = 0.0105  # half the depth of the closed fingers along y
+
+
+def push_plan(world, name="red_cube"):
+    """Keyframes that push the cube along y toward the middle of the table, and the predicted end pose."""
+    from armmind.plan.formats import Move
+    x, y, z = (float(v) for v in world.object_pos(name))
+    sign = 1.0 if y < 0 else -1.0
+    y0 = y - sign * PUSH_START_M
+    y1 = y0 + sign * PUSH_TRAVEL_M
+    end = (x, y1 + sign * (FINGER_HALF_M + 0.02), z)  # the cube face rests on the finger face
+    believed = name.replace("_", " ")
+    return [Keyframe((x, y0, 0.15), 0.0, "closed", None, "above, fingers closed"),
+            Keyframe((x, y0, PUSH_Z), 0.0, "closed", None, "down beside the cube"),
+            Keyframe((x, y1, PUSH_Z), 0.0, "closed", None, "push", (Move(believed, end, 0.0),)),
+            Keyframe((x, y1, 0.15), 0.0, "closed", None, "up")]
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("seed", [0, 1, 2])
+def test_a_scripted_push_moves_the_cube_as_predicted(seed):
+    from armmind.env import MujocoEnv
+    from armmind.plan.formats import Entity
+    from armmind.plan.scores import prediction
+    from armmind.sim.planview import true_entities
+    sc = SCENES["cubes"]
+    env = MujocoEnv(sc, None, seed, "push the red cube")
+    try:
+        belief = tuple(Entity(e.name.replace("_", " "), e.shape, e.size, e.xyz, e.yaw) for e in true_entities(env.world))
+        kfs = tuple(push_plan(env.world))
+        checks = env.check_plan(belief, kfs)
+        view = env.plan_view(belief, kfs, checks["marks"])
+        out = env.execute_plan(kfs, lambda: False)
+    finally:
+        env.close()
+    assert all(m["ok"] for m in checks["marks"]), checks["marks"]
+    assert out["status"] == "done" and out["stopped"] is None and len(out["true_after"]) == 4
+    real = out["true_after"][-1]["red_cube"]["xyz"][1] - out["true_start"]["red_cube"]["xyz"][1]
+    assert abs(real) > 0.08  # the physics moved the cube
+    s = prediction(view["track"], view["believed"], out["true_start"], out["true_after"], view["true_match"])
+    rows = {r["true_name"]: r for r in s["rows"]}
+    assert rows["red_cube"]["disp_cm"] < 2.0 and rows["red_cube"]["final_xy_cm"] < 2.0, rows["red_cube"]
+    assert s["keyframes"][0]["keyframe"] == 3 and s["keyframes"][0]["disp_cm"] < 2.0
+    assert s["summary"]["agree"] == 3 and s["summary"]["partial"] is False  # the other cubes stay still
+
+
+@pytest.mark.assets
+def test_a_stopped_execution_has_the_poses_of_the_keyframes_that_ran():
+    def kfs(env):
+        return [Keyframe((0.35, 0.0, 0.15), 0.0, "open", None), Keyframe((0.35, 0.0, 0.02), 0.0, "closed", "red cube"),
+                Keyframe((0.35, 0.0, 0.2), 0.0, "closed", "red cube")]
+    out = _execute("cubes", "pick", 0, kfs)
+    assert out["status"] == "stopped" and len(out["true_after"]) == 2  # keyframe 2 ran its close, then it stopped
+    assert set(out["true_start"]) == {"red_cube", "blue_cube", "green_cube"}

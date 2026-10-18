@@ -236,7 +236,7 @@
         const bad = marks[i] && marks[i].ok === false;
         const moves = (k.moves || []).length > 0;
         const color = bad ? FAIL_COLOR : moves ? MOVE_COLOR : PATH_COLOR;
-        const dot = new T.Mesh(new T.SphereGeometry(bad ? 0.009 : moves ? 0.007 : 0.005, 16, 8),
+        const dot = new T.Mesh(new T.SphereGeometry(bad ? 0.009 : moves ? 0.008 : 0.005, 16, 8),
                                new T.MeshBasicMaterial({ color, depthTest: false, transparent: true }));
         dot.position.set(k.xyz[0], k.xyz[1], k.xyz[2]);
         dot.renderOrder = 11;

@@ -10,6 +10,7 @@ let runCameras = { ...DEFAULT_CAMERAS };  // the image labels of the scene of th
 const PLAN_BADGES = { imagined: "Imagined", real: "Real start", both: "Imagined + real" };
 const XY_LIMIT_CM = 2;     // the plan check marks a larger error red
 const YAW_LIMIT_DEG = 15;
+const PRED_LIMIT_CM = 3;    // the Prediction entry marks a larger displacement error red
 let viewMode = "camera";   // "camera", or a plan mode: "imagined", "real" or "both"
 let player = null;         // the Plan3D player, made on the first plan
 let playerFailed = false;  // no WebGL: the page says so and keeps the camera images
@@ -976,6 +977,7 @@ function onEvent(ev, replay = false) {
     if (!replay && $("history_dialog").open) fillHistory();
     setCamState("ended");
     onExecEnd(ev);
+    if (ev.prediction) addEntry(predictionEntry(ev.prediction));
     setStatus(execText(ev), ev.success ? "success" : ev.status === "error" ? "bad" : "");
   } else if (ev.kind === "bad_reply") {
     stepEvents[ev.step] = ev;
@@ -1286,6 +1288,46 @@ function onExecEnd(ev) {
   item.append(el("div", ev.stopped ? `Stopped after action ${ev.stopped.after} of ${ev.stopped.of}: ${ev.stopped.reason}.`
     : ev.success ? "The task is solved." : execText(ev)));
   addEntry(item);
+}
+
+// The predicted moves of the plan against the physics. Each move starts from its own start pose, so the
+// error of the belief stays out of the displacement error.
+function predictionEntry(p) {
+  const item = entry("plan", "◎ Prediction");
+  const s = p.summary || {};
+  if (s.partial) {
+    item.append(el("div", s.ran ? `The execution stopped early: this compares keyframes 1 to ${s.ran} of ${s.of}.`
+      : "The execution stopped before the first keyframe ended: nothing to compare.", "muted"));
+  }
+  const rows = p.rows || [];
+  if (rows.length) {
+    const table = el("table", "", "ptable");
+    const head = el("tr");
+    for (const h of ["object", "predicted move", "real move", "error"]) head.append(el("th", h));
+    table.append(head);
+    for (const r of rows) {
+      const tr = el("tr");
+      const cells = [
+        [r.name, false],
+        [`${r.predicted_cm.map(signed).join(" ")} cm`, false],
+        [`${r.real_cm.map(signed).join(" ")} cm`, r.agree === false],
+        [`${r.disp_cm.toFixed(1)} cm`, r.disp_cm > PRED_LIMIT_CM],
+      ];
+      for (const [text, over] of cells) tr.append(el("td", text, over ? "over" : ""));
+      tr.title = `true object: ${r.true_name} · final position error: xy ${r.final_xy_cm.toFixed(1)} cm, z ${signed(r.final_z_cm)} cm`;
+      table.append(tr);
+    }
+    item.append(table);
+    item.append(el("div", `moves are x y z · error: the xy distance between the two moves · red: more than ${PRED_LIMIT_CM} cm`, "muted"));
+    item.append(el("div", `moved or not (more than 2 cm): ${s.agree} of ${s.count} agree · ` +
+      `final position error: mean xy ${(s.mean_final_xy_cm ?? 0).toFixed(1)} cm`));
+  } else if (s.ran) {
+    item.append(el("div", "No object of the belief matches a true object.", "muted"));
+  }
+  const keyLines = (p.keyframes || []).map((k) => `${k.keyframe} · ${k.name}: ` +
+    (k.disp_cm === null ? "no true object" : `${k.disp_cm.toFixed(1)} cm`));
+  if (keyLines.length) item.append(field("moves", lines(keyLines, "mono")));
+  return item;
 }
 
 // ---- History: read an earlier run on the page ----

@@ -306,3 +306,71 @@ def test_a_moved_true_object_shifts_by_the_predicted_displacement():
     marks = plan_checks(START, [*kfs, Keyframe((0.5, 0.14, 0.10), 0.0, "closed", None), down], [CUBE, BLUE],
                         ALIASES, set(), PARTS, no_reach_limit, open_state="open", gap=arm_gap, belief=belief)
     assert "blue_cube" in marks[5]["checks"]["collision"]
+
+
+# ---- v1.11: the prediction score after Execute ----
+def _kf(xyz, t, moves=(), carrying=None):
+    return {"xyz": list(xyz), "yaw": 0.0, "state": "closed", "carrying": carrying, "gap": 0.0, "changes": False,
+            "t": t, "t_done": t + 0.5, "moves": list(moves)}
+
+
+PUSH = {"name": "cube", "xyz": [0.5, 0.05, 0.02], "yaw": 0.0}
+PUSH_TRACK = {"start": {"xyz": [0.5, -0.06, 0.02], "yaw": 0.0, "state": "closed", "gap": 0.0},
+              "keyframes": [_kf((0.5, 0.02, 0.02), 1.0, [PUSH]), _kf((0.5, 0.02, 0.15), 2.0)], "duration": 2.5}
+BELIEVED = [{"name": "cube", "xyz": [0.5, 0.0, 0.02], "yaw": 0.0}, {"name": "ball", "xyz": [0.6, 0.2, 0.02], "yaw": 0.0}]
+MATCH = {"red_cube": "cube", "ball_1": "ball"}
+
+
+def _true(cube, ball=(0.6, 0.2, 0.02)):
+    return {"red_cube": {"xyz": list(cube), "yaw": 0.0}, "ball_1": {"xyz": list(ball), "yaw": 0.0}}
+
+
+def _score(true_start, true_after, track=PUSH_TRACK, believed=BELIEVED):
+    from armmind.plan.scores import prediction
+    return prediction(track, believed, true_start, true_after, MATCH)
+
+
+def test_a_perfect_prediction_has_no_error():
+    s = _score(_true((0.5, 0.0, 0.02)), [_true((0.5, 0.05, 0.02))] * 2)
+    rows = {r["name"]: r for r in s["rows"]}
+    assert rows["cube"]["disp_cm"] == 0 and rows["cube"]["final_xy_cm"] == 0 and rows["cube"]["final_z_cm"] == 0
+    assert rows["cube"]["predicted_cm"] == [0.0, 5.0, 0.0] and rows["cube"]["real_cm"] == [0.0, 5.0, 0.0]
+    assert rows["cube"]["predicted_moved"] and rows["cube"]["real_moved"] and rows["ball"]["agree"]
+    assert s["summary"]["agree"] == 2 and s["summary"]["count"] == 2 and s["summary"]["max_disp_cm"] == 0
+    assert s["keyframes"] == [{"keyframe": 1, "name": "cube", "true_name": "red_cube", "disp_cm": 0.0}]
+    assert s["summary"]["ran"] == 2 and s["summary"]["partial"] is False
+
+
+def test_a_push_5_cm_wrong_gives_5_cm():
+    s = _score(_true((0.5, 0.0, 0.02)), [_true((0.5, 0.10, 0.02))] * 2)
+    cube = s["rows"][0]
+    assert cube["disp_cm"] == pytest.approx(5.0) and cube["final_xy_cm"] == pytest.approx(5.0)
+    assert s["keyframes"][0]["disp_cm"] == pytest.approx(5.0) and s["summary"]["max_disp_cm"] == pytest.approx(5.0)
+
+
+def test_a_perception_offset_does_not_change_the_displacement_error():
+    s = _score(_true((0.53, -0.02, 0.02)), [_true((0.53, 0.03, 0.02))] * 2)  # 3.6 cm off, the same 5 cm push
+    cube = s["rows"][0]
+    assert cube["disp_cm"] == 0 and cube["final_xy_cm"] == pytest.approx(3.61)
+
+
+def test_a_move_of_an_object_that_stays_still_is_a_disagreement():
+    track = {**PUSH_TRACK, "keyframes": [_kf((0.5, 0.02, 0.02), 1.0, [PUSH, {"name": "ball", "xyz": [0.6, 0.25, 0.02],
+                                                                           "yaw": 0.0}]), PUSH_TRACK["keyframes"][1]]}
+    s = _score(_true((0.5, 0.0, 0.02)), [_true((0.5, 0.05, 0.02))] * 2, track=track)
+    ball = next(r for r in s["rows"] if r["name"] == "ball")
+    assert ball["predicted_moved"] and not ball["real_moved"] and not ball["agree"]
+    assert ball["disp_cm"] == pytest.approx(5.0) and s["summary"]["agree"] == 1 and s["summary"]["count"] == 2
+    assert [(k["keyframe"], k["name"]) for k in s["keyframes"]] == [(1, "cube"), (1, "ball")]
+
+
+def test_an_early_stop_compares_only_the_keyframes_that_ran():
+    track = {**PUSH_TRACK, "keyframes": [PUSH_TRACK["keyframes"][0], _kf((0.5, 0.02, 0.15), 2.0, [
+        {"name": "ball", "xyz": [0.4, 0.2, 0.02], "yaw": 0.0}])]}
+    s = _score(_true((0.5, 0.0, 0.02)), [_true((0.5, 0.05, 0.02))], track=track)
+    assert s["summary"]["ran"] == 1 and s["summary"]["of"] == 2 and s["summary"]["partial"] is True
+    ball = next(r for r in s["rows"] if r["name"] == "ball")
+    assert ball["predicted_cm"] == [0.0, 0.0, 0.0] and ball["agree"]  # the move of keyframe 2 never ran
+    assert [k["keyframe"] for k in s["keyframes"]] == [1]
+    none = _score(_true((0.5, 0.0, 0.02)), [], track=track)
+    assert none["rows"] == [] and none["summary"]["ran"] == 0 and none["summary"]["partial"] is True

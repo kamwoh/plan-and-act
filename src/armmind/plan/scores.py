@@ -279,3 +279,53 @@ def _grasp_check(k: Keyframe, target: str | None, by_name: dict[str, Entity], po
     if miss > GRASP_CENTRE_M:
         why.append(f"the hand is {miss * 100:.1f} cm from the centre of {target}")
     return "; ".join(why) or "ok"
+
+
+# ---- The prediction against the physics, after the plan ran ----
+MOVED_M = 0.02  # an object that goes further than 2 cm moved
+
+
+def prediction(track: dict, believed: list[dict], true_start: dict[str, dict], true_after: list[dict[str, dict]],
+               match: dict[str, str]) -> dict:
+    """Compare the predicted poses of the belief with the true poses after each keyframe that ran.
+
+    - track and believed come from the plan view. The prediction follows the rules of the page player.
+    - true_start and true_after give {"xyz", "yaw"} for each true name, before the plan and after each keyframe.
+    - match maps a true name to a believed name.
+    The displacement error compares the two moves from their own starts, so the perception error stays out."""
+    kfs = track["keyframes"]
+    ran = min(len(true_after), len(kfs))
+    rows, lines = [], []
+    if ran:
+        predicted = poses_after(track, believed)[:ran]
+        start = {e["name"]: e for e in believed}
+        back = {b: t for t, b in match.items() if b in start and t in true_start}
+
+        def moves_at(k: int, b: str, t: str) -> tuple[list[float], list[float]]:
+            p, b0 = predicted[k][b]["xyz"], start[b]["xyz"]
+            t1, t0 = true_after[k][t]["xyz"], true_start[t]["xyz"]
+            return [p[j] - b0[j] for j in range(3)], [t1[j] - t0[j] for j in range(3)]
+
+        def xy_cm(a, b) -> float:
+            return _round(math.hypot(a[0] - b[0], a[1] - b[1]) * 100)
+
+        for b, t in back.items():
+            want, got = moves_at(ran - 1, b, t)
+            p, t1 = predicted[ran - 1][b]["xyz"], true_after[ran - 1][t]["xyz"]
+            said, did = math.dist(want, (0, 0, 0)) > MOVED_M, math.dist(got, (0, 0, 0)) > MOVED_M
+            rows.append({"name": b, "true_name": t, "predicted_cm": [_round(v * 100) for v in want],
+                         "real_cm": [_round(v * 100) for v in got], "disp_cm": xy_cm(want, got),
+                         "final_xy_cm": xy_cm(p, t1), "final_z_cm": _round((p[2] - t1[2]) * 100),
+                         "predicted_moved": said, "real_moved": did, "agree": said == did})
+        for k in range(ran):
+            for m in kfs[k].get("moves") or []:
+                t = back.get(m["name"])
+                lines.append({"keyframe": k + 1, "name": m["name"], "true_name": t,
+                              "disp_cm": xy_cm(*moves_at(k, m["name"], t)) if t else None})
+    disp = [r["disp_cm"] for r in rows]
+    return {"rows": rows, "keyframes": lines,
+            "summary": {"mean_disp_cm": _round(sum(disp) / len(disp)) if disp else 0.0,
+                        "max_disp_cm": max(disp, default=0.0),
+                        "mean_final_xy_cm": _round(sum(r["final_xy_cm"] for r in rows) / len(rows)) if rows else 0.0,
+                        "agree": sum(r["agree"] for r in rows), "count": len(rows),
+                        "ran": ran, "of": len(kfs), "partial": ran < len(kfs)}}

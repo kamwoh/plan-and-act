@@ -45,6 +45,16 @@ def keyframe_actions(keyframes, state: str = "open") -> list[Action]:
     return out
 
 
+def keyframe_ends(keyframes, state: str = "open") -> list[int]:
+    """The index in keyframe_actions of the last action of each keyframe."""
+    out, n = [], 0
+    for k in keyframes:
+        n += 1 if k.state == state else 2
+        state = k.state
+        out.append(n - 1)
+    return out
+
+
 def _r3(p) -> tuple[float, float, float]:
     return (round(float(p[0]), 3), round(float(p[1]), 3), round(float(p[2]), 3))
 
@@ -111,9 +121,12 @@ class MujocoEnv:
                      on_action: Callable[[int, int], None] | None = None) -> dict:
         """Run the keyframes once, with the stop rules of a step. should_stop() between actions cancels the
         rest. on_action(index, count) runs before each action. The auto-check runs at the end when the
-        instruction is a task of the scene."""
+        instruction is a task of the scene. "true_start" and "true_after" hold the true object poses before the
+        plan and after each keyframe that ran."""
         actions = keyframe_actions(keyframes)
+        ends = set(keyframe_ends(keyframes))
         lines, stopped, cancelled = [], None, False
+        true_start, true_after = self._true_poses(), []  # the poses after each keyframe that ran
         for i, action in enumerate(actions):
             if should_stop():
                 cancelled = True
@@ -122,6 +135,8 @@ class MujocoEnv:
                 on_action(i, len(actions))
             result, why = check_result(action, self.act(action), self.object_labels)
             lines.append(result.summary())
+            if i in ends:
+                true_after.append(self._true_poses())
             if why is not None:
                 stopped = {"after": i + 1, "of": len(actions), "reason": why}
                 lines += [f"{a.describe()}: skipped" for a in actions[i + 1:]]
@@ -130,7 +145,12 @@ class MujocoEnv:
         status = ("cancelled" if cancelled else "success" if success else "stopped" if stopped
                   else "failed" if self.has_check else "done")
         return {"actions": [a.describe() for a in actions], "results": lines, "stopped": stopped,
-                "success": bool(success), "status": status}
+                "success": bool(success), "status": status, "true_start": true_start, "true_after": true_after}
+
+    def _true_poses(self) -> dict[str, dict]:
+        """The true pose of each scene object now: {"xyz", "yaw"}."""
+        return {o.name: {"xyz": [round(float(v), 5) for v in self.world.object_pos(o.name)],
+                         "yaw": round(float(self.world.object_yaw(o.name)), 2)} for o in self.world.objects}
 
     def close(self) -> None:
         self.cams.close()

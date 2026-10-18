@@ -20,6 +20,7 @@ from armmind.agent.prompts import SYSTEM, example_step_text
 from armmind.env import Env, SimThread, keyframe_actions
 from armmind.llm.protocol import LLMBackend
 from armmind.plan.formats import Keyframe
+from armmind.plan.scores import prediction
 from armmind.scenes import SCENES, Scene, Task
 from armmind.sim.assets import AssetsMissing
 from armmind.sim.meshes import warm
@@ -125,6 +126,17 @@ def _b64(b: bytes) -> str:
     return base64.b64encode(b).decode()
 
 
+def _prediction(view: dict | None, out: dict) -> dict | None:
+    """The prediction score of an execution, or None when the view or the true poses are not there."""
+    if not isinstance(view, dict) or "true_after" not in out:
+        return None
+    try:
+        return prediction(view["track"], view["believed"], out["true_start"], out["true_after"],
+                          view.get("true_match") or {})
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None  # an old or broken view: the execution result stays
+
+
 class Runner:
     def __init__(self, backend: LLMBackend, env_factory: EnvFactory, runs_dir: Path, hub: Hub, lessons: LessonStore):
         self.backend, self.env_factory, self.runs_dir, self.hub = backend, env_factory, runs_dir, hub
@@ -157,9 +169,9 @@ class Runner:
         return log.dir
 
     async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
-                            keyframes: tuple[Keyframe, ...], step: int) -> None:
+                            keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None) -> None:
         """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed. No model is called.
-        The events go to the end of the plan's own log."""
+        The events go to the end of the plan's own log. With the plan view, exec_end has the prediction score."""
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog.append_to(folder)
@@ -184,7 +196,8 @@ class Runner:
                           "actions": out["actions"], "results": out["results"], "stopped": out["stopped"],
                           "truncated": False, "notes": "", "todo": [], "lessons": [], "success": out["success"],
                           "done": False, "prompt": "", "attempts": [], "usage": None})
-            emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"]})
+            emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"],
+                              "prediction": _prediction(view, out)})
 
         self._launch(log, stopper, scene, task, instruction, seed, False, body, end_kind="exec_end", before=before)
 
@@ -307,7 +320,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         instruction = start.get("instruction") or ""
         task = next((t for t in scene.tasks.values() if t.instruction == instruction), None)
         await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
-                                   step=2 + found["executions"])
+                                   step=2 + found["executions"], view=plan.get("view"))
         return {"run_id": run_id}
 
     @app.post("/api/plan/{rest:path}")
