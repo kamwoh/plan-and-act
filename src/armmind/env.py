@@ -92,6 +92,11 @@ class MujocoEnv:
     def success(self) -> bool:
         return self.task is not None and bool(self.task.success(self.world))
 
+    def cameras(self) -> list[dict]:
+        """The pose, the field of view and the image size of each camera, for the path overlay of the page."""
+        from armmind.sim.planview import cameras
+        return cameras(self.world, self.cams.w, self.cams.h)
+
     def plan_view(self, belief, keyframes, marks: list[dict] | None = None) -> dict:
         """The PlanView of a belief and its keyframes, from the true scene now (call it before any motion)."""
         from armmind.sim.planview import build_view

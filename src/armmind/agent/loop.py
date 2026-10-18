@@ -76,9 +76,12 @@ class Agent:
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
         self.run_lessons = []
         self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
-        emit("run_start", {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
-                           "check": env.check_name, "system_prompt": self.system,
-                           "use_lessons": self.use_lessons, "saved_lessons": list(self.saved_lessons)})
+        start = {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
+                 "check": env.check_name, "system_prompt": self.system,
+                 "use_lessons": self.use_lessons, "saved_lessons": list(self.saved_lessons)}
+        if hasattr(env, "cameras"):  # the page draws the planned path on the camera images with these
+            start["cameras"] = await call(env.cameras)
+        emit("run_start", start)
         status = "error"  # kept when a step raises
         try:
             status = await self._steps(env, call, emit)

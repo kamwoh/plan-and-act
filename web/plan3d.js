@@ -251,6 +251,16 @@
       this.drawLabels();
     }
 
+    // The pose of the three.js camera now, in the form of CamProj. It moves when the user turns the view.
+    cameraNow() {
+      const c = this.camera;
+      const forward = new T.Vector3();
+      c.getWorldDirection(forward);
+      const up = new T.Vector3(0, 1, 0).applyQuaternion(c.quaternion);
+      return { pos: c.position.toArray(), forward: forward.toArray(), up: up.toArray(), fovy: this.cam.fovy,
+               width: this.cam.width, height: this.cam.height };
+    }
+
     // The grid labels at the same pixel offsets as the labels of the real image.
     drawLabels() {
       const ctx = this.overlay.getContext("2d");
@@ -264,10 +274,8 @@
       ctx.font = "10px sans-serif";
       ctx.textBaseline = "hanging";
       const fmt = (v) => (Math.abs(v) < 1e-9 ? 0 : v).toFixed(1);
-      const px = (x, y) => {
-        const v = new T.Vector3(x, y, this.grid.z || 0).project(this.camera);
-        return v.z > 1 ? null : [(v.x + 1) / 2 * W, (1 - v.y) / 2 * H];
-      };
+      const cam = this.cameraNow();
+      const px = (x, y) => window.CamProj.project(cam, [x, y, this.grid.z || 0]);
       const g = this.grid;
       for (const x of g.x) {
         const a = px(x, g.y[0]);
