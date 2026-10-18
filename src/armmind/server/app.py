@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import logging
 import threading
 import time
@@ -34,6 +35,9 @@ EnvFactory = Callable[[Scene, Task | None, str, int, bool, Callable[[str, bytes]
 Preview = Callable[[Scene, int], dict]
 
 
+MAX_ROUND = 5  # a plan and at most 4 re-plans
+
+
 class RunRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
     scene: str = "cubes"
@@ -62,6 +66,8 @@ class PlanRequest(BaseModel):
     scene: str = "cubes"
     seed: int = Field(0, ge=0)
     use_lessons: bool = True
+    auto: bool = False  # the Auto loop: plan, execute and re-plan until the auto-check passes
+    rounds: int = Field(3, ge=1, le=MAX_ROUND)  # the rounds of the Auto loop
 
     @field_validator("instruction")
     @classmethod
@@ -139,9 +145,6 @@ def _prediction(view: dict | None, out: dict) -> dict | None:
         return None
 
 
-MAX_ROUND = 5  # a plan and at most 4 re-plans
-
-
 def plan_round(start: dict) -> int:
     """The round of a plan run. Plans from before v1.12 have no round: they are round 1."""
     r = start.get("round")
@@ -189,13 +192,41 @@ def _feedback(found: dict, history: RunStore) -> Feedback | None:
                     plan_round(found["start"]) + 1, end.get("step") if images else None)
 
 
+def saved_plan(found: dict) -> tuple[Scene, Task | None, str, int, tuple[Keyframe, ...]] | None:
+    """The scene, the task, the instruction, the seed and the keyframes of a saved plan, or None."""
+    start, plan = found["start"], found["plan"]
+    scene = SCENES.get(start.get("scene") or "")
+    try:
+        keyframes = tuple(Keyframe.from_dict(k) for k in plan["keyframes"])
+        seed = int(start.get("seed", 0))
+    except (KeyError, TypeError, ValueError):
+        return None
+    if scene is None or not keyframes:
+        return None
+    instruction = start.get("instruction") or ""
+    task = next((t for t in scene.tasks.values() if t.instruction == instruction), None)
+    return scene, task, instruction, seed, keyframes
+
+
+AUTO_VIEW_S = 20.0  # the Auto loop waits for the imagined video of a plan, at most this long, before Execute
+
+
+def _view_seconds(view: dict | None, limit: float) -> float:
+    try:
+        return max(0.0, min(limit, float(view["track"]["duration"])))
+    except (KeyError, TypeError, ValueError):
+        return 0.0
+
+
 class Runner:
-    def __init__(self, backend: LLMBackend, env_factory: EnvFactory, runs_dir: Path, hub: Hub, lessons: LessonStore):
+    def __init__(self, backend: LLMBackend, env_factory: EnvFactory, runs_dir: Path, hub: Hub, lessons: LessonStore,
+                 history: RunStore):
         self.backend, self.env_factory, self.runs_dir, self.hub = backend, env_factory, runs_dir, hub
-        self.lessons = lessons
+        self.lessons, self.history = lessons, history
         self.task: asyncio.Task | None = None
-        self._stopper: Callable[[], Awaitable[None]] | None = None  # stops the active run, plan or execution
+        self._stopper: Callable[[], Awaitable[None]] | None = None  # stops the active run, plan, execution or loop
         self.run_dir: Path | None = None
+        self.auto_view_s = AUTO_VIEW_S
 
     @property
     def running(self) -> bool:
@@ -207,28 +238,33 @@ class Runner:
         log = RunLog(self.runs_dir)
         agent = Agent(self.backend, AgentConfig(max_steps=req.max_steps), system=req.system_prompt,
                       store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
-        self._launch(log, agent.stop, scene, task, req.instruction, req.seed, req.show_positions, agent.run)
+        self._launch(log, agent.stop, self._session(log, scene, task, req.instruction, req.seed, req.show_positions,
+                                                    agent.run))
         return log.dir
+
+    def _plan_part(self, log: RunLog, req: PlanRequest, feedback: Feedback | None, auto_rounds: int | None):
+        """The agent and the session body of one plan round."""
+        agent = Agent(self.backend, store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
+        return agent, lambda env, call, emit: agent.plan(env, call, emit, seed=req.seed, feedback=feedback,
+                                                         auto_rounds=auto_rounds)
 
     async def start_plan(self, req: PlanRequest, scene: Scene, task: Task | None,
                          feedback: Feedback | None = None) -> Path:
         """A run of kind "plan": one model call, no motion. The env never gets the true positions.
-        With feedback, it is a re-plan of the run feedback.parent."""
+        With feedback, it is a re-plan of the run feedback.parent. With req.auto, it starts the Auto loop."""
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog(self.runs_dir)
-        agent = Agent(self.backend, store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
-        self._launch(log, agent.stop, scene, task, req.instruction, req.seed, False,
-                     lambda env, call, emit: agent.plan(env, call, emit, seed=req.seed, feedback=feedback))
+        if req.auto:
+            self._start_loop(log, req, scene, task)
+            return log.dir
+        agent, body = self._plan_part(log, req, feedback, None)
+        self._launch(log, agent.stop, self._session(log, scene, task, req.instruction, req.seed, False, body))
         return log.dir
 
-    async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
-                            keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None) -> None:
-        """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed. No model is called.
-        The events go to the end of the plan's own log. With the plan view, exec_end has the prediction score."""
-        if self.running:
-            raise HTTPException(409, "a run is already active")
-        log = RunLog.append_to(folder)
+    def _execute_part(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
+                      keyframes: tuple[Keyframe, ...], step: int, view: dict | None):
+        """The stopper, the before hook and the session body of one execution of a saved plan."""
         cancel = threading.Event()
 
         async def stopper() -> None:
@@ -259,14 +295,107 @@ class Runner:
             emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"],
                               "prediction": _prediction(view, out), "step": step, **images})
 
-        self._launch(log, stopper, scene, task, instruction, seed, False, body, end_kind="exec_end", before=before)
+        return stopper, before, body
 
-    def _launch(self, log: RunLog, stopper: Callable[[], Awaitable[None]], scene: Scene, task: Task | None,
-                instruction: str, seed: int, show_positions: bool,
-                body: Callable[[Env, Callable, Callable[[str, dict], None]], Awaitable],
-                end_kind: str = "run_end", before: Callable[[Callable[[str, dict], None]], None] | None = None) -> None:
-        """Make the env on a fresh sim thread, run `body`, and clean up. An error ends with an `end_kind` event."""
+    async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
+                            keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None) -> None:
+        """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed. No model is called.
+        The events go to the end of the plan's own log. With the plan view, exec_end has the prediction score."""
+        if self.running:
+            raise HTTPException(409, "a run is already active")
+        log = RunLog.append_to(folder)
+        stopper, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view)
+        self._launch(log, stopper, self._session(log, scene, task, instruction, seed, False, body,
+                                                 end_kind="exec_end", before=before))
+
+    def _start_loop(self, log: RunLog, req: PlanRequest, scene: Scene, task: Task | None) -> None:
+        """The Auto loop as one job: plan, execute, then re-plan, until the auto-check passes or the rounds end.
+        Each round has its own run folder. The last round gets a loop_end event. Stop ends the loop."""
+        stop = asyncio.Event()
+        part: list[Callable[[], Awaitable[None]]] = []  # the stopper of the active plan or execution
+
+        async def stopper() -> None:
+            stop.set()
+            if part:
+                await part[0]()
+
+        async def loop() -> None:
+            feedback, rounds_run, success, reason, folder = None, 0, False, "", log.dir
+            try:
+                while True:
+                    rounds_run += 1
+                    plan_log = log if rounds_run == 1 else RunLog(self.runs_dir)
+                    folder = self.run_dir = plan_log.dir
+                    agent, body = self._plan_part(plan_log, req, feedback, req.rounds)
+                    part[:] = [agent.stop]
+                    status = await self._session(plan_log, scene, task, req.instruction, req.seed, False, body)
+                    if stop.is_set():
+                        reason = "stopped"
+                        break
+                    found = self.history.plan(folder.name)
+                    saved = saved_plan(found) if found else None
+                    if status != "planned" or saved is None:
+                        reason = f"the plan ended with {status or 'error'}"
+                        break
+                    with contextlib.suppress(TimeoutError):  # the page shows the imagined video meanwhile
+                        await asyncio.wait_for(stop.wait(), _view_seconds(found["plan"].get("view"), self.auto_view_s))
+                    if stop.is_set():
+                        reason = "stopped"
+                        break
+                    exec_stop, before, body = self._execute_part(folder, scene, task, req.instruction, req.seed,
+                                                                 saved[4], 2, found["plan"].get("view"))
+                    part[:] = [exec_stop]
+                    exec_log = RunLog.append_to(folder)
+                    await self._session(exec_log, scene, task, req.instruction, req.seed, False, body,
+                                        end_kind="exec_end", before=before)
+                    found = self.history.plan(folder.name)
+                    result = _feedback(found, self.history) if found else None
+                    if stop.is_set():
+                        reason = "stopped"
+                    elif result is None or result.status == "error":
+                        reason = "the execution failed"
+                    elif result.success:
+                        success, reason = True, "the auto-check passed"
+                    elif task is None:
+                        reason = "no automatic check: nothing can tell success, so the loop ends after round 1"
+                    elif rounds_run >= req.rounds:
+                        reason = f"the {req.rounds} rounds ended without success"
+                    else:
+                        feedback = result
+                        continue
+                    break
+            except Exception as e:  # noqa: BLE001  end the loop with a reason, never kill the server
+                reason = f"error: {type(e).__name__}: {e}"
+            finally:
+                end_log = RunLog.append_to(folder)
+                try:
+                    self._emitter(end_log)("loop_end", {"rounds_run": rounds_run, "rounds_max": req.rounds,
+                                                        "success": success, "reason": reason})
+                finally:
+                    end_log.close()
+
+        self._launch(log, stopper, loop())
+
+    def _emitter(self, log: RunLog) -> Callable[[str, dict], None]:
+        """Write an event to the log and send it to every page. Bytes go to the page as base64."""
+        def emit(kind: str, data: dict) -> None:
+            msg = {"type": "event", **log.event(kind, data)}
+            for key, value in data.items():
+                if isinstance(value, bytes):
+                    msg[key] = _b64(value)
+            self.hub.publish_threadsafe(msg)
+        return emit
+
+    def _launch(self, log: RunLog, stopper: Callable[[], Awaitable[None]], job: Awaitable) -> None:
+        """Start the job as the one active task. Stop calls the stopper."""
         self.run_dir, self._stopper = log.dir, stopper
+        self.task = asyncio.create_task(job)
+
+    async def _session(self, log: RunLog, scene: Scene, task: Task | None, instruction: str, seed: int,
+                       show_positions: bool, body: Callable[[Env, Callable, Callable[[str, dict], None]], Awaitable],
+                       end_kind: str = "run_end", before: Callable[[Callable[[str, dict], None]], None] | None = None):
+        """Make the env on a fresh sim thread, run `body`, and clean up. Gives what `body` gives. An error ends
+        with an `end_kind` event and gives None. The log is closed at the end."""
         pacer = Pacer()
 
         def on_frame(cam: str, jpg: bytes) -> None:
@@ -274,35 +403,27 @@ class Runner:
             if cam == "front":  # the front image comes first in every frame, so this paces once per frame
                 pacer()
 
-        def emit(kind: str, data: dict) -> None:
-            msg = {"type": "event", **log.event(kind, data)}
-            for key, value in data.items():
-                if isinstance(value, bytes):
-                    msg[key] = _b64(value)
-            self.hub.publish_threadsafe(msg)
-
-        async def go() -> None:
-            sim, env = SimThread(), None
+        emit = self._emitter(log)
+        sim, env = SimThread(), None
+        try:
+            if before is not None:
+                before(emit)
+            env = await sim.call(self.env_factory, scene, task, instruction, seed, show_positions, on_frame)
+            return await body(env, sim.call, emit)
+        except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
+            emit(end_kind, {"status": "error", "message": f"{type(e).__name__}: {e}"})
+            return None
+        finally:
             try:
-                if before is not None:
-                    before(emit)
-                env = await sim.call(self.env_factory, scene, task, instruction, seed, show_positions, on_frame)
-                await body(env, sim.call, emit)
-            except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
-                emit(end_kind, {"status": "error", "message": f"{type(e).__name__}: {e}"})
+                if env is not None:
+                    await sim.call(env.close)
+            except Exception as e:  # noqa: BLE001  record it, then finish the cleanup
+                log.event("cleanup_error", {"message": f"{type(e).__name__}: {e}"})
             finally:
                 try:
-                    if env is not None:
-                        await sim.call(env.close)
-                except Exception as e:  # noqa: BLE001  record it, then finish the cleanup
-                    log.event("cleanup_error", {"message": f"{type(e).__name__}: {e}"})
+                    sim.shutdown()
                 finally:
-                    try:
-                        sim.shutdown()
-                    finally:
-                        log.close()
-
-        self.task = asyncio.create_task(go())
+                    log.close()
 
     async def stop(self) -> None:
         if self._stopper is not None:
@@ -315,7 +436,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
                web_dir: Path = WEB_DIR, preview: Preview | None = None, lessons_dir: Path | None = None) -> FastAPI:
     hub = Hub()
     lessons = LessonStore(Path(lessons_dir) if lessons_dir is not None else Path(runs_dir).parent / "lessons")
-    runner = Runner(backend, env_factory or default_env_factory, Path(runs_dir), hub, lessons)
+    history = RunStore(Path(runs_dir))
+    runner = Runner(backend, env_factory or default_env_factory, Path(runs_dir), hub, lessons, history)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -354,8 +476,6 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
         return {"run_dir": str(await runner.start(req, scene, task))}
 
-    history = RunStore(Path(runs_dir))
-
     @app.post("/api/plan", dependencies=[Depends(same_origin)])
     async def plan(req: PlanRequest) -> dict:
         scene = _scene(req.scene)
@@ -368,19 +488,12 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         found = history.plan(run_id)
         if found is None:
             raise HTTPException(404, "no such plan")
-        start, plan = found["start"], found["plan"]
-        scene = SCENES.get(start.get("scene") or "")
-        try:
-            keyframes = tuple(Keyframe.from_dict(k) for k in plan["keyframes"])
-            seed = int(start.get("seed", 0))
-        except (KeyError, TypeError, ValueError):
-            keyframes, seed = (), 0
-        if scene is None or not keyframes:
+        saved = saved_plan(found)
+        if saved is None:
             raise HTTPException(404, "the plan cannot run")
-        instruction = start.get("instruction") or ""
-        task = next((t for t in scene.tasks.values() if t.instruction == instruction), None)
+        scene, task, instruction, seed, keyframes = saved
         await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
-                                   step=2 + found["executions"], view=plan.get("view"))
+                                   step=2 + found["executions"], view=found["plan"].get("view"))
         return {"run_id": run_id}
 
     @app.post("/api/plan/{run_id}/replan", dependencies=[Depends(same_origin)])

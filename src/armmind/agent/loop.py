@@ -183,17 +183,18 @@ class Agent:
                 status = "stopped"
         return status
 
-    async def plan(self, env: Env, call: Call, emit: Emit, seed: int = 0, feedback: Feedback | None = None) -> str:
+    async def plan(self, env: Env, call: Call, emit: Emit, seed: int = 0, feedback: Feedback | None = None,
+                   auto_rounds: int | None = None) -> str:
         """One model call: the belief of the scene and the keyframes of the whole task. The code then scores
         the plan and builds the view of the page. Nothing moves. With feedback, this is a re-plan: a later round
-        that sees the last plan, its result and its end images."""
+        that sees the last plan, its result and its end images. auto_rounds is set in a round of the Auto loop."""
         self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
         emit("run_start", {"mode": "plan", "scene": env.scene_name, "instruction": env.instruction, "seed": seed,
                            "run_id": self.run_id, "max_steps": 1, "check": env.check_name,
                            "system_prompt": PLAN_SYSTEM, "use_lessons": self.use_lessons,
                            "saved_lessons": list(self.saved_lessons),
                            "round": feedback.round if feedback else 1, "parent": feedback.parent if feedback else None,
-                           "end_step": feedback.end_step if feedback else None})
+                           "end_step": feedback.end_step if feedback else None, "auto_rounds": auto_rounds})
         status = "error"
         try:
             status = await self._plan(env, call, emit, feedback)
