@@ -200,6 +200,8 @@ resetTotals();
 // ---- Camera badges ----
 // "preview" | "live" | "ended" | "run" (the images of an earlier run, with the label)
 let camState = "preview";
+let runKey = 0;     // a new run, a replay or a preview adds 1
+let imageKey = -1;  // the runKey when the camera images last changed
 let camLabel = "";
 
 function setCamState(state, label = "") {
@@ -220,10 +222,11 @@ function paintBadges() {
 }
 
 function showImage(id, src) {
-  const was = $(id).hidden;
+  const was = $(id).hidden, wasKey = imageKey;
   $(id).src = src;
+  imageKey = runKey;
   $(id).hidden = viewMode !== "camera";  // the image waits behind the plan video
-  if ($(id).hidden !== was) drawPath();  // the path overlay shows only over a shown image
+  if ($(id).hidden !== was || imageKey !== wasKey) drawPath();  // the path shows only over an image of its run
 }
 
 function clearPreviewError() {  // a good preview: drop the text of an earlier error
@@ -648,22 +651,32 @@ $("lessons_clear").addEventListener("click", () => {
 
 // The plan and the to-do list of the first reply stay at the top of the To-do column, folded to 2 lines.
 function showFirstPlan(ev) {
+  const box = $("first_plan");
   const body = el("div", "", "fp-body");
-  body.append(el("span", "First plan", "fp-label"), document.createTextNode(ev.plan || "(no plan)"));
+  body.append(el("p", ev.plan || "(no plan)", "fp-text"));
   if (ev.todo && ev.todo.length) {
     const ol = el("ol");
     ol.append(...ev.todo.map((t) => li(t)));
     body.append(ol);
   }
-  $("first_plan").replaceChildren(body);
-  $("first_plan").classList.remove("open");
-  $("first_plan").setAttribute("aria-expanded", "false");
-  $("first_plan").hidden = false;
+  box.replaceChildren(el("span", "First plan", "fp-label"), body);
+  box.classList.remove("open");
+  box.setAttribute("aria-expanded", "false");
+  box.hidden = false;
+  box.classList.toggle("clipped", body.scrollHeight > body.clientHeight + 1);  // a fade shows the folded text
 }
 
-$("first_plan").addEventListener("click", () => {
+function toggleFirstPlan() {
   const open = $("first_plan").classList.toggle("open");
   $("first_plan").setAttribute("aria-expanded", String(open));
+}
+
+$("first_plan").addEventListener("click", toggleFirstPlan);
+$("first_plan").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    toggleFirstPlan();
+  }
 });
 
 function emptyMemo() {
@@ -742,6 +755,7 @@ function setLoading(on) {
 }
 
 async function loadPreview() {
+  runKey++;
   clearPlan();
   viewSeq++;  // drop an earlier run that is still on its way
   const seq = ++previewSeq;
@@ -891,6 +905,7 @@ function onEvent(ev, replay = false) {
       setRunning(true);
     }
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
+    runKey++;
     clearPlan();
     planRunId = ev.mode === "plan" ? ev.run_id : null;
     runCams = ev.cameras || null;
@@ -940,6 +955,8 @@ function onEvent(ev, replay = false) {
       if (ev.run_id !== planRunId) {  // another tab runs a plan that this page does not show
         resetChat();
         resetTotals();
+        runKey++;
+        clearPath();
         planRunId = ev.run_id;
       }
       setStatus("running the plan", "moving");
@@ -1006,27 +1023,16 @@ $("show_path").addEventListener("change", () => {
 
 const expectText = (e) => `→ ${String(e).replace(/_/g, " ")}`;
 
-// The actions of a step as overlay items. An open or a close sits at the last target, or at the start.
-function pathItems(actions, start) {
-  let at = start ? start.xyz : null;
-  let yaw = start ? start.yaw : 0;
-  return actions.map((a, index) => {
-    if (a.type === "move_to" && a.xyz) {
-      at = a.xyz;
-      if (typeof a.yaw === "number") yaw = a.yaw;
-      return { index, kind: "point", xyz: a.xyz, yaw, label: a.expect ? expectText(a.expect) : null };
-    }
-    if ((a.type === "open" || a.type === "close") && at) {
-      return { index, kind: "mark", xyz: at, shape: a.type === "open" ? "open" : "closed",
-               label: a.expect ? expectText(a.expect) : null };
-    }
-    return { index, kind: "none" };
-  });
-}
+// The action types of the arm for the overlay: a move_to is a numbered point, an open or a close is a mark.
+const PATH_SPEC = { point: "move_to", marks: { open: "open", close: "closed" },
+                    label: (a) => (a.expect ? expectText(a.expect) : null) };
 
+// key: the run that the path belongs to. The path shows only over an image of the same run.
 function setPath(step, cams, start, actions) {
-  stepPath = cams && actions ? { step, cameras: cams, n: actions.length, progress: {},
-                             path: { start, items: pathItems(actions, start) } } : null;
+  stepPath = cams && actions && window.PathOverlay ? {
+    step, cameras: cams, n: actions.length, progress: {}, key: runKey,
+    path: { start, items: PathOverlay.items(actions, start, PATH_SPEC) },
+  } : null;
   drawPath();
 }
 
@@ -1044,27 +1050,36 @@ function onPathAction(ev) {
 // The step ended: the actions that ran are done, a stop turns its action red, and the rest is skipped.
 function onPathStep(ev) {
   if (!stepPath || stepPath.step !== ev.step) return;
-  const ran = ev.stopped ? ev.stopped.after : (ev.results || []).filter((r) => !r.endsWith(": skipped")).length;
-  stepPath.progress = { ...stepPath.progress, ran, stoppedAt: ev.stopped ? ev.stopped.after - 1 : null };
+  stepPath.progress = PathOverlay.ended(stepPath.progress, ev.results, ev.stopped, (r) => r.endsWith(": skipped"));
   drawPath();
 }
 
 function drawPath() {
-  const show = Boolean(stepPath && $("show_path").checked && viewMode === "camera" && window.PathOverlay);
+  const show = Boolean(stepPath && $("show_path").checked && viewMode === "camera" && imageKey === stepPath.key);
   const actionStates = show ? PathOverlay.states(stepPath.n, stepPath.progress) : [];
   for (const [name, img] of [["front", "live"], ["top", "top"]]) {
     const canvas = $(`path_${name}`);
     const cam = show && stepPath.cameras.find((c) => c.name === name);
     canvas.hidden = !cam || $(img).hidden;
     if (canvas.hidden) continue;
+    // object-fit shows the image smaller than its pixels: scale the text and the lines back to screen size
+    const box = canvas.getBoundingClientRect();
+    const shown = Math.min(box.width, (box.height * cam.width) / cam.height);
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.round(cam.width * dpr), h = Math.round(cam.height * dpr);
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width = w;
       canvas.height = h;
     }
-    PathOverlay.draw(canvas, cam, stepPath.path, actionStates);
+    PathOverlay.draw(canvas, cam, stepPath.path, actionStates, shown > 0 ? cam.width / shown : 1);
   }
+}
+
+if (window.ResizeObserver) {  // a new box size changes the scale of the text
+  const resized = new ResizeObserver(() => {
+    if (stepPath) drawPath();
+  });
+  for (const id of ["cam_front", "cam_top"]) resized.observe($(id).querySelector(".frame"));
 }
 
 // ---- Plan first: the imagined video, the plan entries and Execute ----

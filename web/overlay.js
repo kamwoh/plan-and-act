@@ -2,13 +2,42 @@
 // All names and shapes come from the data, as in plan3d.js. The projection is CamProj.project.
 //
 // A path is { start: { xyz, yaw } | null, items }. Each item belongs to one action of the step:
-//   { index, kind: "point", xyz, yaw }         a target, numbered index + 1, with a tick for the yaw
-//   { index, kind: "mark", xyz, shape, label } a bracket at xyz: shape "open" or "closed", label text or null
+//   { index, kind: "point", xyz, yaw, label }  a target, numbered index + 1, with a tick for the yaw
+//   { index, kind: "mark", xyz, shape, label } a bracket at xyz: shape "open" or "closed"
 //   { index, kind: "none" }                    an action with nothing to draw
-// A point can also have a label. The yaw is in degrees about world +z. At yaw 0 the tick lies along world x.
+// A label is a text or null. The yaw is in degrees about world +z. At yaw 0 the tick lies along world x.
 (function (root) {
   "use strict";
   const project = (root.CamProj || (typeof require !== "undefined" ? require("./camproj.js") : null)).project;
+
+  // The items of a list of actions. spec names the action types:
+  //   { point: the type that moves to `xyz` (with an optional `yaw`),
+  //     marks: { type: "open" | "closed" }, the types that change the state where the path is now,
+  //     label(action): the label text of an action, or null }
+  // A mark sits at the last point, or at the start when no point comes before it. A point without a yaw
+  // keeps the yaw before it.
+  function items(actions, start, spec) {
+    let at = start ? start.xyz : null;
+    let yaw = start && typeof start.yaw === "number" ? start.yaw : 0;
+    const label = spec.label || (() => null);
+    return actions.map((a, index) => {
+      if (a.type === spec.point && a.xyz) {
+        at = a.xyz;
+        if (typeof a.yaw === "number") yaw = a.yaw;
+        return { index, kind: "point", xyz: a.xyz, yaw, label: label(a) };
+      }
+      if (spec.marks[a.type] && at) return { index, kind: "mark", xyz: at, shape: spec.marks[a.type], label: label(a) };
+      return { index, kind: "none" };
+    });
+  }
+
+  // The progress when a step ends. results: one line for each action that ran or was skipped, in order.
+  // stopped: { after: the number of the action that stopped the step } or null. isSkipped(line) is true
+  // for a line of an action that did not run.
+  function ended(progress, results, stopped, isSkipped) {
+    const ran = stopped ? stopped.after : (results || []).filter((r) => !isSkipped(r)).length;
+    return { ...progress, ran, stoppedAt: stopped ? stopped.after - 1 : null };
+  }
 
   // The state of each action of a step: "done", "current", "later", "stopped" or "skipped".
   // progress: { current: the index of the action that runs now, or null,
@@ -33,24 +62,26 @@
     return out;
   }
 
+  // The sizes are in screen pixels. draw() scales them to image pixels.
   const STYLE = {
-    later: { color: "#6f9bff", width: 2.5, dash: [7, 5], alpha: 1 },
-    current: { color: "#ffd23f", width: 5, dash: [], alpha: 1 },
-    done: { color: "#b4bac4", width: 2.5, dash: [], alpha: 0.9 },
-    stopped: { color: "#ff4d4d", width: 3.5, dash: [], alpha: 1 },
-    skipped: { color: "#6f9bff", width: 2.5, dash: [7, 5], alpha: 0.3 },
+    later: { color: "#6f9bff", width: 2, dash: [6, 4], alpha: 1 },
+    current: { color: "#ffd23f", width: 4, dash: [], alpha: 1 },
+    done: { color: "#b4bac4", width: 2, dash: [], alpha: 0.9 },
+    stopped: { color: "#ff4d4d", width: 3, dash: [], alpha: 1 },
+    skipped: { color: "#6f9bff", width: 2, dash: [6, 4], alpha: 0.3 },
   };
   const ORDER = ["skipped", "done", "later", "stopped", "current"];  // the later ones draw on top
   const TICK_M = 0.04;  // half the length of the yaw tick, in metres
 
-  // The pixel positions of the path on one camera: the line pieces, the points and the marks.
+  // The pixel positions of the path on one camera: the line pieces, the points and the marks. A mark has a
+  // slot: 0 for the first mark at a pixel, 1 for the next one, so that it can move to the side.
   function layout(cam, path) {
     const px = (p) => (p ? project(cam, p) : null);
     const pieces = [];
     const points = [];
     const marks = [];
     let last = path.start ? path.start.xyz : null;
-    const atPoint = {};  // how many marks sit at a pixel already, so that the next one moves to the side
+    const atPoint = {};
     for (const it of path.items) {
       if (it.kind === "point") {
         const a = px(last), b = px(it.xyz);
@@ -67,118 +98,104 @@
         const at = px(it.xyz);
         if (!at) continue;
         const key = `${Math.round(at[0])},${Math.round(at[1])}`;
-        const k = atPoint[key] || 0;
-        atPoint[key] = k + 1;
-        marks.push({ index: it.index, at, offset: 20 + 24 * k, shape: it.shape, label: it.label || null });
+        const slot = atPoint[key] || 0;
+        atPoint[key] = slot + 1;
+        marks.push({ index: it.index, at, slot, shape: it.shape, label: it.label || null });
       }
     }
     return { pieces, points, marks };
   }
 
-  function useStyle(ctx, s) {
-    ctx.strokeStyle = s.color;
-    ctx.fillStyle = s.color;
-    ctx.lineWidth = s.width;
-    ctx.setLineDash(s.dash);
-    ctx.globalAlpha = s.alpha;
-  }
-
-  // A text with a small dark box behind it, so that it reads on the light table and on dark areas.
-  function tag(ctx, text, x, y, color) {
-    ctx.setLineDash([]);
-    ctx.font = "600 14px Inter, sans-serif";
-    ctx.textBaseline = "middle";
-    const w = ctx.measureText(text).width + 10;
-    ctx.fillStyle = "rgba(10, 12, 16, 0.8)";
-    ctx.fillRect(x, y - 10, w, 20);
-    ctx.fillStyle = color;
-    ctx.fillText(text, x + 5, y + 0.5);
-  }
-
-  function bracket(ctx, x, y, shape) {
-    const gap = shape === "closed" ? 2.5 : 7, h = 7, foot = 4;
-    ctx.setLineDash([]);
-    ctx.beginPath();
-    ctx.moveTo(x - gap + foot, y - h);
-    ctx.lineTo(x - gap, y - h);
-    ctx.lineTo(x - gap, y + h);
-    ctx.lineTo(x - gap + foot, y + h);
-    ctx.moveTo(x + gap - foot, y - h);
-    ctx.lineTo(x + gap, y - h);
-    ctx.lineTo(x + gap, y + h);
-    ctx.lineTo(x + gap - foot, y + h);
-    ctx.stroke();
-  }
-
-  // Draw the path on a canvas over an image of cam.width x cam.height pixels. An empty path clears it.
-  function draw(canvas, cam, path, actionStates) {
+  // Draw the path on a canvas over an image of cam.width x cam.height pixels. scale: image pixels for one
+  // screen pixel, so that the text and the lines keep their size when the image shows smaller. An empty
+  // path clears the canvas.
+  function draw(canvas, cam, path, actionStates, scale = 1) {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!path || !cam) return;
     const r = canvas.width / cam.width;
+    const k = scale;
     ctx.setTransform(r, 0, 0, r, 0, 0);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     const L = layout(cam, path);
     const stateOf = (i) => actionStates[i] || "later";
     const rank = (i) => ORDER.indexOf(stateOf(i));
-    const outlined = (fn, s) => {  // a dark line under each line, for the contrast
-      ctx.save();
-      useStyle(ctx, { ...s, color: "rgba(0, 0, 0, 0.55)", width: s.width + 2.5 });
-      fn();
-      ctx.restore();
-      useStyle(ctx, s);
-      fn();
+    const byRank = (list) => [...list].sort((a, b) => rank(a.index) - rank(b.index));
+    const use = (s, width = s.width, dash = s.dash) => {
+      ctx.strokeStyle = s.color;
+      ctx.fillStyle = s.color;
+      ctx.lineWidth = width * k;
+      ctx.setLineDash(dash.map((v) => v * k));
+      ctx.globalAlpha = s.alpha;
     };
-    for (const p of [...L.pieces].sort((a, b) => rank(a.index) - rank(b.index))) {
-      outlined(() => {
+    const line = (a, b, s, width = s.width, dash = s.dash) => {  // a dark line under each line, for the contrast
+      for (const dark of [true, false]) {
+        use(dark ? { ...s, color: "rgba(0, 0, 0, 0.55)" } : s, dark ? width + 2 : width, dash);
         ctx.beginPath();
-        ctx.moveTo(p.a[0], p.a[1]);
-        ctx.lineTo(p.b[0], p.b[1]);
+        ctx.moveTo(a[0], a[1]);
+        ctx.lineTo(b[0], b[1]);
         ctx.stroke();
-      }, STYLE[stateOf(p.index)]);
-    }
-    for (const p of [...L.points].sort((a, b) => rank(a.index) - rank(b.index))) {
-      const s = STYLE[stateOf(p.index)];
-      if (p.tick) {
-        outlined(() => {
-          ctx.beginPath();
-          ctx.moveTo(p.tick[0][0], p.tick[0][1]);
-          ctx.lineTo(p.tick[1][0], p.tick[1][1]);
-          ctx.stroke();
-        }, { ...s, dash: [], width: 2.5 });
       }
-      useStyle(ctx, { ...s, dash: [] });
+    };
+    // A text with a small dark box behind it, so that it reads on the light table and on dark areas.
+    const tag = (text, x, y, color) => {
+      ctx.setLineDash([]);
+      ctx.font = `600 ${12 * k}px Inter, sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
+      const w = ctx.measureText(text).width + 8 * k;
+      ctx.fillStyle = "rgba(10, 12, 16, 0.8)";
+      ctx.fillRect(x, y - 9 * k, w, 18 * k);
+      ctx.fillStyle = color;
+      ctx.fillText(text, x + 4 * k, y + 0.5 * k);
+    };
+    const bracket = (x, y, shape) => {
+      const gap = (shape === "closed" ? 2 : 5.5) * k, h = 5.5 * k, foot = 3 * k;
+      ctx.setLineDash([]);
       ctx.beginPath();
-      ctx.arc(p.at[0], p.at[1], 10, 0, 2 * Math.PI);
+      for (const side of [-1, 1]) {
+        ctx.moveTo(x + side * (gap - foot), y - h);
+        ctx.lineTo(x + side * gap, y - h);
+        ctx.lineTo(x + side * gap, y + h);
+        ctx.lineTo(x + side * (gap - foot), y + h);
+      }
+      ctx.stroke();
+    };
+
+    for (const p of byRank(L.pieces)) line(p.a, p.b, STYLE[stateOf(p.index)]);
+    for (const p of byRank(L.points)) {
+      const state = stateOf(p.index), s = STYLE[state];
+      if (p.tick) line(p.tick[0], p.tick[1], s, 2, []);
+      use(s, state === "current" ? 2.5 : 1.8, []);
+      ctx.beginPath();
+      ctx.arc(p.at[0], p.at[1], 9 * k, 0, 2 * Math.PI);
       ctx.fillStyle = "rgba(10, 12, 16, 0.82)";
       ctx.fill();
-      ctx.lineWidth = stateOf(p.index) === "current" ? 3.5 : 2.5;
       ctx.stroke();
       ctx.fillStyle = s.color;
-      ctx.font = "700 13px Inter, sans-serif";
+      ctx.font = `700 ${11 * k}px Inter, sans-serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(String(p.index + 1), p.at[0], p.at[1] + 0.5);
-      ctx.textAlign = "left";
-      if (p.label) tag(ctx, p.label, p.at[0] + 14, p.at[1] - 16, s.color);
+      ctx.fillText(String(p.index + 1), p.at[0], p.at[1] + 0.5 * k);
+      if (p.label) tag(p.label, p.at[0] + 12 * k, p.at[1] - 14 * k, s.color);
     }
-    for (const m of [...L.marks].sort((a, b) => rank(a.index) - rank(b.index))) {
+    for (const m of byRank(L.marks)) {
       const s = STYLE[stateOf(m.index)];
-      const x = m.at[0] + m.offset, y = m.at[1];
+      const x = m.at[0] + (17 + 20 * m.slot) * k, y = m.at[1];
       ctx.globalAlpha = s.alpha;
       ctx.fillStyle = "rgba(10, 12, 16, 0.82)";
-      ctx.fillRect(x - 12, y - 11, 24, 22);
-      useStyle(ctx, { ...s, dash: [], width: 2.5 });
-      bracket(ctx, x, y, m.shape);
-      if (m.label) tag(ctx, m.label, x + 14, y, s.color);
+      ctx.fillRect(x - 9 * k, y - 9 * k, 18 * k, 18 * k);
+      use(s, 2, []);
+      bracket(x, y, m.shape);
+      if (m.label) tag(m.label, x + 12 * k, y, s.color);
     }
     ctx.globalAlpha = 1;
     ctx.setLineDash([]);
   }
 
-  const api = { states, layout, draw };
+  const api = { items, ended, states, layout, draw };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.PathOverlay = api;
 })(typeof window !== "undefined" ? window : this);

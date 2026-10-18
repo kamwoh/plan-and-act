@@ -80,7 +80,11 @@ class Agent:
                  "check": env.check_name, "system_prompt": self.system,
                  "use_lessons": self.use_lessons, "saved_lessons": list(self.saved_lessons)}
         if hasattr(env, "cameras"):  # the page draws the planned path on the camera images with these
-            start["cameras"] = await call(env.cameras)
+            try:
+                start["cameras"] = await call(env.cameras)
+            except Exception as e:  # noqa: BLE001  the run goes on without the overlay
+                logging.getLogger(__name__).warning("no camera data for the path overlay: %s: %s",
+                                                    type(e).__name__, e)
         emit("run_start", start)
         status = "error"  # kept when a step raises
         try:

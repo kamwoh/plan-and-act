@@ -1,5 +1,6 @@
 """The camera data of a normal run, and the projection and the path overlay of the page."""
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -44,19 +45,42 @@ async def test_a_run_without_camera_data_has_none_in_run_start():
     assert "cameras" not in dict(rec.events)["run_start"]
 
 
+def _colour_centroid(img, rgba):
+    """The centre of the pixels of a pure-coloured object, in the pixel convention of the projection: the
+    centre of pixel (0, 0) is at (0.5, 0.5)."""
+    import numpy as np
+    ch = int(np.argmax(rgba[:3]))
+    a, b = (i for i in range(3) if i != ch)
+    px = img.astype(int)
+    mask = (px[..., ch] > 60) & (px[..., ch] > px[..., a] + 70) & (px[..., ch] > px[..., b] + 70)
+    ys, xs = np.nonzero(mask)
+    assert len(xs) > 100, "the object is not in the image"
+    return [float(xs.mean()) + 0.5, float(ys.mean()) + 0.5]
+
+
+# The page projection against MuJoCo's own render. The colour centroid of a 4 cm cube is not exactly its
+# projected centre: the camera sees its top and some sides. Measured over seeds 0 to 2, this costs at most
+# 1.6 px, so the limit stays at 2 px. The front camera of the drawer scene is its side camera.
+CUBES = {"cubes": ["red_cube", "blue_cube"], "drawer": ["red_cube"]}
+
+
 @pytest.mark.assets
 @pytest.mark.parametrize("scene", ["cubes", "drawer"])
-def test_the_page_projection_matches_mujoco(scene, tmp_path):
+@pytest.mark.parametrize("seed", [0, 2])
+def test_the_page_projection_matches_the_mujoco_render(scene, seed, tmp_path):
     from armmind.sim.planview import cameras
-    env = _env(scene)
+    env = _env(scene, seed)
     try:
-        cube = env.world.objects[0].name
-        points = [[x, y, 0.0] for x in (-1.0, 1.0) for y in (-1.0, 1.0)]  # the corners of the table plane
-        points += [[0.2, -0.4, 0.0], [0.8, 0.4, 0.0], [float(v) for v in env.world.object_pos(cube)]]
-        cases = [{"camera": c, "points": points, "pixels": env.cams.project(c["name"], points).tolist()}
-                 for c in cameras(env.world, env.cams.w, env.cams.h)]
+        cases = []
+        for c in cameras(env.world, env.cams.w, env.cams.h):
+            img = env.cams.render(c["name"])
+            objs = [o for o in env.world.objects if o.name in CUBES[scene]]
+            cases.append({"camera": c, "limit": 2.0,
+                          "points": [[float(v) for v in env.world.object_pos(o.name)] for o in objs],
+                          "pixels": [_colour_centroid(img, [float(v) for v in o.rgba.split()]) for o in objs]})
     finally:
         env.close()
+    assert {c["camera"]["name"] for c in cases} == {"front", "top"}
     (tmp_path / "cases.json").write_text(json.dumps(cases))
     r = subprocess.run(["node", str(JS / "camproj_check.js"), str(tmp_path / "cases.json")],
                        capture_output=True, text=True, check=False)
@@ -99,7 +123,6 @@ def test_the_overlay_state_logic_and_layout():
 
 
 def test_the_overlay_and_the_projection_hold_no_arm_names():
-    import re
     for name in ("overlay.js", "camproj.js"):
         js = (WEB / name).read_text()
         words = r"\b(arm|panda|franka|gripper|finger\w*|tcp|cube\w*|drawer|tray|move_to|grasp\w*)\b"
@@ -134,10 +157,55 @@ def test_the_overlay_clears_on_a_new_run_a_preview_and_a_reset():
 
 def test_the_first_plan_stays_at_the_top_of_the_todo_column():
     html, js = (WEB / "index.html").read_text(), (WEB / "app.js").read_text()
-    col = _body(html, "<h2>To-do</h2>", "</div>")
+    col = _body(html, "<h2>To-do</h2>", "</ul>")
     assert col.index('id="first_plan"') < col.index('id="todo"')
     handler = _body(js, "function onEvent(ev, replay = false)")
     reply = handler[handler.index('ev.kind === "reply"'):handler.index('ev.kind === "action"')]
     assert "showFirstPlan(ev)" in reply and '$("first_plan").hidden' in reply  # only the first reply of a run
     assert '$("first_plan").hidden = true;' in _body(js, "function emptyMemo()")
     assert ".first-plan .fp-body { max-height: 2.8em;" in (WEB / "style.css").read_text()  # 2 lines, folded
+
+
+async def test_a_camera_data_error_still_gives_run_start_and_run_end(caplog):
+    from tests.fakes import FakeEnv
+
+    class BrokenCameras(FakeEnv):
+        def cameras(self):
+            raise RuntimeError("no renderer")
+
+    rec = Recorder()
+    status = await Agent(FakeBackend([]), AgentConfig(max_steps=1)).run(BrokenCameras(), direct, rec)
+    assert rec.kinds()[0] == "run_start" and rec.kinds()[-1] == "run_end" and status == "llm_error"
+    assert "cameras" not in dict(rec.events)["run_start"]
+    assert "no camera data" in caplog.text
+
+
+def test_a_plan_from_another_tab_clears_the_old_path():
+    handler = _body((WEB / "app.js").read_text(), "function onEvent(ev, replay = false)")
+    other = handler[handler.index("if (ev.run_id !== planRunId) {"):]
+    other = other[:other.index("}")]
+    assert "clearPath();" in other and "runKey++;" in other
+
+
+def test_the_path_shows_only_over_an_image_of_its_run():
+    js = (WEB / "app.js").read_text()
+    assert "imageKey = runKey;" in _body(js, "function showImage(id, src)")
+    assert "key: runKey" in _body(js, "function setPath(step, cams, start, actions)")
+    assert "imageKey === stepPath.key" in _body(js, "function drawPath()")
+    assert "runKey++;" in _body(js, "async function loadPreview()")
+
+
+def test_the_overlay_text_keeps_its_screen_size():
+    js = (WEB / "app.js").read_text()
+    assert "cam.width / shown" in _body(js, "function drawPath()") and "new ResizeObserver(" in js
+    overlay = (WEB / "overlay.js").read_text()
+    assert "function draw(canvas, cam, path, actionStates, scale = 1)" in overlay
+    assert re.search(r"font = `600 \$\{\d+ \* k\}px", overlay) and re.search(r"font = `700 \$\{\d+ \* k\}px", overlay)
+
+
+def test_the_first_plan_box_is_a_div_with_keys_and_hides_well():
+    html, js, css = (WEB / "index.html").read_text(), (WEB / "app.js").read_text(), (WEB / "style.css").read_text()
+    tag = re.search(r'<div id="first_plan"[^>]*>', html).group(0)
+    assert 'role="button"' in tag and 'tabindex="0"' in tag and 'aria-expanded="false"' in tag and " hidden" in tag
+    assert ".first-plan[hidden] { display: none; }" in css
+    assert '"Enter"' in js and '" "' in js and "toggleFirstPlan" in js
