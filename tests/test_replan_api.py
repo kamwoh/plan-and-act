@@ -1,5 +1,6 @@
 """POST /api/plan/{id}/replan with fake parts."""
 import json
+import time
 
 from fastapi.testclient import TestClient
 
@@ -123,6 +124,9 @@ def test_replan_of_round_5_is_409(tmp_path):
             wait_idle(c)
             run_id = r.json()["run_id"]
             assert run_events(tmp_path, run_id)[0]["round"] == n
+            if n == 5:  # the round comes before the missing execution
+                r = c.post(f"/api/plan/{run_id}/replan")
+                assert r.status_code == 409 and "5" in r.json()["detail"]
             assert c.post(f"/api/plan/{run_id}/execute").status_code == 200
             wait_idle(c)
         r = c.post(f"/api/plan/{run_id}/replan")
@@ -138,3 +142,39 @@ def test_replan_lessons_reach_the_store(tmp_path):
         saved = c.get("/api/lessons", params={"scene": "cubes"}).json()
     assert [(s["text"], s["run"], s["outcome"]) for s in saved] == [
         ("Closing on the near edge slipped.", second, "success")]
+
+
+def test_replan_after_a_stopped_execution_says_the_person_stopped_it(tmp_path):
+    import threading
+
+    gate = threading.Event()
+
+    def factory(scene, task, instruction, seed, show_positions, on_frame):
+        env = true_factory(scene, task, instruction, seed, show_positions, on_frame)
+
+        def execute_plan(keyframes, should_stop, on_action=None):
+            for i in range(3):
+                on_action(i, 7)
+            while not should_stop():
+                gate.wait(0.01)
+            return {"actions": ["a"] * 7, "results": ["r"] * 3, "stopped": None, "success": False,
+                    "status": "cancelled"}
+
+        env.execute_plan = execute_plan
+        return env
+
+    backend = FakeBackend([good_plan(), good_plan()])
+    with TestClient(create_app(backend, factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
+        run_id = c.post("/api/plan", json={"instruction": PICK}).json()["run_id"]
+        wait_idle(c)
+        assert c.post(f"/api/plan/{run_id}/execute").status_code == 200
+        while sum(e["kind"] == "action" for e in run_events(tmp_path, run_id)) < 3:
+            time.sleep(0.01)
+        c.post("/api/stop")
+        wait_idle(c)
+        assert c.post(f"/api/plan/{run_id}/replan").status_code == 200
+        wait_idle(c)
+    msg = backend.sent[-1][0]
+    assert "The person stopped the execution after action 3 of 7." in msg.text
+    assert "automatic check" not in msg.text and "All actions ran" not in msg.text
+    assert len(msg.images) == 4  # the end images exist, so they go

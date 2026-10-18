@@ -1,6 +1,7 @@
 """The run history API: GET /api/runs, /api/runs/{id} and /api/runs/{id}/images/{name}."""
 import json
 import os
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -343,7 +344,7 @@ def test_open_history_list_refreshes_when_a_run_ends():
 
 def test_history_and_prompt_buttons_have_short_text_labels():
     html = _web("index.html")
-    assert 'id="prompt_btn">Prompt <small' in html
+    assert re.search(r'id="prompt_btn"[^>]*>Prompt <small', html)
     history = html[html.index('id="history_btn"'):]
     assert "</svg>History</button>" in history[:history.index("</button>") + 9]
 

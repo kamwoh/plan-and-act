@@ -31,7 +31,7 @@ def test_rounds_replaces_max_steps():
     assert 'id="max_steps"' not in html
     assert re.search(r'<input id="rounds" type="number" value="3" min="1" max="5">', html)
     body = _body(_web("app.js"), "async function startPlan")
-    assert 'auto: $("auto").checked' in body and 'rounds: Number($("rounds").value)' in body
+    assert 'auto: $("auto").checked' in body and 'rounds: roundsValue($("rounds").value)' in body
 
 
 def test_the_auto_switch_storage_uses_try_catch():
@@ -84,3 +84,43 @@ def test_enter_in_the_instruction_submits_the_form():
     key = js[js.index('$("instruction").addEventListener("keydown"'):]
     key = key[:key.index("});")]
     assert '"Enter"' in key and "e.shiftKey" in key and '$("run").requestSubmit()' in key
+
+
+def test_the_page_reads_the_auto_loop_from_the_state():
+    js = _web("app.js")
+    assert "autoLoop = Boolean(state.auto)" in _body(js, "async function renderPreview")
+    sync = _body(js, "async function syncState")
+    assert "/api/state" in sync and "autoLoop = Boolean(state.auto)" in sync
+    assert "syncState()" in _body(js, "function connect")
+
+
+def test_exec_start_sets_the_round_of_the_plan():
+    handler = _body(_web("app.js"), "function onEvent(ev, replay = false)")
+    start = handler[handler.index('ev.kind === "exec_start"'):handler.index('ev.kind === "exec_end"')]
+    assert "planRound = ev.round || 1" in start
+
+
+def test_prompt_button_says_it_edits_the_step_prompt():
+    html = _web("index.html")
+    button = re.search(r'<button[^>]*id="prompt_btn"[^>]*>', html).group(0)
+    assert "step-by-step" in button and "/api/run" in button and "Plan uses its own prompt" in button
+    head = re.search(r'<h2 id="prompt_title">([^<]*)</h2>', html).group(1)
+    assert "step-by-step" in head.lower()
+    dialog = _body(html, '<dialog id="prompt_dialog"', "</dialog>")
+    assert "Plan uses its own prompt" in dialog
+
+
+def test_a_second_execute_revokes_the_old_end_images():
+    handler = _body(_web("app.js"), "function onEvent(ev, replay = false)")
+    end = handler[handler.index('ev.kind === "exec_end"'):handler.index('ev.kind === "loop_end"')]
+    assert "URL.revokeObjectURL" in end
+    assert end.index("URL.revokeObjectURL") < end.index("stepImages[ev.step] = ")
+
+
+@pytest.mark.parametrize("value, want", [("", 3), ("0", 1), ("9", 5), ("2", 2), ("abc", 3), ("2.6", 3)])
+def test_rounds_value_falls_back_and_clamps(value, want):
+    body = _body(_web("app.js"), "function roundsValue")
+    script = f"{body}\n}}\nconsole.log(roundsValue({value!r}));"
+    out = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
+    assert int(out) == want
+    assert 'rounds: roundsValue($("rounds").value)' in _body(_web("app.js"), "async function startPlan")

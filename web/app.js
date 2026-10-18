@@ -801,6 +801,7 @@ async function loadPreview() {
 async function renderPreview(seq) {
   try {
     const state = await (await fetch("/api/state")).json();
+    autoLoop = Boolean(state.auto);
     setRunning(state.running);
     if (running) return;
     const q = `scene=${encodeURIComponent(sceneName)}&seed=${encodeURIComponent($("seed").value || 0)}`;
@@ -899,10 +900,17 @@ async function startPlan() {
     seed: Number($("seed").value),
     use_lessons: $("use_lessons").checked,
     auto: $("auto").checked,
-    rounds: Number($("rounds").value),
+    rounds: roundsValue($("rounds").value),
   };
   beginRun("planning");
   if (await postJson("/api/plan", body)) setRunning(true);
+}
+
+// The Rounds field as a whole number from 1 to 5 (MAX_ROUND). An empty or bad field gives 3.
+function roundsValue(text) {
+  const n = Math.round(Number(text));
+  if (String(text).trim() === "" || !Number.isFinite(n)) return 3;
+  return Math.min(5, Math.max(1, n));
 }
 
 // ---- The Auto switch ----
@@ -1004,6 +1012,7 @@ function onEvent(ev, replay = false) {
         runKey++;
         clearPath();
         planRunId = ev.run_id;
+        planRound = ev.round || 1;
       }
       setStatus("running the plan", "moving");
       setViewMode("camera");  // the live frames; a saved run keeps the imagined video
@@ -1013,7 +1022,11 @@ function onEvent(ev, replay = false) {
   } else if (ev.kind === "exec_end") {
     if (!replay && !autoLoop) setRunning(false);
     if (!replay && $("history_dialog").open) fillHistory();
-    if (ev.front_png && ev.top_png) stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };
+    if (ev.front_png && ev.top_png) {
+      const old = stepImages[ev.step];  // a second Execute of the same plan has the same step
+      if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
+      stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };
+    }
     setCamState("ended");
     const endItem = onExecEnd(ev);
     const pred = ev.prediction ? predictionEntry(ev.prediction) : null;
@@ -1550,8 +1563,20 @@ async function loadRun(run) {
 $("history_btn").addEventListener("click", openHistory);
 $("history_close").addEventListener("click", () => $("history_dialog").close());
 
+// Read the busy state and the Auto loop from the server, for example after the socket connects again.
+async function syncState() {
+  try {
+    const state = await (await fetch("/api/state")).json();
+    autoLoop = Boolean(state.auto);
+    setRunning(state.running);
+  } catch (err) {
+    // the server is not there: the next connect tries again
+  }
+}
+
 function connect() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
+  ws.onopen = () => syncState();
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
     if (msg.type === "frame") {

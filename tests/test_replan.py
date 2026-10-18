@@ -129,3 +129,15 @@ async def test_replan_lessons_with_the_switch_off_are_not_saved(tmp_path):
     agent = Agent(FakeBackend([good_plan(body)]), store=store, use_lessons=False, run_id="r2")
     await agent.plan(PlanEnv(), direct, Recorder(), feedback=feedback())
     assert store.load("cubes") == []
+
+
+def test_replan_text_after_a_cancelled_execution():
+    text = build_plan_text("s", "t", OBS, None, (),
+                           feedback(status="cancelled", stopped=None, stopped_action=None, ran=3, total=10))
+    assert "The person stopped the execution after action 3 of 10." in text
+    assert "automatic check" not in text and "All actions ran." not in text and "Image 3" in text
+
+
+def test_replan_text_after_an_error_has_no_check_line():
+    text = build_plan_text("s", "t", OBS, None, (), feedback(status="error", stopped=None, stopped_action=None))
+    assert "automatic check" not in text and "All actions ran." not in text

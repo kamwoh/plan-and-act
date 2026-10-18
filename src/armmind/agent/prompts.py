@@ -243,6 +243,8 @@ class Feedback:
     parent: str  # the run id of the last plan
     round: int  # the round of the new plan
     end_step: int | None  # the step of the end images in the parent run
+    ran: int = 0  # the actions that started before a cancel
+    total: int = 0  # the actions of the whole plan
 
 
 def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
@@ -251,11 +253,14 @@ def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
     lines = [f"This is a re-plan, round {f.round}. Your last plan ran once in the physics.",
              f"Your last plan: {last}",
              f"Execution status: {f.status}."]
-    if f.check:
-        lines.append(f"The automatic check says the task is {'solved' if f.success else 'not solved'}.")
-    else:
-        lines.append("There is no automatic check for this task.")
-    if f.stopped:
+    if f.status not in ("cancelled", "error"):  # the check runs only at the end of a whole execution
+        lines.append(f"The automatic check says the task is {'solved' if f.success else 'not solved'}."
+                     if f.check else "There is no automatic check for this task.")
+    if f.status == "cancelled":
+        lines.append(f"The person stopped the execution after action {f.ran} of {f.total}.")
+    elif f.status == "error":
+        lines.append("The execution failed with an error in the simulation.")
+    elif f.stopped:
         action = f" ({f.stopped_action})" if f.stopped_action else ""
         lines.append(f"The execution stopped at action {f.stopped['after']} of {f.stopped['of']}{action}: "
                      f"{f.stopped['reason']}.")

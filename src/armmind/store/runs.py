@@ -153,7 +153,7 @@ class RunStore:
 
     def plan(self, run_id: str) -> dict | None:
         """The run_start and the plan event of a finished plan run, or None. "execution" holds the events of
-        the last execution ({"start", "step", "end"}), or None when the plan has not run yet."""
+        the last execution ({"start", "step", "end", "actions"}), or None when the plan has not run yet."""
         folder = self.folder(run_id)
         if folder is None:
             return None
@@ -168,9 +168,11 @@ class RunStore:
                     plan = ev
                 elif kind == "exec_start":
                     executions += 1
-                    last = {"start": ev, "step": None, "end": None}
+                    last = {"start": ev, "step": None, "end": None, "actions": 0}
                 elif kind in ("step", "exec_end") and last is not None:
                     last["step" if kind == "step" else "end"] = ev
+                elif kind == "action" and last is not None and last["end"] is None:
+                    last["actions"] += 1  # the actions that started
         except OSError:
             return None
         if not (start and start.get("mode") == "plan" and plan and isinstance(plan.get("view"), dict)

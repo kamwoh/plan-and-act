@@ -187,9 +187,11 @@ def _feedback(found: dict, history: RunStore) -> Feedback | None:
         except OSError:
             images = ()
     objects, keyframes = _reply_format(found["plan"])
+    total = len(actions) or len(ex["start"].get("action_data") or [])
     return Feedback(objects, keyframes, str(end.get("status") or "error"), bool(ex["start"].get("check")),
                     bool(end.get("success")), stopped, stopped_action, images, run_id,
-                    plan_round(found["start"]) + 1, end.get("step") if images else None)
+                    plan_round(found["start"]) + 1, end.get("step") if images else None,
+                    ran=ex["actions"], total=total)
 
 
 def saved_plan(found: dict) -> tuple[Scene, Task | None, str, int, tuple[Keyframe, ...]] | None:
@@ -227,6 +229,7 @@ class Runner:
         self._stopper: Callable[[], Awaitable[None]] | None = None  # stops the active run, plan, execution or loop
         self.run_dir: Path | None = None
         self.auto_view_s = AUTO_VIEW_S
+        self.auto = False  # True while the Auto loop runs
 
     @property
     def running(self) -> bool:
@@ -263,7 +266,7 @@ class Runner:
         return log.dir
 
     def _execute_part(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
-                      keyframes: tuple[Keyframe, ...], step: int, view: dict | None):
+                      keyframes: tuple[Keyframe, ...], step: int, view: dict | None, round_no: int = 1):
         """The stopper, the before hook and the session body of one execution of a saved plan."""
         cancel = threading.Event()
 
@@ -273,6 +276,7 @@ class Runner:
         def before(emit) -> None:  # before the env, so that a failed start still has a pair of events
             emit("exec_start", {"run_id": folder.name, "scene": scene.name, "instruction": instruction, "seed": seed,
                                 "check": task.name if task else None, "keyframes": len(keyframes), "step": step,
+                                "round": round_no,
                                 "action_data": [a.to_dict() for a in keyframe_actions(keyframes)]})
 
         async def body(env, call, emit) -> None:
@@ -298,13 +302,15 @@ class Runner:
         return stopper, before, body
 
     async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
-                            keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None) -> None:
+                            keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None,
+                            round_no: int = 1) -> None:
         """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed. No model is called.
         The events go to the end of the plan's own log. With the plan view, exec_end has the prediction score."""
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog.append_to(folder)
-        stopper, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view)
+        stopper, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view,
+                                                   round_no)
         self._launch(log, stopper, self._session(log, scene, task, instruction, seed, False, body,
                                                  end_kind="exec_end", before=before))
 
@@ -321,6 +327,7 @@ class Runner:
 
         async def loop() -> None:
             feedback, rounds_run, success, reason, folder = None, 0, False, "", log.dir
+            self.auto = True
             try:
                 while True:
                     rounds_run += 1
@@ -343,7 +350,7 @@ class Runner:
                         reason = "stopped"
                         break
                     exec_stop, before, body = self._execute_part(folder, scene, task, req.instruction, req.seed,
-                                                                 saved[4], 2, found["plan"].get("view"))
+                                                                 saved[4], 2, found["plan"].get("view"), rounds_run)
                     part[:] = [exec_stop]
                     exec_log = RunLog.append_to(folder)
                     await self._session(exec_log, scene, task, req.instruction, req.seed, False, body,
@@ -373,6 +380,7 @@ class Runner:
                                                         "success": success, "reason": reason})
                 finally:
                     end_log.close()
+                    self.auto = False
 
         self._launch(log, stopper, loop())
 
@@ -464,7 +472,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.get("/api/state")
     def state() -> dict:
-        return {"running": runner.running, "run_dir": str(runner.run_dir) if runner.run_dir else None}
+        return {"running": runner.running, "run_dir": str(runner.run_dir) if runner.run_dir else None,
+                "auto": runner.running and runner.auto}
 
     def same_origin(request: Request) -> None:
         if not _same_origin(request.headers):
@@ -493,7 +502,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
             raise HTTPException(404, "the plan cannot run")
         scene, task, instruction, seed, keyframes = saved
         await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
-                                   step=2 + found["executions"], view=found["plan"].get("view"))
+                                   step=2 + found["executions"], view=found["plan"].get("view"),
+                                   round_no=plan_round(found["start"]))
         return {"run_id": run_id}
 
     @app.post("/api/plan/{run_id}/replan", dependencies=[Depends(same_origin)])
@@ -504,11 +514,11 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         if runner.running:
             raise HTTPException(409, "a run is already active")
         start = found["start"]
+        if plan_round(start) >= MAX_ROUND:
+            raise HTTPException(409, f"this plan is round {plan_round(start)}, the last round of {MAX_ROUND}")
         feedback = _feedback(found, history)
         if feedback is None:
             raise HTTPException(404, "the plan has no finished execution yet: execute it first")
-        if plan_round(start) >= MAX_ROUND:
-            raise HTTPException(409, f"this plan is round {plan_round(start)}, the last round of {MAX_ROUND}")
         scene = SCENES.get(start.get("scene") or "")
         try:
             req = PlanRequest(instruction=start.get("instruction") or "", scene=start.get("scene") or "",

@@ -134,8 +134,15 @@ def test_state_follows_the_round(tmp_path):
         time.sleep(0.1)
         active = [r for r in c.get("/api/runs").json() if r["active"]]
         assert [r["round"] for r in active] == [2]
+        assert c.get("/api/state").json()["auto"] is True  # a page that loads now knows the loop
         c.post("/api/stop")
         wait_idle(c)
+        assert c.get("/api/state").json()["auto"] is False
+
+
+def test_exec_start_has_the_round(tmp_path):
+    _, rounds = run_loop(tmp_path, FakeBackend([good_plan(), good_plan()]), ["failed", "failed"], rounds=2)
+    assert [next(e for e in r if e["kind"] == "exec_start")["round"] for r in rounds] == [1, 2]
 
 
 def test_rounds_must_be_1_to_5(tmp_path):
