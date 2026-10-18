@@ -88,6 +88,46 @@
     };
   }
 
+  // ---- Boxes that turn only about z: [centre, full size, yaw in degrees] ----
+  function corners(box) {
+    const [[x, y], [w, d], yaw] = box;
+    const c = Math.cos(yaw * RAD), s = Math.sin(yaw * RAD);
+    return [[w / 2, d / 2], [-w / 2, d / 2], [-w / 2, -d / 2], [w / 2, -d / 2]].map(([u, v]) => [x + c * u - s * v, y + s * u + c * v]);
+  }
+
+  // True when the two boxes share a volume deeper than margin (a touch is not an overlap).
+  function boxesOverlap(a, b, margin = 1e-4) {
+    if (Math.abs(a[0][2] - b[0][2]) >= (a[1][2] + b[1][2]) / 2 - margin) return false;
+    const ca = corners(a), cb = corners(b);
+    for (const yaw of [a[2], a[2] + 90, b[2], b[2] + 90]) {  // the separating axis test in the plane
+      const ax = [Math.cos(yaw * RAD), Math.sin(yaw * RAD)];
+      const pa = ca.map((p) => p[0] * ax[0] + p[1] * ax[1]);
+      const pb = cb.map((p) => p[0] * ax[0] + p[1] * ax[1]);
+      if (Math.min(Math.max(...pa), Math.max(...pb)) - Math.max(Math.min(...pa), Math.min(...pb)) <= margin) return false;
+    }
+    return true;
+  }
+
+  function flatBox(e, pose) {  // the footprint as a tall box at z 0: round shapes do not turn
+    const yaw = e.shape === "cylinder" || e.shape === "sphere" ? 0 : pose.yaw;
+    return [[pose.xyz[0], pose.xyz[1], 0], [e.size[0], e.size[1], 1], yaw];
+  }
+
+  // A released entity falls onto the table (z 0) or onto the highest entity below it. It never rises.
+  // An entity without a size stays where it is. src/armmind/plan/track.py has the same rule in drop_pose.
+  function dropPose(name, byName, poses) {
+    const e = byName[name], p = poses[name];
+    if (!e || !e.size) return p;
+    const flat = flatBox(e, p);
+    let support = 0;
+    for (const [other, o] of Object.entries(byName)) {
+      if (other === name || !o.size || !poses[other]) continue;
+      const top = poses[other].xyz[2] + o.size[2] / 2;
+      if (top <= p.xyz[2] && boxesOverlap(flat, flatBox(o, poses[other]))) support = Math.max(support, top);
+    }
+    return { xyz: [p.xyz[0], p.xyz[1], Math.min(p.xyz[2], support + e.size[2] / 2)], yaw: p.yaw };
+  }
+
   // The angle in (-180, 180].
   function wrapDeg(a) {
     const w = (((a + 180) % 360) + 360) % 360 - 180;
@@ -103,10 +143,15 @@
   // The poses of a set of entities at time t. carriedAt(k, keyframe) names the entity of the set that the
   // agent carries after keyframe k, or gives null. movesAt(k, keyframe) gives the predicted moves of keyframe
   // k: [{ name, xyz, yaw }]. On the segment into keyframe k, each moved entity goes to its new pose with the
-  // timing of the agent. A carried entity does not move. src/armmind/plan/track.py has the same rules.
+  // timing of the agent. A carried entity does not move. A release drops the entity (see dropPose).
+  // src/armmind/plan/track.py has the same rules.
   function posesAt(track, entities, t, carriedAt, movesAt) {
     const poses = {};
-    for (const e of entities) poses[e.name] = { xyz: e.xyz.slice(), yaw: e.yaw || 0 };
+    const byName = {};
+    for (const e of entities) {
+      poses[e.name] = { xyz: e.xyz.slice(), yaw: e.yaw || 0 };
+      byName[e.name] = e;
+    }
     let carried = null;
     let t0 = 0;
     const kfs = track.keyframes;
@@ -121,8 +166,9 @@
       }
       const at = { xyz: kf.xyz, yaw: kf.yaw };
       const want = carriedAt(k, kf) || null;
-      if (carried && carried.name !== want) {
+      if (carried && carried.name !== want) {  // a release: the entity falls
         poses[carried.name] = toWorld(at, carried.local);
+        poses[carried.name] = dropPose(carried.name, byName, poses);
         carried = null;
       }
       for (const m of moves) if (free(m.name)) poses[m.name] = movePose(poses[m.name], m, 1);
@@ -135,8 +181,8 @@
 
   // Who carries and moves what. The belief follows the track, with its predicted moves. The true entities
   // follow the marks: a mark names the true entity that the agent holds after its keyframe, so a failed grasp
-  // moves nothing. A view without that field falls back to the name match. A prediction never moves a true
-  // entity: the truth is unknown until the plan runs.
+  // moves nothing. A view without that field falls back to the name match. A mark also gives the poses of the
+  // true entities that its keyframe moves, as the checks model them.
   function carriers(view) {
     const back = {};
     for (const [trueName, believed] of Object.entries(view.true_match || {})) back[believed] = trueName;
@@ -145,7 +191,8 @@
       believed: (k, kf) => kf.carrying,
       truth: (k, kf) => (marks[k] && "holds" in marks[k] ? marks[k].holds : (kf.carrying && back[kf.carrying]) || null),
       believedMoves: (k, kf) => kf.moves || [],
-      trueMoves: () => [],
+      // The checks shift a moved true object by the predicted displacement. The video uses the same poses.
+      trueMoves: (k) => (marks[k] && marks[k].moves) || [],
     };
   }
 

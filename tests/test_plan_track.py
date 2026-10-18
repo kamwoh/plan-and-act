@@ -108,3 +108,15 @@ def test_python_and_the_page_player_give_the_same_poses():
     for e in case["expect"]:
         p = poses_at(case["track"], case["entities"], e["t"])[e["name"]]
         assert p["xyz"] == pytest.approx(e["xyz"], abs=1e-9) and p["yaw"] == pytest.approx(e["yaw"], abs=1e-9)
+
+
+def test_a_release_drops_onto_the_table_or_the_highest_entity_below():
+    cube = {**CUBE, "shape": "box", "size": [0.04, 0.04, 0.04]}
+    plate = {"name": "plate", "shape": "cylinder", "size": [0.12, 0.12, 0.02], "xyz": [0.5, 0.25, 0.01], "yaw": 0.0}
+    tr = track(kf((0.5, 0.0, 0.02), "cube", t=1.0), kf((0.5, 0.25, 0.15), "cube", t=2.0),
+               kf((0.5, 0.25, 0.15), None, t=3.0), kf((0.5, 0.25, 0.3), t=4.0))
+    after = poses_after(tr, [cube, plate])
+    assert after[1]["cube"]["xyz"][2] == pytest.approx(0.15)
+    assert after[2]["cube"]["xyz"] == pytest.approx([0.5, 0.25, 0.04])  # on the plate top at 0.02
+    alone = poses_after(tr, [cube])
+    assert alone[2]["cube"]["xyz"] == pytest.approx([0.5, 0.25, 0.02])  # on the table

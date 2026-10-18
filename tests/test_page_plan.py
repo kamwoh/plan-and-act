@@ -229,3 +229,44 @@ def test_exec_end_adds_the_prediction_entry_also_in_a_replay():
     for part in ("predicted move", "real move", "PRED_LIMIT_CM", "s.partial", "agree", "p.keyframes"):
         assert part in body
     assert "const PRED_LIMIT_CM = 3;" in app
+
+
+NODE_TRUE_PICK = r"""
+const vm = require("vm"), fs = require("fs");
+const ctx = { window: {}, console };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), ctx);
+const P = ctx.window.Plan3D;
+const kf = (xyz, carrying, t, moves) => ({ xyz, yaw: 0, carrying, gap: 0, changes: false, t, t_done: t + 0.5, moves: moves || [] });
+const view = {
+  track: { start: { xyz: [0.6, 0.27, 0.02], yaw: 0, gap: 0 },
+           keyframes: [kf([0.6, 0.19, 0.02], null, 1, [{ name: "green cube", xyz: [0.6, 0.16, 0.02], yaw: 0 }]),
+                       kf([0.6, 0.156, 0.02], "green cube", 2), kf([0.6, 0.156, 0.2], "green cube", 3)], duration: 3.5 },
+  believed: [{ name: "green cube", shape: "box", size: [0.04, 0.04, 0.04], xyz: [0.6, 0.21, 0.02], yaw: 0 }],
+  true_start: [{ name: "green_cube", shape: "box", size: [0.04, 0.04, 0.04], xyz: [0.603, 0.206, 0.02], yaw: 0 }],
+  true_match: { green_cube: "green cube" },
+  marks: [{ ok: true, holds: null, moves: [{ name: "green_cube", xyz: [0.603, 0.156, 0.02], yaw: 0 }] },
+          { ok: true, holds: "green_cube", moves: [] }, { ok: true, holds: "green_cube", moves: [] }],
+};
+const c = P.carriers(view);
+const truth = (t) => P.posesAt(view.track, view.true_start, t, c.truth, c.trueMoves)["green_cube"].xyz;
+console.log(JSON.stringify([truth(1.0), truth(3.5)]));
+"""
+
+
+def test_real_start_picks_up_a_true_object_from_its_shifted_pose():
+    import json
+    out = subprocess.run(["node", "-e", NODE_TRUE_PICK, str(WEB / "plan3d.js")], check=True, capture_output=True,
+                         text=True).stdout
+    pushed, lifted = json.loads(out)
+    assert pushed == pytest.approx([0.603, 0.156, 0.02])  # the mark gives the true pose that the checks used
+    assert lifted == pytest.approx([0.603, 0.156, 0.2])  # carried from there: no 5 cm gap to the fingers
+
+
+def test_the_plan_check_shows_predicted_poses_and_the_prediction_shows_missed_objects():
+    app = _web("app.js")
+    check = _body(app, "function planCheckEntry")
+    assert "at its predicted pose" in check and "kf-muted" in check
+    assert "Real start uses the predicted moves after a push." in check
+    pred = _body(app, "function predictionEntry")
+    assert "not in the belief: " in pred and "xy more than 2 cm" in pred

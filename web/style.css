@@ -358,6 +358,7 @@ canvas[hidden] { display: none; }
 .kf-lines .mark-ok { color: var(--ok); }
 .kf-lines .mark-bad { color: var(--bad); }
 .kf-lines li.bad { color: #f3b0b0; }
+.kf-lines .kf-muted { color: var(--faint); }
 .ptable { width: 100%; border-collapse: collapse; font: 11px/1.45 var(--mono); }
 .ptable th { text-align: left; color: var(--faint); font-weight: 500; padding: 1px 4px; border-bottom: 1px solid var(--line); }
 .ptable td { padding: 1px 4px; color: #c9cfda; white-space: nowrap; }

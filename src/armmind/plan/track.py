@@ -9,6 +9,53 @@ from collections.abc import Callable
 Pose = dict  # {"xyz": [x, y, z], "yaw": degrees}
 
 
+# ---- Boxes that turn only about z ----
+Box = tuple[tuple[float, float, float], tuple[float, float, float], float]  # centre, full size, yaw in degrees
+
+
+def _corners(box: Box) -> list[tuple[float, float]]:
+    (x, y, _), (w, d, _), yaw = box
+    c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
+    return [(x + c * u - s * v, y + s * u + c * v) for u, v in ((w / 2, d / 2), (-w / 2, d / 2), (-w / 2, -d / 2),
+                                                                 (w / 2, -d / 2))]
+
+
+def boxes_overlap(a: Box, b: Box, margin: float = 1e-4) -> bool:
+    """True when the two boxes share a volume deeper than `margin` (a touch is not an overlap)."""
+    if abs(a[0][2] - b[0][2]) >= (a[1][2] + b[1][2]) / 2 - margin:
+        return False
+    ca, cb = _corners(a), _corners(b)
+    for yaw in (a[2], a[2] + 90.0, b[2], b[2] + 90.0):  # the separating axis test in the plane
+        ax = (math.cos(math.radians(yaw)), math.sin(math.radians(yaw)))
+        pa = [p[0] * ax[0] + p[1] * ax[1] for p in ca]
+        pb = [p[0] * ax[0] + p[1] * ax[1] for p in cb]
+        if min(max(pa), max(pb)) - max(min(pa), min(pb)) <= margin:
+            return False
+    return True
+
+
+def flat_box(e: dict, pose: Pose) -> Box:
+    """The footprint of an entity as a tall box at z 0: round shapes do not turn."""
+    yaw = 0.0 if e.get("shape") in ("cylinder", "sphere") else pose["yaw"]
+    return ((pose["xyz"][0], pose["xyz"][1], 0.0), (e["size"][0], e["size"][1], 1.0), yaw)
+
+
+def drop_pose(name: str, entities: dict[str, dict], poses: dict[str, Pose]) -> Pose:
+    """A released entity falls onto the table (z 0) or onto the highest entity below it. It never rises.
+    An entity without a size stays where it is. web/plan3d.js has the same rule in dropPose."""
+    e, p = entities.get(name), poses[name]
+    if e is None or not e.get("size"):
+        return p
+    flat, support = flat_box(e, p), 0.0
+    for other, o in entities.items():
+        if other == name or not o.get("size") or other not in poses:
+            continue
+        top = poses[other]["xyz"][2] + o["size"][2] / 2
+        if top <= p["xyz"][2] and boxes_overlap(flat, flat_box(o, poses[other])):
+            support = max(support, top)
+    return {"xyz": [p["xyz"][0], p["xyz"][1], min(p["xyz"][2], support + e["size"][2] / 2)], "yaw": p["yaw"]}
+
+
 def wrap_deg(a: float) -> float:
     """The angle in (-180, 180]."""
     w = (a + 180.0) % 360.0 - 180.0
@@ -82,10 +129,11 @@ def poses_at(track: dict, entities: list[dict], t: float,
     """The pose of each entity at time t.
 
     - carried_at(k, kf) names the entity that the agent carries after keyframe k, or gives None. A carried
-      entity follows the agent. A release leaves it where the agent lets go.
+      entity follows the agent. A release drops it onto the table or the highest entity below it.
     - moves_at(k, kf) gives the moves of keyframe k: [{"name", "xyz", "yaw"}]. On the segment into keyframe k,
       each moved entity goes to its new pose with the timing of the agent. A carried entity does not move."""
     poses = {e["name"]: {"xyz": list(e["xyz"]), "yaw": e.get("yaw") or 0.0} for e in entities}
+    by_name = {e["name"]: e for e in entities}
     carried = None  # (name, pose in the agent frame)
     t0 = 0.0
     for k, kf in enumerate(track["keyframes"]):
@@ -98,8 +146,9 @@ def poses_at(track: dict, entities: list[dict], t: float,
             break
         at = {"xyz": kf["xyz"], "yaw": kf["yaw"]}
         want = carried_at(k, kf) or None
-        if carried and carried[0] != want:
+        if carried and carried[0] != want:  # a release: the entity falls
             poses[carried[0]] = to_world(at, carried[1])
+            poses[carried[0]] = drop_pose(carried[0], by_name, poses)
             carried = None
         for m in moves:
             if m["name"] in poses and not (carried and carried[0] == m["name"]):

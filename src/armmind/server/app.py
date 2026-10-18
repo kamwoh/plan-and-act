@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import logging
 import threading
 import time
 from collections.abc import Awaitable, Callable
@@ -128,13 +129,14 @@ def _b64(b: bytes) -> str:
 
 def _prediction(view: dict | None, out: dict) -> dict | None:
     """The prediction score of an execution, or None when the view or the true poses are not there."""
-    if not isinstance(view, dict) or "true_after" not in out:
-        return None
+    if not isinstance(view, dict) or "true_after" not in out or not {"track", "believed"} <= set(view):
+        return None  # no view, or a view older than the plan player
     try:
         return prediction(view["track"], view["believed"], out["true_start"], out["true_after"],
                           view.get("true_match") or {})
-    except (KeyError, TypeError, ValueError, IndexError):
-        return None  # an old or broken view: the execution result stays
+    except Exception:  # a broken view: the execution result stays, and the log has the cause
+        logging.getLogger(__name__).exception("cannot score the prediction of the plan")
+        return None
 
 
 class Runner:

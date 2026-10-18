@@ -374,3 +374,56 @@ def test_an_early_stop_compares_only_the_keyframes_that_ran():
     assert [k["keyframe"] for k in s["keyframes"]] == [1]
     none = _score(_true((0.5, 0.0, 0.02)), [], track=track)
     assert none["rows"] == [] and none["summary"]["ran"] == 0 and none["summary"]["partial"] is True
+
+
+# ---- v1.11 fix 1: a moved true object settles with drop(), and the agent must clear it ----
+RED_BELIEF = [Entity("red cube", "box", (0.04, 0.04, 0.04), (0.5, -0.1, 0.02)),
+              Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.1, 0.02))]
+
+
+def _belief_checks(kfs):
+    return plan_checks(START, kfs, [CUBE, BLUE], ALIASES, set(), PARTS, no_reach_limit, open_state="open",
+                       gap=arm_gap, belief=RED_BELIEF)
+
+
+def test_a_moved_object_never_sinks_under_the_table():
+    from armmind.plan.formats import Move
+    kfs = [*pick(CUBE), Keyframe((0.5, 0.25, 0.2), 0.0, "closed", "red cube"),
+           Keyframe((0.5, 0.25, 0.08), 0.0, "open", None, "let go 6 cm up"),
+           Keyframe((0.5, 0.25, 0.2), 0.0, "closed", None, "up, close"),
+           Keyframe((0.6, 0.3, 0.2), 0.0, "closed", None, "aside", (Move("red cube", (0.5, 0.25, 0.02)),)),
+           Keyframe((0.5, 0.275, 0.2), 0.0, "closed", None, "above, beside the cube"),
+           Keyframe((0.5, 0.275, 0.02), 0.0, "closed", None, "down beside it: a finger hits it")]
+    marks = _belief_checks(kfs)
+    assert marks[6]["moves"] == [{"name": "red_cube", "xyz": [0.5, 0.25, pytest.approx(0.02)], "yaw": 0.0}]
+    assert "red_cube" in marks[8]["checks"]["collision"]  # the cube stands on the table, not 4 cm under it
+    assert marks[7]["predicted"] == ["red cube"] and marks[6]["predicted"] == []
+
+
+def test_the_agent_must_not_overlap_a_moved_object_at_the_end():
+    from armmind.plan.formats import Move
+    down = [Keyframe((0.5, 0.03, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None)]
+    short = Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.13, 0.02)),))
+    marks = _belief_checks([*down, short])
+    assert "overlaps blue_cube at its predicted pose" in marks[2]["checks"]["collision"]
+    clear = Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.155, 0.02)),))
+    assert _belief_checks([*down, clear])[2]["ok"]
+
+
+def test_moved_or_not_looks_at_xy_only():
+    lift = {**PUSH_TRACK, "keyframes": [_kf((0.5, 0.0, 0.02), 1.0, carrying="cube"),
+                                        _kf((0.5, 0.0, 0.2), 2.0, carrying="cube")]}
+    s = _score(_true((0.5, 0.0, 0.02)), [_true((0.5, 0.0, 0.02)), _true((0.5, 0.0, 0.2))], track=lift)
+    cube = s["rows"][0]
+    assert cube["predicted_cm"][2] == pytest.approx(18.0) and not cube["predicted_moved"] and not cube["real_moved"]
+
+
+def test_a_true_object_outside_the_belief_that_moved_is_a_disagreement():
+    from armmind.plan.scores import prediction
+    start = {**_true((0.5, 0.0, 0.02)), "can": {"xyz": [0.5, 0.1, 0.03], "yaw": 0.0},
+             "mug": {"xyz": [0.7, 0.1, 0.03], "yaw": 0.0}}
+    after = {**_true((0.5, 0.05, 0.02)), "can": {"xyz": [0.5, 0.14, 0.03], "yaw": 0.0},
+             "mug": {"xyz": [0.7, 0.11, 0.03], "yaw": 0.0}}  # the can went 4 cm, the mug only 1 cm
+    s = prediction(PUSH_TRACK, BELIEVED, start, [after, after], MATCH)
+    assert s["unmatched"] == [{"true_name": "can", "moved_cm": 4.0}]
+    assert s["summary"]["agree"] == 2 and s["summary"]["count"] == 3

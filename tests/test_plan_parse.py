@@ -191,3 +191,15 @@ def test_system_is_unchanged_and_plan_system_tells_about_moves():
         "9dfe9f6753b2b90d980e24c17d1d5f13f595fbcfb7787926f2b0b329c5739792"
     assert '"moves"' in PLAN_SYSTEM and "pushes, slides or knocks" in PLAN_SYSTEM
     assert "end of the keyframe" in PLAN_SYSTEM and "\"moves\"" not in SYSTEM
+
+
+def test_a_move_of_the_object_released_on_the_same_keyframe_raises():
+    held = kf(gripper="closed", holding="blue cube")
+    let_go = kf(gripper="open", holding="nothing", moves=[mv()])
+    with pytest.raises(ReplyError, match="falls by itself: move it in a later keyframe"):
+        parse_plan(plan(objects=two_objects(), keyframes=[held, let_go]))
+    later = parse_plan(plan(objects=two_objects(), keyframes=[held, kf(), kf(moves=[mv()])]))
+    assert later.keyframes[2].moves[0].name == "blue cube"
+    swap = kf(gripper="closed", holding="red cube", moves=[mv()])  # it lets go of the blue cube, holds the red one
+    with pytest.raises(ReplyError, match="falls by itself"):
+        parse_plan(plan(objects=two_objects(), keyframes=[held, swap]))

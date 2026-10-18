@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from armmind.plan.formats import Entity, Keyframe, build_track, match_entities, norm_name
-from armmind.plan.track import poses_after
+from armmind.plan.track import Box, boxes_overlap, drop_pose, poses_after
 
 SQUARE_TOL = 0.10  # two horizontal sizes within 10 % make a square footprint
 SAMPLE_M = 0.01  # the path check looks at the agent every 1 cm
@@ -75,31 +75,6 @@ def perception(believed: list[Entity], truth: list[Entity], aliases: dict[str, l
                         "matched": len(rows), "missing": len(missing), "invented": len(invented)}}
 
 
-# ---- Boxes that turn only about z ----
-Box = tuple[tuple[float, float, float], tuple[float, float, float], float]  # centre, full size, yaw in degrees
-
-
-def _corners(box: Box) -> list[tuple[float, float]]:
-    (x, y, _), (w, d, _), yaw = box
-    c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
-    return [(x + c * u - s * v, y + s * u + c * v) for u, v in ((w / 2, d / 2), (-w / 2, d / 2), (-w / 2, -d / 2),
-                                                                 (w / 2, -d / 2))]
-
-
-def boxes_overlap(a: Box, b: Box, margin: float = 1e-4) -> bool:
-    """True when the two boxes share a volume deeper than `margin` (a touch is not an overlap)."""
-    if abs(a[0][2] - b[0][2]) >= (a[1][2] + b[1][2]) / 2 - margin:
-        return False
-    ca, cb = _corners(a), _corners(b)
-    for yaw in (a[2], a[2] + 90.0, b[2], b[2] + 90.0):  # the separating axis test in the plane
-        ax = (math.cos(math.radians(yaw)), math.sin(math.radians(yaw)))
-        pa = [p[0] * ax[0] + p[1] * ax[1] for p in ca]
-        pb = [p[0] * ax[0] + p[1] * ax[1] for p in cb]
-        if min(max(pa), max(pb)) - max(min(pa), min(pb)) <= margin:
-            return False
-    return True
-
-
 def agent_boxes(parts: list[dict], xyz, yaw: float, gap: float, slide_axis=(1.0, 0.0, 0.0)) -> list[tuple[str, Box]]:
     c, s = math.cos(math.radians(yaw)), math.sin(math.radians(yaw))
     out = []
@@ -132,8 +107,10 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
     - gap(state, held): the slide gap of the agent parts in a state, with the held true entity or None.
     "holds" is the true object in the agent after the keyframe, or None.
     The path into a keyframe may touch the objects in the moves of that keyframe. After it, each moved true
-    object shifts by the predicted displacement: the move against the believed pose before the keyframe in
-    `belief`, as the page player has it. Without a belief, it goes to the move pose."""
+    object shifts in xy and yaw by the predicted displacement: the move against the believed pose before the
+    keyframe in `belief`, as the page player has it. Without a belief, it goes to the xy and yaw of the move.
+    It then falls as drop() says. The agent at the keyframe must not overlap it there.
+    "moves" gives these true poses, and "predicted" names the objects that later checks take from a prediction."""
     by_name = {t.name: t for t in truth}
     poses = {t.name: (t.xyz, t.yaw) for t in truth}  # where each true object is, as the plan moves them
     keys = {name: {norm_name(name), *(norm_name(a) for a in aliases.get(name, []) if a)} for name in by_name}
@@ -152,6 +129,7 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
     held, local = None, None  # the true object in the hand, and its pose in the hand frame
     keyframes = list(keyframes)
     believed = _believed_before(start, keyframes, belief or [])
+    predicted: dict[str, str] = {}  # true name -> believed name, for objects at a predicted pose
     marks = []
     for i, k in enumerate(keyframes):
         k: Keyframe
@@ -163,14 +141,21 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
         # A descent that stops open, with a close in place at the next keyframe, may touch its target too.
         nxt = keyframes[i + 1] if i + 1 < len(keyframes) else None
         near = target or (true_name(nxt.carrying) if nxt is not None and closes(k.state, nxt) else None)
+        later = [predicted[t] for t in predicted]  # the checks of this keyframe rest on these predicted poses
         moved = {t for m in k.moves if (t := true_name(m.name)) is not None}  # contact is expected there
-        checks["collision"] = _path_check(xyz, yaw, k, parts, gap(state, by_name.get(held)), held, near,
-                                          by_name, poses, moved)
+        agent_gap = gap(state, by_name.get(held))
+        checks["collision"] = _path_check(xyz, yaw, k, parts, agent_gap, held, near, by_name, poses, moved)
         if held is not None:  # the held object moves with the hand to the keyframe
             poses[held] = _to_world(k.xyz, k.yaw, local)
+        moved_now = []
         for m in k.moves:
             if (t := true_name(m.name)) is not None and t != held:
                 poses[t] = _shift(poses[t], m, believed[i].get(norm_name(m.name)))
+                poses[t] = drop(t, by_name, poses)
+                predicted[t] = m.name
+                moved_now.append(t)
+        if checks["collision"] == "ok":
+            checks["collision"] = _end_check(k, parts, agent_gap, moved_now, by_name, poses)
         if closing and k.carrying is not None:
             checks["grasp"] = _grasp_check(k, target, by_name, poses, round_names)
             if target is not None and checks["grasp"] == "ok":
@@ -181,7 +166,10 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
             info = f"{held}: {bottom * 100:.1f} cm above the table"
             poses[held] = drop(held, by_name, poses)
             held, local = None, None
-        marks.append({"ok": all(v == "ok" for v in checks.values()), "checks": checks, "info": info, "holds": held})
+        marks.append({"ok": all(v == "ok" for v in checks.values()), "checks": checks, "info": info, "holds": held,
+                      "moves": [{"name": t, "xyz": [_round(v, 6) for v in poses[t][0]], "yaw": _round(poses[t][1], 3)}
+                                for t in moved_now],
+                      "predicted": later})
         xyz, yaw, state = k.xyz, k.yaw, k.state
     return marks
 
@@ -202,28 +190,30 @@ def _believed_before(start: dict, keyframes: list[Keyframe], belief: list[Entity
 
 
 def _shift(pose, move, before: dict | None):
-    """A true pose after a predicted move: shifted by the move against the believed pose before it."""
-    if before is None:
-        return (tuple(move.xyz), move.yaw)
+    """A true pose after a predicted move: shifted in xy and yaw by the move against the believed pose before
+    it. The z stays: drop() settles it."""
     (x, y, z), yaw = pose
-    d = [move.xyz[j] - before["xyz"][j] for j in range(3)]
-    return ((x + d[0], y + d[1], z + d[2]), yaw + move.yaw - before["yaw"])
+    if before is None:
+        return ((move.xyz[0], move.xyz[1], z), move.yaw)
+    dx, dy = move.xyz[0] - before["xyz"][0], move.xyz[1] - before["xyz"][1]
+    return ((x + dx, y + dy, z), yaw + move.yaw - before["yaw"])
+
+
+def _end_check(k: Keyframe, parts, gap: float, moved: list[str], by_name: dict[str, Entity], poses: dict) -> str:
+    """The agent at the end of the keyframe must not overlap an object at its predicted pose."""
+    for name in moved:
+        box = _entity_box(by_name[name], poses[name])
+        for part, agent_box in agent_boxes(parts, k.xyz, k.yaw, gap):
+            if boxes_overlap(agent_box, box, COLLIDE_M):
+                return f"the {part.replace('_', ' ')} overlaps {name} at its predicted pose at the end of the keyframe"
+    return "ok"
 
 
 def drop(name: str, by_name: dict[str, Entity], poses: dict):
-    """A released object falls onto the table or onto the highest object below it."""
-    e, (centre, yaw) = by_name[name], poses[name]
-    flat = _entity_box(e, ((centre[0], centre[1], 0.0), yaw))
-    flat = (flat[0], (flat[1][0], flat[1][1], 1.0), flat[2])
-    support = 0.0
-    for other, o in by_name.items():
-        if other == name:
-            continue
-        top = poses[other][0][2] + o.size[2] / 2
-        box = _entity_box(o, poses[other])
-        if top <= centre[2] and boxes_overlap(flat, ((box[0][0], box[0][1], 0.0), (box[1][0], box[1][1], 1.0), box[2])):
-            support = max(support, top)
-    return ((centre[0], centre[1], min(centre[2], support + e.size[2] / 2)), yaw)  # it never rises
+    """A released object falls onto the table or onto the highest object below it (see track.drop_pose)."""
+    ents = {n: e.to_dict() for n, e in by_name.items()}
+    p = drop_pose(name, ents, {n: {"xyz": list(c), "yaw": y} for n, (c, y) in poses.items()})
+    return (tuple(p["xyz"]), p["yaw"])
 
 
 def _to_local(xyz, yaw: float, pose):
@@ -292,10 +282,12 @@ def prediction(track: dict, believed: list[dict], true_start: dict[str, dict], t
     - track and believed come from the plan view. The prediction follows the rules of the page player.
     - true_start and true_after give {"xyz", "yaw"} for each true name, before the plan and after each keyframe.
     - match maps a true name to a believed name.
-    The displacement error compares the two moves from their own starts, so the perception error stays out."""
+    The displacement error compares the two moves from their own starts, so the perception error stays out.
+    Moved or not looks at the xy distance. A true object without a believed match that moved more than 2 cm
+    is in "unmatched" and counts as a disagreement."""
     kfs = track["keyframes"]
     ran = min(len(true_after), len(kfs))
-    rows, lines = [], []
+    rows, lines, unmatched = [], [], []
     if ran:
         predicted = poses_after(track, believed)[:ran]
         start = {e["name"]: e for e in believed}
@@ -312,20 +304,26 @@ def prediction(track: dict, believed: list[dict], true_start: dict[str, dict], t
         for b, t in back.items():
             want, got = moves_at(ran - 1, b, t)
             p, t1 = predicted[ran - 1][b]["xyz"], true_after[ran - 1][t]["xyz"]
-            said, did = math.dist(want, (0, 0, 0)) > MOVED_M, math.dist(got, (0, 0, 0)) > MOVED_M
+            said, did = math.hypot(want[0], want[1]) > MOVED_M, math.hypot(got[0], got[1]) > MOVED_M
             rows.append({"name": b, "true_name": t, "predicted_cm": [_round(v * 100) for v in want],
                          "real_cm": [_round(v * 100) for v in got], "disp_cm": xy_cm(want, got),
                          "final_xy_cm": xy_cm(p, t1), "final_z_cm": _round((p[2] - t1[2]) * 100),
                          "predicted_moved": said, "real_moved": did, "agree": said == did})
+        for t in true_start:  # a true object that no belief names, which moved: the prediction missed it
+            if t in back.values() or t not in true_after[ran - 1]:
+                continue
+            t0, t1 = true_start[t]["xyz"], true_after[ran - 1][t]["xyz"]
+            if (d := math.hypot(t1[0] - t0[0], t1[1] - t0[1])) > MOVED_M:
+                unmatched.append({"true_name": t, "moved_cm": _round(d * 100)})
         for k in range(ran):
             for m in kfs[k].get("moves") or []:
                 t = back.get(m["name"])
                 lines.append({"keyframe": k + 1, "name": m["name"], "true_name": t,
                               "disp_cm": xy_cm(*moves_at(k, m["name"], t)) if t else None})
     disp = [r["disp_cm"] for r in rows]
-    return {"rows": rows, "keyframes": lines,
+    return {"rows": rows, "keyframes": lines, "unmatched": unmatched,
             "summary": {"mean_disp_cm": _round(sum(disp) / len(disp)) if disp else 0.0,
                         "max_disp_cm": max(disp, default=0.0),
                         "mean_final_xy_cm": _round(sum(r["final_xy_cm"] for r in rows) / len(rows)) if rows else 0.0,
-                        "agree": sum(r["agree"] for r in rows), "count": len(rows),
+                        "agree": sum(r["agree"] for r in rows), "count": len(rows) + len(unmatched),
                         "ran": ran, "of": len(kfs), "partial": ran < len(kfs)}}

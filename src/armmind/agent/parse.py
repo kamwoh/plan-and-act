@@ -199,6 +199,18 @@ def _plan_keyframe(i: int, k, warnings: list[str], names: dict[str, str]) -> Key
                     _moves(where, k, carrying, names))
 
 
+def _released_not_moved(keyframes: tuple[Keyframe, ...]) -> tuple[Keyframe, ...]:
+    """Refuse a move of the object that the same keyframe lets go: the player drops it by itself."""
+    before = None
+    for i, k in enumerate(keyframes):
+        lets_go = before is not None and (k.carrying is None or norm_name(k.carrying) != norm_name(before))
+        if lets_go and any(norm_name(m.name) == norm_name(before) for m in k.moves):
+            raise ReplyError(f"keyframe {i + 1}, moves: keyframe {i + 1} lets go of {before!r}. A released "
+                                 "object falls by itself: move it in a later keyframe")
+        before = k.carrying
+    return keyframes
+
+
 def parse_plan(obj) -> PlanReply:
     """Check a plan reply and turn it into entities and keyframes. A bad value raises ReplyError."""
     if not isinstance(obj, dict):
@@ -225,7 +237,7 @@ def parse_plan(obj) -> PlanReply:
             raise ReplyError(f"the object name {e.name!r} is there twice (also as {seen[key]!r}). "
                              "Give each object its own name")
         seen[key] = e.name
+    names = {norm_name(e.name): e.name for e in entities}
     return PlanReply(entities,
-                     tuple(_plan_keyframe(i, k, warnings, {norm_name(e.name): e.name for e in entities})
-                           for i, k in enumerate(keyframes)),
+                     _released_not_moved(tuple(_plan_keyframe(i, k, warnings, names) for i, k in enumerate(keyframes))),
                      summary.strip()[:SUMMARY_CHARS], tuple(warnings))

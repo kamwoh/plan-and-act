@@ -175,10 +175,10 @@ def test_a_real_execution_streams_frames_and_logs_the_check(tmp_path):
     assert end["status"] in ("success", "stopped", "failed") and isinstance(end["success"], bool)
     pred = end["prediction"]  # kept in the run log
     assert {r["true_name"] for r in pred["rows"]} == {"red_cube", "blue_cube", "green_cube"}
-    if pred["summary"]["ran"] >= 3:
-        line = pred["keyframes"][0]
-        assert (line["keyframe"], line["name"], line["true_name"]) == (3, "green cube", "green_cube")
-        assert line["disp_cm"] < 2.0
+    assert end["status"] == "success" and pred["summary"]["ran"] == 7 and pred["summary"]["partial"] is False
+    line = pred["keyframes"][0]  # the demo plan of seed 0 runs to the end
+    assert (line["keyframe"], line["name"], line["true_name"]) == (3, "green cube", "green_cube")
+    assert line["disp_cm"] < 2.0 and pred["summary"]["agree"] == 3 and pred["unmatched"] == []
 
 
 def test_exec_start_comes_before_the_env_is_made(tmp_path):
@@ -272,3 +272,39 @@ def test_a_stopped_execution_has_the_poses_of_the_keyframes_that_ran():
     out = _execute("cubes", "pick", 0, kfs)
     assert out["status"] == "stopped" and len(out["true_after"]) == 2  # keyframe 2 ran its close, then it stopped
     assert set(out["true_start"]) == {"red_cube", "blue_cube", "green_cube"}
+
+
+def test_the_prediction_of_an_old_or_broken_view(caplog):
+    from armmind.server.app import _prediction
+    out = {"true_start": {"red_cube": {"xyz": [0.5, 0.0, 0.02], "yaw": 0.0}},
+           "true_after": [{"red_cube": {"xyz": [0.5, 0.05, 0.02], "yaw": 0.0}}]}
+    track = {"start": {"xyz": [0.3, 0.0, 0.4], "yaw": 0.0}, "duration": 1.5,
+             "keyframes": [{"xyz": [0.5, 0.0, 0.1], "yaw": 0.0, "carrying": None, "t": 1.0, "t_done": 1.5}]}
+    believed = [{"name": "red cube", "xyz": [0.5, 0.0, 0.02], "yaw": 0.0}]
+    old = _prediction({"track": track, "believed": believed}, out)  # no true_match and no moves
+    assert old["rows"] == [] and old["unmatched"] == [{"true_name": "red_cube", "moved_cm": 5.0}]
+    assert _prediction({"track": track, "believed": believed, "true_match": {"red_cube": "red cube"}},
+                       out)["rows"][0]["real_cm"] == [0.0, 5.0, 0.0]
+    assert _prediction(None, out) is None and _prediction({"cameras": []}, out) is None
+    assert _prediction({"track": track, "believed": believed}, {"status": "done"}) is None
+    assert caplog.records == []
+    assert _prediction({"track": {"keyframes": "bad"}, "believed": believed}, out) is None
+    assert "cannot score the prediction" in caplog.text and "Traceback" in caplog.text
+
+
+@pytest.mark.assets
+def test_a_cancel_inside_a_keyframe_leaves_it_out_of_the_poses():
+    from armmind.agent.parse import parse_plan
+    from armmind.llm.fake import DEMO_PLAN
+    calls = []
+
+    def stop():  # the first keyframe is a move and a close: cancel between the two
+        calls.append(1)
+        return len(calls) > 1
+
+    out = _execute("cubes", "pick", 0, lambda env: list(parse_plan(DEMO_PLAN).keyframes), stop)
+    assert out["status"] == "cancelled" and len(out["results"]) == 1 and out["true_after"] == []
+    calls.clear()
+    stop3 = lambda: (calls.append(1), len(calls) > 3)[1]
+    out = _execute("cubes", "pick", 0, lambda env: list(parse_plan(DEMO_PLAN).keyframes), stop3)
+    assert len(out["results"]) == 3 and len(out["true_after"]) == 2

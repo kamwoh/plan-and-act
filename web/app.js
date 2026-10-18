@@ -1246,12 +1246,16 @@ function planCheckEntry(scores, keyframes = []) {
     const why = Object.entries(m.checks || {}).filter(([, v]) => v !== "ok").map(([k, v]) => `${k}: ${v}`);
     row.append(el("span", m.ok ? "✓" : "✕", m.ok ? "mark-ok" : "mark-bad"), el("span", ` ${i + 1}`, "n"),
                document.createTextNode([...why, m.info].filter(Boolean).join("; ") || "ok"));
+    if ((m.predicted || []).length) row.append(el("span", ` · ${m.predicted.map((n) => `${n}: at its predicted pose`).join(", ")}`, "kf-muted"));
     marks.append(row);
   });
   item.append(field("checks", marks));
   const moved = keyframes.map((k, i) => [i, k.moves || []]).filter(([, m]) => m.length)
     .map(([i, m]) => `${i + 1} · moves ${movesText(m)}`);
   if (moved.length) item.append(field("moves", lines(moved, "mono")));
+  if ((scores.marks || []).some((m) => (m.moves || []).length)) {
+    item.append(el("div", "Real start uses the predicted moves after a push.", "muted"));
+  }
   const exec = el("button", "▶ Execute plan", "btn exec-btn");
   exec.type = "button";
   exec.disabled = running;
@@ -1300,7 +1304,7 @@ function predictionEntry(p) {
       : "The execution stopped before the first keyframe ended: nothing to compare.", "muted"));
   }
   const rows = p.rows || [];
-  if (rows.length) {
+  if (rows.length || (p.unmatched || []).length) {
     const table = el("table", "", "ptable");
     const head = el("tr");
     for (const h of ["object", "predicted move", "real move", "error"]) head.append(el("th", h));
@@ -1317,9 +1321,16 @@ function predictionEntry(p) {
       tr.title = `true object: ${r.true_name} · final position error: xy ${r.final_xy_cm.toFixed(1)} cm, z ${signed(r.final_z_cm)} cm`;
       table.append(tr);
     }
+    for (const u of p.unmatched || []) {
+      const tr = el("tr");
+      const td = el("td", `not in the belief: ${u.true_name} moved ${u.moved_cm.toFixed(1)} cm`, "over");
+      td.colSpan = 4;
+      tr.append(td);
+      table.append(tr);
+    }
     item.append(table);
     item.append(el("div", `moves are x y z · error: the xy distance between the two moves · red: more than ${PRED_LIMIT_CM} cm`, "muted"));
-    item.append(el("div", `moved or not (more than 2 cm): ${s.agree} of ${s.count} agree · ` +
+    item.append(el("div", `moved or not (xy more than 2 cm): ${s.agree} of ${s.count} agree · ` +
       `final position error: mean xy ${(s.mean_final_xy_cm ?? 0).toFixed(1)} cm`));
   } else if (s.ran) {
     item.append(el("div", "No object of the belief matches a true object.", "muted"));
