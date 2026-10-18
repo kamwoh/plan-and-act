@@ -14,7 +14,7 @@ Needs Python 3.12, `uv` and a logged-in Claude Code CLI.
 
     uv run armmind serve          # http://127.0.0.1:8780
 
-Pick a scene, type an instruction, and press Plan to see Claude's plan as a 3D video. Then press Execute and Re-plan, or set the Auto switch to repeat plan, execute and re-plan until the auto-check passes.
+Pick a scene, type an instruction, and press Plan to see Claude's plan as a 3D video. Then press Execute and Re-plan, or set the Auto switch to repeat plan, execute and re-plan until the auto-check passes or Claude says done. With Continue on, a re-plan starts where the last execution ended.
 
 Run a task with a scripted solution, with no model:
 

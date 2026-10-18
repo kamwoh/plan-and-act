@@ -230,7 +230,7 @@ def _body(js, start, end="\n}\n"):
 def test_page_has_the_history_button_and_dialog():
     html = _web("index.html")
     assert 'id="history_btn"' in html and 'id="history_dialog"' in html and 'id="history_list"' in html
-    buttons = _body(html, '<div class="buttons">', "</div>")
+    buttons = _body(html, '<div class="buttons">', "</form>")  # the switches have their own div
     after_lessons = buttons.split('id="lessons_btn"', 1)[1].split("</button>", 1)[1]
     assert after_lessons.lstrip().startswith("<button") and 'id="history_btn"' in after_lessons.split("</button>")[0]
 

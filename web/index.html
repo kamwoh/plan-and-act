@@ -77,7 +77,10 @@
             </div>
             <div class="buttons">
               <button type="submit" class="btn primary" id="plan_btn" title="Claude writes its belief of the scene and the whole plan in one reply. Nothing moves until you execute it."><span aria-hidden="true">▶</span> Plan</button>
-              <label class="switch auto-switch" title="Auto: plan, execute and re-plan until the auto-check passes or the rounds end"><input id="auto" type="checkbox"><span class="track"></span>Auto</label>
+              <div class="loop-switches">
+                <label class="switch auto-switch" title="Auto: plan, execute and re-plan until the task is solved or the rounds end. With an auto-check, the check decides. Without one, Claude decides"><input id="auto" type="checkbox"><span class="track"></span>Auto</label>
+                <label class="switch continue-switch" title="On: a re-plan goes on from where the last execution ended. Off: a re-plan starts again from a fresh start of the scene. This sets Re-plan and the Auto loop"><input id="continue" type="checkbox" checked><span class="track"></span>Continue</label>
+              </div>
               <button type="button" class="btn" id="stop"><span aria-hidden="true">■</span> Stop</button>
               <button type="button" class="btn ghost" id="lessons_btn">Lessons <small id="lessons_tag" class="tag">0</small></button>
               <button type="button" class="btn ghost" id="history_btn" title="History: open an earlier run and read it on the page"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>History</button>

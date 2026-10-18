@@ -86,10 +86,10 @@ img[hidden] { display: none; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hint { color: var(--faint); font-size: 11px; }
 .controls { overflow: auto; padding: 12px; }
-/* The Plan button, the Auto switch and five more controls share one row at 1366 px wide: small gaps and paddings. */
-.controls .buttons { gap: 3px; }
+/* The Plan button, the Auto and Continue switches and four buttons share one row at 1366 px wide: small gaps and paddings. */
+.controls .buttons { gap: 2px; }
 .controls .tag { padding: 1px 4px; letter-spacing: 0.02em; }
-.controls .buttons .btn { padding: 8px 7px; gap: 5px; font-size: 12.5px; white-space: nowrap; }
+.controls .buttons .btn { padding: 8px 5px; gap: 5px; font-size: 12.5px; white-space: nowrap; }
 
 /* ---- Controls ---- */
 form { display: flex; flex-direction: column; gap: 8px; }
@@ -369,7 +369,9 @@ canvas[hidden] { display: none; }
 .run-badge.s-planned { background: rgba(180, 140, 255, 0.16); color: var(--think); }
 .run-mode { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px;
             border-radius: 4px; background: rgba(180, 140, 255, 0.16); color: var(--think); margin-right: 6px; }
-.controls .buttons .auto-switch { gap: 5px; padding: 0 3px 0 1px; white-space: nowrap; }
+.controls .buttons .loop-switches { display: flex; flex-direction: column; gap: 3px; padding: 0 2px 0 1px; }
+.controls .buttons .loop-switches .switch { gap: 5px; padding: 0; white-space: nowrap; font-size: 11.5px; }
+.done-note { color: var(--ok); font-weight: 600; }
 .btn.replan-btn { background: transparent; color: var(--accent); }
 .btn.replan-btn:hover { background: rgba(91, 140, 255, 0.12); }
 .run-round { background: rgba(91, 140, 255, 0.16); color: var(--accent); }

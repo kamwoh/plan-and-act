@@ -16,6 +16,8 @@ let player = null;         // the Plan3D player, made on the first plan
 let playerFailed = false;  // no WebGL: the page says so and keeps the camera images
 let planRunId = null;      // the id of the plan run on the page, for Execute and Re-plan
 let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
+let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
+let planDone = false;      // Claude's re-plan on the page says that the task is done
 const MAX_ROUND = 5;
 let autoLoop = false;      // a live Auto loop: the page stays busy from round to round until loop_end
 let feedbackImages = null; // a re-plan: the end images of the last round, as server URLs
@@ -545,7 +547,12 @@ function onRunStart(ev) {
   const sys = el("details");
   sys.append(el("summary", "System prompt"), el("pre", ev.system_prompt || ""));
   item.append(field("task", el("span", ev.instruction)));
-  if (ev.parent) item.append(field("re-plan", el("span", `of run ${ev.parent}: Claude sees that plan, its result and its end images`)));
+  if (ev.parent) {
+    const how = ev.round_mode === "continue"
+      ? "continue: the scene goes on from the end of that run, and Claude plans what is left"
+      : "from start: the scene starts again, and Claude also sees the end images";
+    item.append(field("re-plan", el("span", `of run ${ev.parent}: Claude sees that plan and its result · ${how}`)));
+  }
   if (ev.auto_rounds) item.append(field("auto", el("span", `the Auto loop runs at most ${ev.auto_rounds} round${ev.auto_rounds === 1 ? "" : "s"}`)));
   item.append(sys);
   const saved = ev.saved_lessons || [];
@@ -901,6 +908,7 @@ async function startPlan() {
     use_lessons: $("use_lessons").checked,
     auto: $("auto").checked,
     rounds: roundsValue($("rounds").value),
+    mode: roundMode(),
   };
   beginRun("planning");
   if (await postJson("/api/plan", body)) setRunning(true);
@@ -935,6 +943,33 @@ function writeAuto(on) {
 $("auto").checked = readAuto();
 $("auto").addEventListener("change", () => writeAuto($("auto").checked));
 
+// ---- The Continue switch: the mode of Re-plan and of the Auto loop after round 1 ----
+const CONTINUE_KEY = "armmind.continue";
+
+function readContinue() {
+  try {
+    return localStorage.getItem(CONTINUE_KEY) !== "false";  // on by default
+  } catch (err) {
+    return true;
+  }
+}
+
+function writeContinue(on) {
+  try {
+    localStorage.setItem(CONTINUE_KEY, on ? "true" : "false");
+  } catch (err) {
+    // storage is blocked: the choice lasts until the page closes
+  }
+}
+
+// "continue": a re-plan goes on from the end state of the last execution. "start": the scene starts again.
+function roundMode() {
+  return $("continue").checked ? "continue" : "start";
+}
+
+$("continue").checked = readContinue();
+$("continue").addEventListener("change", () => writeContinue($("continue").checked));
+
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
 
 // ---- Events from the server ----
@@ -958,10 +993,13 @@ function onEvent(ev, replay = false) {
     clearPlan();
     planRunId = ev.mode === "plan" ? ev.run_id : null;
     planRound = ev.round || 1;
+    planMode = ev.round_mode || null;
+    planDone = false;
     if (!replay) autoLoop = Boolean(ev.auto_rounds);
     runCams = ev.cameras || null;
     resetChat();
-    feedbackImages = ev.parent && ev.end_step ? endImages(ev.parent, ev.end_step) : null;
+    // A round that continues sends no end images: its own images show the end of the last round.
+    feedbackImages = ev.parent && ev.end_step && planMode !== "continue" ? endImages(ev.parent, ev.end_step) : null;
     emptyMemo();
     resetTotals();
     onRunStart(ev);
@@ -997,7 +1035,8 @@ function onEvent(ev, replay = false) {
     for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
     showLessons();
     planView = ev.view || null;
-    addEntry(planCheckEntry(ev.scores || {}, ev.keyframes || []));
+    planDone = Boolean(ev.done);
+    addEntry(planCheckEntry(ev.scores || {}, ev.keyframes || [], Boolean(ev.done)));
     if (ev.view) showPlan(ev.view);
   } else if (ev.kind === "exec_start") {
     const own = planView && ev.run_id === planRunId;  // the cameras and the start pose of the plan on the page
@@ -1013,6 +1052,7 @@ function onEvent(ev, replay = false) {
         clearPath();
         planRunId = ev.run_id;
         planRound = ev.round || 1;
+        planMode = ev.round_mode || null;
       }
       setStatus("running the plan", "moving");
       setViewMode("camera");  // the live frames; a saved run keeps the imagined video
@@ -1020,7 +1060,7 @@ function onEvent(ev, replay = false) {
     onExecStart(ev);
     if (own) setPath(ev.step, planView.cameras, planView.track && planView.track.start, ev.action_data);
   } else if (ev.kind === "exec_end") {
-    if (!replay && !autoLoop) setRunning(false);
+    if (!replay && !autoLoop && !ev.verdict_next) setRunning(false);  // a verdict call can follow
     if (!replay && $("history_dialog").open) fillHistory();
     if (ev.front_png && ev.top_png) {
       const old = stepImages[ev.step];  // a second Execute of the same plan has the same step
@@ -1033,6 +1073,12 @@ function onEvent(ev, replay = false) {
     if (planRunId && planRound < MAX_ROUND) (pred || endItem).append(replanButton());
     if (pred) addEntry(pred);
     setStatus(execText(ev), ev.success ? "success" : ev.status === "error" ? "bad" : "");
+    if (!replay && ev.verdict_next) setStatus(`${execText(ev)} · Claude judges the end images`, "thinking");
+  } else if (ev.kind === "verdict") {
+    if (!replay && !autoLoop) setRunning(false);
+    addTotals(ev.usage);
+    addEntry(verdictEntry(ev));
+    if (!autoLoop) setStatus(verdictText(ev), ev.done ? "success" : "");
   } else if (ev.kind === "loop_end") {
     if (!replay) {
       autoLoop = false;
@@ -1040,8 +1086,8 @@ function onEvent(ev, replay = false) {
       if ($("history_dialog").open) fillHistory();
     }
     addEntry(loopEndEntry(ev));
-    setStatus(ev.success ? `Auto loop · solved in round ${ev.rounds_run}` : `Auto loop ended · ${ev.reason}`,
-              ev.success ? "success" : "");
+    const solved = ev.judge === "claude" ? `Claude says done in round ${ev.rounds_run}` : `solved in round ${ev.rounds_run}`;
+    setStatus(ev.success ? `Auto loop · ${solved}` : `Auto loop ended · ${ev.reason}`, ev.success ? "success" : "");
   } else if (ev.kind === "bad_reply") {
     stepEvents[ev.step] = ev;
     addTotals(ev.usage);
@@ -1057,7 +1103,8 @@ function onEvent(ev, replay = false) {
     setCamState("ended");
     onRunEnd(ev);
     loadLessons();
-    if (ev.status === "planned" && autoLoop) setStatus("plan ready · the Auto loop executes it next", "success");
+    if (ev.status === "planned" && planDone) setStatus("Claude says the task is done", "success");
+    else if (ev.status === "planned" && autoLoop) setStatus("plan ready · the Auto loop executes it next", "success");
     else if (ev.status === "planned") setStatus("plan ready · read the plan check, then execute", "success");
     else if (ev.status === "success") setStatus("success · task solved", "success");
     else if (ev.status === "done") setStatus("done · Claude says finished", "success");
@@ -1249,7 +1296,7 @@ const signed = (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 
 function onPlan(ev) {
   endThinking();
-  const item = entry("claude", `← Claude · plan${roundText(planRound)}`, ev.step);
+  const item = entry("claude", `← Claude · plan${roundText(planRound)}${modeText(planMode)}`, ev.step);
   item.append(field("plan", el("span", ev.summary || "(no summary)", "plan")));
   const objects = (ev.objects || []).map((o) => `${o.name}: ${o.shape} ${o.size.map((v) => (v * 100).toFixed(1)).join("×")} cm, ` +
     `centre ${xyzText(o.xyz)}, yaw ${Math.round(o.yaw)}°`);
@@ -1262,7 +1309,7 @@ function onPlan(ev) {
     row.append(el("span", String(i + 1), "n"), document.createTextNode(`${k.note || "(no note)"} · ${xyzText(k.xyz)} yaw ${Math.round(k.yaw)}° · ${k.state}${holds}${moves}`));
     keys.append(row);
   });
-  item.append(field("keys", keys));
+  item.append(field("keys", (ev.keyframes || []).length ? keys : el("span", "none: Claude says the task is done", "muted")));
   if (ev.warnings && ev.warnings.length) item.append(lines(ev.warnings, "mono"));
   if (ev.lessons && ev.lessons.length) item.append(field("lessons", lines(ev.lessons, "lesson-lines")));
   if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
@@ -1274,8 +1321,9 @@ function movesText(moves) {
   return (moves || []).map((m) => `${m.name} → (${m.xyz[0].toFixed(2)}, ${m.xyz[1].toFixed(2)})`).join(", ");
 }
 
-function planCheckEntry(scores, keyframes = []) {
+function planCheckEntry(scores, keyframes = [], done = false) {
   const item = entry("plan", "◎ Plan check");
+  if (done) item.append(el("div", "Claude says the task is done.", "done-note"));
   const rows = scores.perception || [];
   if (rows.length) {
     const table = el("table", "", "ptable");
@@ -1317,17 +1365,20 @@ function planCheckEntry(scores, keyframes = []) {
     if (fresh.length) row.append(el("span", ` · from here, ${fresh.join(", ")} at the predicted pose`, "kf-muted"));
     marks.append(row);
   });
-  item.append(field("checks", marks));
+  if ((scores.marks || []).length) item.append(field("checks", marks));
   const moved = keyframes.map((k, i) => [i, k.moves || []]).filter(([, m]) => m.length)
     .map(([i, m]) => `${i + 1} · moves ${movesText(m)}`);
   if (moved.length) item.append(field("moves", lines(moved, "mono")));
   if ((scores.marks || []).some((m) => (m.moves || []).length)) {
     item.append(el("div", "Real start uses the predicted moves after a push.", "muted"));
   }
+  if (!keyframes.length) return item;  // a done plan without keyframes has nothing to execute
   const exec = el("button", "▶ Execute plan", "btn exec-btn");
   exec.type = "button";
   exec.disabled = running;
-  exec.title = "Run the keyframes once in the physics, from a fresh start of the same scene and seed. No model is called.";
+  exec.title = planMode === "continue"
+    ? "Run the keyframes once in the physics, from where the last round ended. No model is called."
+    : "Run the keyframes once in the physics, from a fresh start of the same scene and seed. No model is called.";
   exec.addEventListener("click", executePlan);
   item.append(exec);
   return item;
@@ -1341,7 +1392,8 @@ async function executePlan() {
 
 function onExecStart(ev) {
   const item = entry("system", "▶ Executing the plan");
-  item.append(el("div", `${ev.keyframes} keyframes from a fresh start of seed ${ev.seed}. ` +
+  const from = ev.round_mode === "continue" ? "from where the last round ended" : `from a fresh start of seed ${ev.seed}`;
+  item.append(el("div", `${ev.keyframes} keyframe${ev.keyframes === 1 ? "" : "s"} ${from}. ` +
     (ev.check ? `Auto-check: ${ev.check}.` : "No auto-check.")));
   addEntry(item);
 }
@@ -1367,6 +1419,11 @@ function roundText(round) {
   return round > 1 ? ` · round ${round}` : "";
 }
 
+// " · continue" or " · from start" for a re-plan, "" for round 1.
+function modeText(mode) {
+  return mode === "continue" ? " · continue" : mode === "start" ? " · from start" : "";
+}
+
 // The server URLs of the end images of an executed plan.
 function endImages(runId, step) {
   const base = `/api/runs/${encodeURIComponent(runId)}/images/step${String(step).padStart(3, "0")}`;
@@ -1378,20 +1435,47 @@ function replanButton() {
   const b = el("button", "↻ Re-plan", "btn exec-btn replan-btn");
   b.type = "button";
   b.disabled = running || !planRunId;
-  b.title = "Claude sees this plan, its result and the end images, and plans the whole task again from the start.";
+  b.title = "Claude sees this plan and its result. With Continue on, it plans the rest from where the execution " +
+    "ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
   b.addEventListener("click", replan);
   return b;
 }
 
 async function replan() {
   if (running || !planRunId) return;
-  setStatus("re-planning", "thinking");
-  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`)) setRunning(true);
+  const mode = roundMode();
+  setStatus(`re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
+  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, { mode })) setRunning(true);
+}
+
+// "Claude: done" or "Claude: not done", and the auto-check when there is one.
+function verdictText(ev) {
+  const claude = ev.done === true ? "Claude: done" : ev.done === false ? "Claude: not done" : "Claude: no verdict";
+  if (ev.check === true || ev.check === false) return `${claude} · auto-check: ${ev.check ? "solved" : "not solved"}`;
+  return claude;
+}
+
+// Claude's verdict on the end images of an execution, next to the auto-check result.
+function verdictEntry(ev) {
+  const agree = (ev.check === true || ev.check === false) && typeof ev.done === "boolean";
+  const ok = ev.done === true && ev.check !== false;
+  const item = entry(ok ? "end ok" : "end", `◎ ${verdictText(ev)}`);
+  if (ev.reason) item.append(field("reason", el("span", ev.reason)));
+  if (agree) item.append(el("div", ev.done === ev.check ? "Claude agrees with the auto-check." : "Claude and the auto-check disagree.", "muted"));
+  if (ev.error) item.append(el("div", `The verdict call failed: ${ev.error}`, "muted"));
+  if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
+  return item;
 }
 
 function loopEndEntry(ev) {
-  const item = entry(ev.success ? "end ok" : "end", ev.success ? "■ Auto loop: task solved" : "■ Auto loop ended");
+  const solved = ev.judge === "claude" ? "■ Auto loop: Claude says done" : "■ Auto loop: task solved";
+  const item = entry(ev.success ? "end ok" : "end", ev.success ? solved : "■ Auto loop ended");
   item.append(el("div", `${ev.rounds_run} of ${ev.rounds_max} round${ev.rounds_max === 1 ? "" : "s"} run · ${ev.reason}.`));
+  if (ev.judge) item.append(field("verdict", el("span", ev.judge === "claude" ? "Claude's own done verdict (no auto-check)" : "the auto-check")));
+  const rounds = (ev.verdicts || []).map((v) => `round ${v.round} · Claude: ${v.claude ? "done" : "not done"}` +
+    (v.check === true || v.check === false ? ` · auto-check: ${v.check ? "solved" : "not solved"}` : ""));
+  if (rounds.length) item.append(field("judged", lines(rounds, "mono")));
+  if (ev.compared) item.append(el("div", `Claude agrees with the auto-check in ${ev.agree} of ${ev.compared} execution${ev.compared === 1 ? "" : "s"}.`, "muted"));
   return item;
 }
 

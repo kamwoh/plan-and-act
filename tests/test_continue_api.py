@@ -186,3 +186,14 @@ def test_the_plan_prompt_speaks_of_a_round_that_continues():
     text = build_plan_text("Scene: s", PICK, obs, feedback=fb, gripper="closed")
     assert "The gripper is closed now." in text and "There are no images" not in text
     assert "The gripper is" not in build_plan_text("Scene: s", PICK, obs, gripper="closed")  # round 1
+
+
+def test_exec_start_has_the_round_mode(tmp_path):
+    with client(tmp_path, FakeBackend([good_plan(), judged(), good_plan(), judged()])) as c:
+        first = plan_and_execute(c)
+        second = c.post(f"/api/plan/{first}/replan").json()["run_id"]
+        wait_idle(c)
+        assert c.post(f"/api/plan/{second}/execute").status_code == 200
+        wait_idle(c)
+    modes = [next(e for e in run_events(tmp_path, r) if e["kind"] == "exec_start")["round_mode"] for r in (first, second)]
+    assert modes == [None, "continue"]

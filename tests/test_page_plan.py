@@ -22,10 +22,10 @@ def test_app_js_parses():
     subprocess.run(["node", "--check", str(WEB / "plan3d.js")], check=True)
 
 
-def test_plan_button_comes_first_with_the_auto_switch():
-    buttons = _body(_web("index.html"), '<div class="buttons">', "</div>")
+def test_plan_button_comes_first_with_the_auto_and_continue_switches():
+    buttons = _body(_web("index.html"), '<div class="buttons">', "</form>")
     ids = re.findall(r'<(?:button|input)[^>]*id="([a-z_]+)"', buttons)
-    assert ids == ["plan_btn", "auto", "stop", "lessons_btn", "history_btn", "prompt_btn"]
+    assert ids == ["plan_btn", "auto", "continue", "stop", "lessons_btn", "history_btn", "prompt_btn"]
 
 
 def test_camera_boxes_hold_the_plan_canvases_and_a_player_bar():
@@ -216,7 +216,7 @@ def test_a_moves_keyframe_has_its_own_marker_and_text():
     assert "moves" in _body(app, "function showPlayerTime")
     body = _body(app, "function planCheckEntry")
     assert 'field("moves"' in body and "movesText" in body
-    assert "planCheckEntry(ev.scores || {}, ev.keyframes || [])" in app
+    assert "planCheckEntry(ev.scores || {}, ev.keyframes || [], Boolean(ev.done))" in app
 
 
 def test_exec_end_adds_the_prediction_entry_also_in_a_replay():

@@ -295,7 +295,8 @@ class Runner:
         return log.dir
 
     def _execute_part(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
-                      keyframes: tuple[Keyframe, ...], step: int, view: dict | None, round_no: int = 1, verdict_next: bool = False):
+                      keyframes: tuple[Keyframe, ...], step: int, view: dict | None, round_no: int = 1,
+                      round_mode: str | None = None, verdict_next: bool = False):
         """The stopper, the before hook and the session body of one execution of a saved plan. The body saves
         the end state in END_STATE of the folder, also after a stop."""
         cancel = threading.Event()
@@ -306,7 +307,7 @@ class Runner:
         def before(emit) -> None:  # before the env, so that a failed start still has a pair of events
             emit("exec_start", {"run_id": folder.name, "scene": scene.name, "instruction": instruction, "seed": seed,
                                 "check": task.name if task else None, "keyframes": len(keyframes), "step": step,
-                                "round": round_no,
+                                "round": round_no, "round_mode": round_mode,
                                 "action_data": [a.to_dict() for a in keyframe_actions(keyframes)]})
 
         async def body(env, call, emit) -> None:
@@ -341,7 +342,7 @@ class Runner:
 
     async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
                             keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None,
-                            round_no: int = 1, start: Path | None = None) -> None:
+                            round_no: int = 1, start: Path | None = None, round_mode: str | None = None) -> None:
         """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed, or from the state
         file `start`. The events go to the end of the plan's own log. With the plan view, exec_end has the
         prediction score. Then one short verdict call asks Claude if the end images show the task complete."""
@@ -349,7 +350,7 @@ class Runner:
             raise HTTPException(409, "a run is already active")
         log = RunLog.append_to(folder)
         exec_stop, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view,
-                                                     round_no, verdict_next=True)
+                                                     round_no, round_mode, verdict_next=True)
         part: list[Callable[[], Awaitable[None]]] = [exec_stop]
 
         async def stopper() -> None:
@@ -453,7 +454,8 @@ class Runner:
                         reason = "stopped"
                         break
                     exec_stop, before, body = self._execute_part(folder, scene, task, req.instruction, req.seed,
-                                                                 saved[4], 2, found["plan"].get("view"), rounds_run)
+                                                                 saved[4], 2, found["plan"].get("view"), rounds_run,
+                                                                 feedback.mode if feedback else None)
                     part[:] = [exec_stop]
                     exec_log = RunLog.append_to(folder)
                     await self._session(exec_log, scene, task, req.instruction, req.seed, False, body,
@@ -632,7 +634,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
             raise HTTPException(409, f"the plan continues from a saved state, but {problem}")
         await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
                                    step=2 + found["executions"], view=found["plan"].get("view"),
-                                   round_no=plan_round(found["start"]), start=start)
+                                   round_no=plan_round(found["start"]), start=start,
+                                   round_mode=found["start"].get("round_mode"))
         return {"run_id": run_id}
 
     @app.post("/api/plan/{run_id}/replan", dependencies=[Depends(same_origin)])
