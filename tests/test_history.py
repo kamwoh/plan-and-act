@@ -251,7 +251,7 @@ def test_replayed_events_change_no_run_state_or_saved_scene():
     handler = _body(js, "function onEvent(ev, replay = false)")
     import re
     assert re.search(r"if \(!replay\) \{[^}]*setRunning\(true\)", handler)
-    assert "if (!replay) setRunning(false)" in handler
+    assert "if (!replay && !autoLoop) setRunning(false)" in handler  # an Auto loop stays busy until loop_end
     assert "chooseScene(ev.scene, true, !replay)" in handler
     choose = _body(js, "function chooseScene(name, keepText = false, save = true)")
     assert "if (save) writeScene(sceneName)" in choose

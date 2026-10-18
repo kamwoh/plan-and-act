@@ -86,8 +86,8 @@ img[hidden] { display: none; }
 .card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .hint { color: var(--faint); font-size: 11px; }
 .controls { overflow: auto; padding: 12px; }
-/* Seven controls share one row at 1366 px wide: small gaps and paddings. */
-.controls .buttons { gap: 4px; }
+/* The Plan button, the Auto switch and five more controls share one row at 1366 px wide: small gaps and paddings. */
+.controls .buttons { gap: 3px; }
 .controls .tag { padding: 1px 4px; letter-spacing: 0.02em; }
 .controls .buttons .btn { padding: 8px 7px; gap: 5px; font-size: 12.5px; white-space: nowrap; }
 
@@ -369,3 +369,8 @@ canvas[hidden] { display: none; }
 .run-badge.s-planned { background: rgba(180, 140, 255, 0.16); color: var(--think); }
 .run-mode { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px;
             border-radius: 4px; background: rgba(180, 140, 255, 0.16); color: var(--think); margin-right: 6px; }
+.controls .buttons .auto-switch { gap: 5px; padding: 0 3px 0 1px; white-space: nowrap; }
+.btn.replan-btn { background: transparent; color: var(--accent); }
+.btn.replan-btn:hover { background: rgba(91, 140, 255, 0.12); }
+.run-round { background: rgba(91, 140, 255, 0.16); color: var(--accent); }
+.run-parent { color: var(--muted); font-size: 11px; }

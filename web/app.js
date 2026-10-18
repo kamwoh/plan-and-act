@@ -14,7 +14,11 @@ const PRED_LIMIT_CM = 3;    // the Prediction entry marks a larger displacement 
 let viewMode = "camera";   // "camera", or a plan mode: "imagined", "real" or "both"
 let player = null;         // the Plan3D player, made on the first plan
 let playerFailed = false;  // no WebGL: the page says so and keeps the camera images
-let planRunId = null;      // the id of the plan run on the page, for Execute
+let planRunId = null;      // the id of the plan run on the page, for Execute and Re-plan
+let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
+const MAX_ROUND = 5;
+let autoLoop = false;      // a live Auto loop: the page stays busy from round to round until loop_end
+let feedbackImages = null; // a re-plan: the end images of the last round, as server URLs
 
 function cameraLabels(name) {
   const scene = scenes.find((s) => s.name === name);
@@ -133,6 +137,12 @@ async function loadScenes() {
 }
 
 $("instruction").addEventListener("input", showMode);
+// Enter in the instruction submits the form, so it runs Plan. Shift+Enter starts a new line.
+$("instruction").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+  e.preventDefault();
+  $("run").requestSubmit();
+});
 
 let running = false;
 
@@ -290,10 +300,10 @@ function openStepDetails(ev) {
   const sys = el("details");
   sys.append(el("summary", "System prompt"), el("pre", runSystemPrompt));
   items.push(sys, el("h2", "User message"), el("pre", ev.prompt ?? ""));
-  const imgs = stepImages[ev.step];
-  if (imgs) {
+  const imgs = stepImageList(ev.step);
+  if (imgs.length) {
     const pair = el("div", "", "pair");
-    for (const [name, data] of [[`Image 1 · ${runCameras.front}`, imgs.front], [`Image 2 · ${runCameras.top}`, imgs.top]]) {
+    for (const [name, data] of imgs.map(([label, src], i) => [`Image ${i + 1} · ${label}`, src])) {
       const fig = el("figure");
       const img = document.createElement("img");
       img.src = data;
@@ -397,11 +407,20 @@ function folded(text) {
   return box;
 }
 
-function thumbs(step) {
+// The images of a step message. A re-plan also sends the end images of the last round.
+function stepImageList(step) {
   const imgs = stepImages[step];
+  const list = imgs ? [[runCameras.front, imgs.front], [runCameras.top, imgs.top]] : [];
+  if (step === 1 && feedbackImages) {
+    list.push([`${runCameras.front} · end of the last round`, feedbackImages.front],
+              [`${runCameras.top} · end of the last round`, feedbackImages.top]);
+  }
+  return list;
+}
+
+function thumbs(step) {
   const row = el("div", "", "thumbs");
-  if (!imgs) return row;
-  for (const [label, data] of [[runCameras.front, imgs.front], [runCameras.top, imgs.top]]) {
+  for (const [label, data] of stepImageList(step)) {
     const img = document.createElement("img");
     img.loading = "lazy";  // a long run loads only the images on screen
     img.src = data;
@@ -522,10 +541,13 @@ function errorEntry(ev, title, text) {
 }
 
 function onRunStart(ev) {
-  const item = entry("system", ev.mode === "plan" ? "Plan started" : "Run started");
+  const item = entry("system", ev.mode === "plan" ? `Plan started${roundText(ev.round)}` : "Run started");
   const sys = el("details");
   sys.append(el("summary", "System prompt"), el("pre", ev.system_prompt || ""));
-  item.append(field("task", el("span", ev.instruction)), sys);
+  item.append(field("task", el("span", ev.instruction)));
+  if (ev.parent) item.append(field("re-plan", el("span", `of run ${ev.parent}: Claude sees that plan, its result and its end images`)));
+  if (ev.auto_rounds) item.append(field("auto", el("span", `the Auto loop runs at most ${ev.auto_rounds} round${ev.auto_rounds === 1 ? "" : "s"}`)));
+  item.append(sys);
   const saved = ev.saved_lessons || [];
   if (ev.use_lessons === false) item.append(el("div", "Saved lessons: off for this run", "muted"));
   else if (saved.length) {
@@ -551,6 +573,7 @@ function resetChat() {
   stepEvents = {};
   stepPrompts = {};
   stepStarts = {};
+  feedbackImages = null;
   $("chat").replaceChildren();
   $("chat_latest").hidden = true;
 }
@@ -747,7 +770,7 @@ $("prompt_save").addEventListener("click", () => {
   savedPrompt = text.trim() === "" || text === defaultPrompt ? null : text;
   writeSaved(savedPrompt);
   showPromptTag();
-  $("prompt_msg").textContent = savedPrompt === null ? "Saved: using the default" : "Saved: Start will use this prompt";
+  $("prompt_msg").textContent = savedPrompt === null ? "Saved: using the default" : "Saved: only a step-by-step run of the API uses this prompt";
 });
 $("prompt_reset").addEventListener("click", () => {
   savedPrompt = null;
@@ -811,7 +834,7 @@ $("shuffle").addEventListener("click", () => {
 $("reset").addEventListener("click", () => {
   if (running) return;
   resetChat();
-  $("chat").replaceChildren(el("li", "Press Start. Each message to Claude and each reply shows here.", "chat-empty"));
+  $("chat").replaceChildren(el("li", "Press Plan. Each message to Claude and each reply shows here.", "chat-empty"));
   emptyMemo();
   resetTotals();
   setStatus("idle");
@@ -856,26 +879,14 @@ async function postJson(url, body) {  // true when the server took it; else the 
   return true;
 }
 
-$("run").addEventListener("submit", async (e) => {
+// The Plan button submits the form, and so does Enter in the instruction.
+$("run").addEventListener("submit", (e) => {
   e.preventDefault();
-  if (running) {  // keep the steps of the active run on screen
-    setStatus("a run is already active", "bad");
-    return;
-  }
-  const body = {
-    scene: sceneName,
-    instruction: $("instruction").value.trim(),
-    seed: Number($("seed").value),
-    max_steps: Number($("max_steps").value),
-    show_positions: $("show_positions").checked,
-    use_lessons: $("use_lessons").checked,
-  };
-  if (savedPrompt !== null) body.system_prompt = savedPrompt;
-  beginRun("starting");
-  if (await postJson("/api/run", body)) setRunning(true);
+  startPlan();
 });
 
-// Plan first: the same instruction, scene, seed and lessons switch as Start. Never the true positions.
+// Plan: the instruction, scene, seed and lessons switch. With Auto, the server loops over the rounds.
+// A plan never gets the true positions.
 async function startPlan() {
   if (running) {
     setStatus("a run is already active", "bad");
@@ -887,12 +898,34 @@ async function startPlan() {
     instruction: $("instruction").value.trim(),
     seed: Number($("seed").value),
     use_lessons: $("use_lessons").checked,
+    auto: $("auto").checked,
+    rounds: Number($("rounds").value),
   };
   beginRun("planning");
   if (await postJson("/api/plan", body)) setRunning(true);
 }
 
-$("plan_btn").addEventListener("click", startPlan);
+// ---- The Auto switch ----
+const AUTO_KEY = "armmind.auto";
+
+function readAuto() {
+  try {
+    return localStorage.getItem(AUTO_KEY) === "true";
+  } catch (err) {
+    return false;
+  }
+}
+
+function writeAuto(on) {
+  try {
+    localStorage.setItem(AUTO_KEY, on ? "true" : "false");
+  } catch (err) {
+    // storage is blocked: the choice lasts until the page closes
+  }
+}
+
+$("auto").checked = readAuto();
+$("auto").addEventListener("change", () => writeAuto($("auto").checked));
 
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
 
@@ -916,12 +949,15 @@ function onEvent(ev, replay = false) {
     runKey++;
     clearPlan();
     planRunId = ev.mode === "plan" ? ev.run_id : null;
+    planRound = ev.round || 1;
+    if (!replay) autoLoop = Boolean(ev.auto_rounds);
     runCams = ev.cameras || null;
     resetChat();
+    feedbackImages = ev.parent && ev.end_step ? endImages(ev.parent, ev.end_step) : null;
     emptyMemo();
     resetTotals();
     onRunStart(ev);
-    if (ev.mode === "plan") setStatus("planning · Claude is thinking", "thinking");
+    if (ev.mode === "plan") setStatus(`planning${roundText(planRound)} · Claude is thinking`, "thinking");
   } else if (ev.kind === "observation") {
     const old = stepImages[ev.step];
     if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
@@ -950,6 +986,8 @@ function onEvent(ev, replay = false) {
     stepEvents[ev.step] = ev;
     addTotals(ev.usage);
     onPlan(ev);
+    for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
+    showLessons();
     planView = ev.view || null;
     addEntry(planCheckEntry(ev.scores || {}, ev.keyframes || []));
     if (ev.view) showPlan(ev.view);
@@ -973,12 +1011,24 @@ function onEvent(ev, replay = false) {
     onExecStart(ev);
     if (own) setPath(ev.step, planView.cameras, planView.track && planView.track.start, ev.action_data);
   } else if (ev.kind === "exec_end") {
-    if (!replay) setRunning(false);
+    if (!replay && !autoLoop) setRunning(false);
     if (!replay && $("history_dialog").open) fillHistory();
+    if (ev.front_png && ev.top_png) stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };
     setCamState("ended");
-    onExecEnd(ev);
-    if (ev.prediction) addEntry(predictionEntry(ev.prediction));
+    const endItem = onExecEnd(ev);
+    const pred = ev.prediction ? predictionEntry(ev.prediction) : null;
+    if (planRunId && planRound < MAX_ROUND) (pred || endItem).append(replanButton());
+    if (pred) addEntry(pred);
     setStatus(execText(ev), ev.success ? "success" : ev.status === "error" ? "bad" : "");
+  } else if (ev.kind === "loop_end") {
+    if (!replay) {
+      autoLoop = false;
+      setRunning(false);
+      if ($("history_dialog").open) fillHistory();
+    }
+    addEntry(loopEndEntry(ev));
+    setStatus(ev.success ? `Auto loop · solved in round ${ev.rounds_run}` : `Auto loop ended · ${ev.reason}`,
+              ev.success ? "success" : "");
   } else if (ev.kind === "bad_reply") {
     stepEvents[ev.step] = ev;
     addTotals(ev.usage);
@@ -989,12 +1039,13 @@ function onEvent(ev, replay = false) {
     addTotals(ev.usage);
     errorEntry(ev, `✕ Model error (${ev.error_kind})`, ev.message);
   } else if (ev.kind === "run_end") {
-    if (!replay) setRunning(false);
+    if (!replay && !autoLoop) setRunning(false);
     if (!replay && $("history_dialog").open) fillHistory();  // the rows can open again
     setCamState("ended");
     onRunEnd(ev);
     loadLessons();
-    if (ev.status === "planned") setStatus("plan ready · read the plan check, then execute", "success");
+    if (ev.status === "planned" && autoLoop) setStatus("plan ready · the Auto loop executes it next", "success");
+    else if (ev.status === "planned") setStatus("plan ready · read the plan check, then execute", "success");
     else if (ev.status === "success") setStatus("success · task solved", "success");
     else if (ev.status === "done") setStatus("done · Claude says finished", "success");
     else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" || ev.status === "llm_error" ? "bad" : "");
@@ -1185,7 +1236,7 @@ const signed = (v) => `${v > 0 ? "+" : ""}${v.toFixed(1)}`;
 
 function onPlan(ev) {
   endThinking();
-  const item = entry("claude", "← Claude · plan", ev.step);
+  const item = entry("claude", `← Claude · plan${roundText(planRound)}`, ev.step);
   item.append(field("plan", el("span", ev.summary || "(no summary)", "plan")));
   const objects = (ev.objects || []).map((o) => `${o.name}: ${o.shape} ${o.size.map((v) => (v * 100).toFixed(1)).join("×")} cm, ` +
     `centre ${xyzText(o.xyz)}, yaw ${Math.round(o.yaw)}°`);
@@ -1200,6 +1251,7 @@ function onPlan(ev) {
   });
   item.append(field("keys", keys));
   if (ev.warnings && ev.warnings.length) item.append(lines(ev.warnings, "mono"));
+  if (ev.lessons && ev.lessons.length) item.append(field("lessons", lines(ev.lessons, "lesson-lines")));
   if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
   addEntry(stepLink(item, ev.step));
 }
@@ -1294,7 +1346,40 @@ function onExecEnd(ev) {
   const item = entry(ev.success || ev.status === "done" ? "end ok" : "end", `■ Execution ended: ${ev.status}`);
   item.append(el("div", ev.stopped ? `Stopped after action ${ev.stopped.after} of ${ev.stopped.of}: ${ev.stopped.reason}.`
     : ev.success ? "The task is solved." : execText(ev)));
-  addEntry(item);
+  return addEntry(item);
+}
+
+// " · round 2" for a later round, "" for round 1.
+function roundText(round) {
+  return round > 1 ? ` · round ${round}` : "";
+}
+
+// The server URLs of the end images of an executed plan.
+function endImages(runId, step) {
+  const base = `/api/runs/${encodeURIComponent(runId)}/images/step${String(step).padStart(3, "0")}`;
+  return { front: `${base}_front.png`, top: `${base}_top.png` };
+}
+
+// Re-plan: the same rules as Execute disable it (see clearPlan and setRunning).
+function replanButton() {
+  const b = el("button", "↻ Re-plan", "btn exec-btn replan-btn");
+  b.type = "button";
+  b.disabled = running || !planRunId;
+  b.title = "Claude sees this plan, its result and the end images, and plans the whole task again from the start.";
+  b.addEventListener("click", replan);
+  return b;
+}
+
+async function replan() {
+  if (running || !planRunId) return;
+  setStatus("re-planning", "thinking");
+  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`)) setRunning(true);
+}
+
+function loopEndEntry(ev) {
+  const item = entry(ev.success ? "end ok" : "end", ev.success ? "■ Auto loop: task solved" : "■ Auto loop ended");
+  item.append(el("div", `${ev.rounds_run} of ${ev.rounds_max} round${ev.rounds_max === 1 ? "" : "s"} run · ${ev.reason}.`));
+  return item;
 }
 
 // The predicted moves of the plan against the physics. Each move starts from its own start pose, so the
@@ -1372,7 +1457,13 @@ function historyRow(run) {
     el("span", (run.exec_status ? `run: ${run.exec_status}` : status).replace("_", " "), `run-badge s-${run.exec_status || status}`),
   );
   if (run.mode === "plan") b.querySelector(".run-text").prepend(el("span", "plan", "run-mode"));
-  b.title = run.instruction;
+  if (run.mode === "plan" && run.round > 1) {  // the parent id "20261018-183553" shows as "after 18:35:53"
+    const round = el("span", `round ${run.round}`, "run-mode run-round");
+    b.querySelector(".run-mode").after(round);
+    const t = /^\d{8}-(\d\d)(\d\d)(\d\d)/.exec(run.parent || "");
+    if (t) round.after(el("span", `after ${t[1]}:${t[2]}:${t[3]} `, "run-parent"));
+  }
+  b.title = run.parent ? `${run.instruction} · re-plan of run ${run.parent}` : run.instruction;
   if (active) {
     b.disabled = true;
     b.title = "This run is active. The page shows it live.";

@@ -69,16 +69,15 @@
             <div id="mode" class="mode"></div>
             <div class="settings">
               <label class="field">Seed <span class="seed-row"><input id="seed" type="number" value="0" min="0"><button type="button" class="btn icon" id="shuffle" title="Shuffle: pick a random seed" aria-label="Shuffle the layout"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="3.5" y="3.5" width="17" height="17" rx="4" fill="none" stroke="currentColor" stroke-width="1.8"/><circle cx="8.5" cy="8.5" r="1.4" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="15.5" cy="8.5" r="1.4" fill="currentColor"/><circle cx="8.5" cy="15.5" r="1.4" fill="currentColor"/></svg></button><button type="button" class="btn icon" id="reset" title="Reset: show the start layout of this scene and seed again, and clear the last run from the page" aria-label="Reset to the start layout"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M4 3.5v4.5h4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></button></span></label>
-              <label class="field">Max steps <input id="max_steps" type="number" value="30" min="1" max="200"></label>
+              <label class="field" title="The rounds of the Auto loop: plan, execute, then re-plan">Rounds <input id="rounds" type="number" value="3" min="1" max="5"></label>
               <div class="switches">
                 <label class="switch"><input id="use_lessons" type="checkbox" checked><span class="track"></span>Use saved lessons</label>
-                <label class="switch"><input id="show_positions" type="checkbox"><span class="track"></span>Debug: true object positions</label>
-                <label class="switch" title="Draw the planned actions of the step on the camera images"><input id="show_path" type="checkbox" checked><span class="track"></span>Path</label>
+                <label class="switch" title="Draw the planned actions on the camera images"><input id="show_path" type="checkbox" checked><span class="track"></span>Path</label>
               </div>
             </div>
             <div class="buttons">
-              <button type="submit" class="btn primary" id="start_btn"><span aria-hidden="true">▶</span> Start</button>
-              <button type="button" class="btn" id="plan_btn" title="Plan first: Claude writes its belief of the scene and the whole plan in one reply. Nothing moves.">Plan</button>
+              <button type="submit" class="btn primary" id="plan_btn" title="Claude writes its belief of the scene and the whole plan in one reply. Nothing moves until you execute it."><span aria-hidden="true">▶</span> Plan</button>
+              <label class="switch auto-switch" title="Auto: plan, execute and re-plan until the auto-check passes or the rounds end"><input id="auto" type="checkbox"><span class="track"></span>Auto</label>
               <button type="button" class="btn" id="stop"><span aria-hidden="true">■</span> Stop</button>
               <button type="button" class="btn ghost" id="lessons_btn">Lessons <small id="lessons_tag" class="tag">0</small></button>
               <button type="button" class="btn ghost" id="history_btn" title="History: open an earlier run and read it on the page"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>History</button>
@@ -97,7 +96,7 @@
 
     <section class="card chat-card" aria-label="Chat with Claude">
       <div class="card-head"><h2>Chat</h2><span class="hint">click a sent or Claude entry for the details</span></div>
-      <ol id="chat" class="chat"><li class="chat-empty">Press Start. Each message to Claude and each reply shows here.</li></ol>
+      <ol id="chat" class="chat"><li class="chat-empty">Press Plan. Each message to Claude and each reply shows here.</li></ol>
       <button type="button" class="btn latest" id="chat_latest" hidden>↓ latest</button>
     </section>
   </main>
@@ -117,7 +116,7 @@
   <dialog id="history_dialog" aria-labelledby="history_title">
     <div class="dlg-head"><h2 id="history_title">Run history</h2><button type="button" class="btn ghost" id="history_close">Close</button></div>
     <div class="dlg-body">
-      <p class="muted">The saved runs, newest first. Click a run to read it on the page. Reset, a scene, a seed or Start goes back to a new run.</p>
+      <p class="muted">The saved runs, newest first. Click a run to read it on the page. Reset, a scene, a seed or Plan goes back to a new run.</p>
       <ol id="history_list" class="history-list"></ol>
       <p id="history_msg" class="muted"></p>
     </div>
