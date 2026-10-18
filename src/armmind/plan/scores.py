@@ -109,7 +109,8 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
     The path into a keyframe may touch the objects in the moves of that keyframe. After it, each moved true
     object shifts in xy and yaw by the predicted displacement: the move against the believed pose before the
     keyframe in `belief`, as the page player has it. Without a belief, it goes to the xy and yaw of the move.
-    It then falls as drop() says. The agent at the keyframe must not overlap it there.
+    It then falls as drop() says. When the agent at the keyframe overlaps it there, it goes further along the
+    move until it clears the agent. The end check looks at the belief: the agent must not overlap the move pose.
     "moves" gives these true poses, and "predicted" names the objects that later checks take from a prediction."""
     by_name = {t.name: t for t in truth}
     poses = {t.name: (t.xyz, t.yaw) for t in truth}  # where each true object is, as the plan moves them
@@ -130,6 +131,7 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
     keyframes = list(keyframes)
     believed = _believed_before(start, keyframes, belief or [])
     predicted: dict[str, str] = {}  # true name -> believed name, for objects at a predicted pose
+    by_belief = {norm_name(b.name): b for b in belief or []}
     marks = []
     for i, k in enumerate(keyframes):
         k: Keyframe
@@ -150,12 +152,14 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
         moved_now = []
         for m in k.moves:
             if (t := true_name(m.name)) is not None and t != held:
-                poses[t] = _shift(poses[t], m, believed[i].get(norm_name(m.name)))
+                before = believed[i].get(norm_name(m.name))
+                poses[t] = drop(t, by_name, {**poses, t: _shift(poses[t], m, before)})
+                poses[t] = _clear(k, parts, agent_gap, by_name[t], poses[t], m, before)
                 poses[t] = drop(t, by_name, poses)
                 predicted[t] = m.name
                 moved_now.append(t)
         if checks["collision"] == "ok":
-            checks["collision"] = _end_check(k, parts, agent_gap, moved_now, by_name, poses)
+            checks["collision"] = _end_check(k, parts, agent_gap, by_belief, by_name, true_name)
         if closing and k.carrying is not None:
             checks["grasp"] = _grasp_check(k, target, by_name, poses, round_names)
             if target is not None and checks["grasp"] == "ok":
@@ -199,14 +203,46 @@ def _shift(pose, move, before: dict | None):
     return ((x + dx, y + dy, z), yaw + move.yaw - before["yaw"])
 
 
-def _end_check(k: Keyframe, parts, gap: float, moved: list[str], by_name: dict[str, Entity], poses: dict) -> str:
-    """The agent at the end of the keyframe must not overlap an object at its predicted pose."""
-    for name in moved:
-        box = _entity_box(by_name[name], poses[name])
+def _end_check(k: Keyframe, parts, gap: float, by_belief: dict[str, Entity], by_name: dict[str, Entity],
+               true_name: Callable[[str], str | None]) -> str:
+    """In the belief: the agent at the end of the keyframe must not overlap a moved object at its move pose.
+    This checks only that the prediction agrees with itself. Without a belief, the true size stands in."""
+    for m in k.moves:
+        e = by_belief.get(norm_name(m.name)) or by_name.get(true_name(m.name) or "")
+        if e is None:
+            continue
+        box = _entity_box(e, (m.xyz, m.yaw))
         for part, agent_box in agent_boxes(parts, k.xyz, k.yaw, gap):
             if boxes_overlap(agent_box, box, COLLIDE_M):
-                return f"the {part.replace('_', ' ')} overlaps {name} at its predicted pose at the end of the keyframe"
+                return f"the {part.replace('_', ' ')} overlaps {m.name} at its predicted pose at the end of the keyframe"
     return "ok"
+
+
+CLEAR_STEP_M, CLEAR_GAP_M, CLEAR_MAX_M = 0.001, 0.001, 0.30
+
+
+def _clear(k: Keyframe, parts, gap: float, e: Entity, pose, move, before: dict | None):
+    """A shifted true object that the agent overlaps at the end of the keyframe goes further along the move
+    direction until it just clears the agent, with a 1 mm gap. A move with no xy displacement uses the
+    direction from the agent to the object. The true start often differs from the belief by a few mm."""
+    agent = [b for _, b in agent_boxes(parts, k.xyz, k.yaw, gap)]
+
+    def hits(p) -> bool:
+        return any(boxes_overlap(a, _entity_box(e, p)) for a in agent)
+
+    if not hits(pose):
+        return pose
+    (x, y, z), yaw = pose
+    dx, dy = (move.xyz[0] - before["xyz"][0], move.xyz[1] - before["xyz"][1]) if before else (0.0, 0.0)
+    if math.hypot(dx, dy) < 1e-9:
+        dx, dy = x - k.xyz[0], y - k.xyz[1]
+    n = math.hypot(dx, dy)
+    ux, uy = (dx / n, dy / n) if n > 1e-9 else (1.0, 0.0)
+    d = 0.0
+    while d < CLEAR_MAX_M and hits(((x + ux * d, y + uy * d, z), yaw)):
+        d += CLEAR_STEP_M
+    d += CLEAR_GAP_M
+    return ((x + ux * d, y + uy * d, z), yaw)
 
 
 def drop(name: str, by_name: dict[str, Entity], poses: dict):

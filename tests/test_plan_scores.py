@@ -297,13 +297,14 @@ def test_a_moved_true_object_shifts_by_the_predicted_displacement():
     from armmind.plan.formats import Move
     belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.08, 0.02))]  # 2 cm short of the truth
     kfs = [Keyframe((0.5, 0.01, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.01, 0.02), 0.0, "closed", None),
-           Keyframe((0.5, 0.10, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.12, 0.02)),)),
+           Keyframe((0.5, 0.10, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.135, 0.02)),)),
            Keyframe((0.5, 0.10, 0.10), 0.0, "closed", None, "up")]
     marks = plan_checks(START, kfs, [CUBE, BLUE], ALIASES, set(), PARTS, no_reach_limit, open_state="open",
                         gap=arm_gap, belief=belief)
-    assert all(m["ok"] for m in marks)  # the true cube went 4 cm, to y 0.14: the hand leaves it freely
-    down = Keyframe((0.5, 0.14, 0.02), 0.0, "closed", None, "down onto the moved cube")
-    marks = plan_checks(START, [*kfs, Keyframe((0.5, 0.14, 0.10), 0.0, "closed", None), down], [CUBE, BLUE],
+    assert all(m["ok"] for m in marks)  # the true cube went 5.5 cm, to y 0.155: the hand leaves it freely
+    assert marks[2]["moves"][0]["xyz"][1] == pytest.approx(0.155)
+    down = Keyframe((0.5, 0.155, 0.02), 0.0, "closed", None, "down onto the moved cube")
+    marks = plan_checks(START, [*kfs, Keyframe((0.5, 0.155, 0.10), 0.0, "closed", None), down], [CUBE, BLUE],
                         ALIASES, set(), PARTS, no_reach_limit, open_state="open", gap=arm_gap, belief=belief)
     assert "blue_cube" in marks[5]["checks"]["collision"]
 
@@ -405,7 +406,7 @@ def test_the_agent_must_not_overlap_a_moved_object_at_the_end():
     down = [Keyframe((0.5, 0.03, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None)]
     short = Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.13, 0.02)),))
     marks = _belief_checks([*down, short])
-    assert "overlaps blue_cube at its predicted pose" in marks[2]["checks"]["collision"]
+    assert "overlaps blue cube at its predicted pose" in marks[2]["checks"]["collision"]
     clear = Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.155, 0.02)),))
     assert _belief_checks([*down, clear])[2]["ok"]
 
@@ -427,3 +428,26 @@ def test_a_true_object_outside_the_belief_that_moved_is_a_disagreement():
     s = prediction(PUSH_TRACK, BELIEVED, start, [after, after], MATCH)
     assert s["unmatched"] == [{"true_name": "can", "moved_cm": 4.0}]
     assert s["summary"]["agree"] == 2 and s["summary"]["count"] == 3
+
+
+def test_a_true_object_that_the_shift_puts_in_the_fingers_goes_further_along_the_push():
+    from armmind.plan.formats import Move
+    belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.104, 0.02))]  # the truth is 4 mm nearer
+    down = [Keyframe((0.5, 0.03, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None)]
+    push = Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.1505, 0.02)),))
+    up = Keyframe((0.5, 0.12, 0.15), 0.0, "closed", None, "up")
+    marks = plan_checks(START, [*down, push, up], [CUBE, BLUE], ALIASES, set(), PARTS, no_reach_limit,
+                        open_state="open", gap=arm_gap, belief=belief)
+    assert all(m["ok"] for m in marks), [m["checks"] for m in marks]
+    y = marks[2]["moves"][0]["xyz"][1]  # the plain shift gives 0.1465: 4 mm inside the finger face at 0.1305
+    assert y - 0.02 == pytest.approx(0.1305 + 0.001, abs=0.0011)  # it touches the finger with a 1 mm gap
+
+
+def test_a_move_with_no_displacement_clears_the_agent_away_from_its_centre():
+    from armmind.plan.formats import Move
+    belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.15, 0.02))]  # believed 5 cm off the truth
+    kfs = [Keyframe((0.5, 0.06, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.06, 0.02), 0.0, "closed", None),
+           Keyframe((0.5, 0.075, 0.02), 0.0, "closed", None, "touch", (Move("blue cube", (0.5, 0.15, 0.02)),))]
+    marks = plan_checks(START, kfs, [CUBE, BLUE], ALIASES, set(), PARTS, no_reach_limit, open_state="open",
+                        gap=arm_gap, belief=belief)
+    assert marks[2]["moves"][0]["xyz"][1] - 0.02 >= 0.075 + 0.0105  # pushed from the hand centre outward

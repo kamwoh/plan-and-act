@@ -308,3 +308,25 @@ def test_a_cancel_inside_a_keyframe_leaves_it_out_of_the_poses():
     stop3 = lambda: (calls.append(1), len(calls) > 3)[1]
     out = _execute("cubes", "pick", 0, lambda env: list(parse_plan(DEMO_PLAN).keyframes), stop3)
     assert len(out["results"]) == 3 and len(out["true_after"]) == 2
+
+
+@pytest.mark.assets
+@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("toward_mm", [2, 4, 6, -6])
+def test_a_small_belief_error_on_a_push_passes_every_check(seed, toward_mm):
+    """The true cube starts toward_mm closer to the hand than the belief (negative: further away)."""
+    from armmind.env import MujocoEnv
+    from armmind.plan.formats import Entity
+    from armmind.sim.planview import true_entities
+    env = MujocoEnv(SCENES["cubes"], None, seed, "push the red cube")
+    try:
+        kfs = tuple(push_plan(env.world))
+        sign = 1.0 if env.world.object_pos("red_cube")[1] < 0 else -1.0
+        belief = []
+        for e in true_entities(env.world):
+            xyz = (e.xyz[0], e.xyz[1] + sign * toward_mm / 1000, e.xyz[2]) if e.name == "red_cube" else e.xyz
+            belief.append(Entity(e.name.replace("_", " "), e.shape, e.size, xyz, e.yaw))
+        marks = env.check_plan(tuple(belief), kfs)["marks"]
+    finally:
+        env.close()
+    assert [m["checks"] for m in marks if not m["ok"]] == []
