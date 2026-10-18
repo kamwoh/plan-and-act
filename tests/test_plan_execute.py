@@ -124,7 +124,7 @@ def test_stop_during_an_execution(tmp_path):
     def factory(scene, task, instruction, seed, show_positions, on_frame):
         env = plan_factory(scene, task, instruction, seed, show_positions, on_frame)
 
-        def execute_plan(keyframes, should_stop):
+        def execute_plan(keyframes, should_stop, on_action=None):
             while not should_stop():
                 gate.wait(0.01)
             return {"actions": [], "results": [], "stopped": None, "success": False, "status": "cancelled"}
@@ -161,9 +161,13 @@ def test_a_real_execution_streams_frames_and_logs_the_check(tmp_path):
                 frames += m["type"] == "frame"
                 kinds += [m["kind"]] if m["type"] == "event" else []
         wait_idle(c, timeout=60)
-    assert frames > 10 and kinds == ["exec_start", "step", "exec_end"]
-    start, step, end = events(tmp_path)[-3:]
-    assert start["check"] == "pick" and start["keyframes"] == 3
+    assert frames > 10 and kinds[0] == "exec_start" and kinds[-2:] == ["step", "exec_end"]
+    actions = [e for e in events(tmp_path) if e["kind"] == "action"]
+    start, step, end = [e for e in events(tmp_path) if e["kind"] != "action"][-3:]
+    assert [(a["step"], a["index"], a["of"]) for a in actions] == [(2, i, 4) for i in range(len(actions))]
+    assert kinds[1:-2] == ["action"] * len(actions) and 1 <= len(actions) <= 4  # a stop leaves out the rest
+    assert start["check"] == "pick" and start["keyframes"] == 3 and start["step"] == 2
+    assert [a["type"] for a in start["action_data"]] == ["move_to", "move_to", "close", "move_to"]
     assert step["step"] == 2 and len(step["actions"]) == 4
     assert end["status"] in ("success", "stopped", "failed") and isinstance(end["success"], bool)
 

@@ -20,7 +20,7 @@ class ApiPlanEnv(PlanEnv):
         super().__init__(**kw)
         self.executed = None
 
-    def execute_plan(self, keyframes, should_stop):
+    def execute_plan(self, keyframes, should_stop, on_action=None):
         self.executed = keyframes
         return {"actions": ["move_to(0.500, -0.100, 0.150)"], "results": ["move_to(...): reached"],
                 "stopped": None, "success": True, "status": "success"}

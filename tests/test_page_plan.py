@@ -137,10 +137,12 @@ def test_clear_plan_forgets_the_plan_and_disables_execute():
 def test_scripts_never_wait_for_the_cdn():
     html = _web("index.html")
     tags = re.findall(r"<script[^>]*>", html)
-    assert len(tags) == 3
+    assert len(tags) == 5
     assert " async" in tags[0] and "three.min.js" in tags[0]  # a slow CDN never holds the page
     assert all(" defer" in t for t in tags[1:])
-    assert html.index("plan3d.js") < html.index("app.js")
+    for first, then in (("camproj.js", "plan3d.js"), ("camproj.js", "overlay.js"), ("plan3d.js", "app.js"),
+                        ("overlay.js", "app.js")):
+        assert html.index(first) < html.index(then)
 
 
 def test_the_player_reads_three_only_when_it_is_made():

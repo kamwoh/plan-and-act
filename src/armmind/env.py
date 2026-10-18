@@ -107,15 +107,19 @@ class MujocoEnv:
         from armmind.sim.planview import check_plan
         return check_plan(self.world, self.arm, belief, keyframes)
 
-    def execute_plan(self, keyframes: tuple[Keyframe, ...], should_stop: Callable[[], bool]) -> dict:
+    def execute_plan(self, keyframes: tuple[Keyframe, ...], should_stop: Callable[[], bool],
+                     on_action: Callable[[int, int], None] | None = None) -> dict:
         """Run the keyframes once, with the stop rules of a step. should_stop() between actions cancels the
-        rest. The auto-check runs at the end when the instruction is a task of the scene."""
+        rest. on_action(index, count) runs before each action. The auto-check runs at the end when the
+        instruction is a task of the scene."""
         actions = keyframe_actions(keyframes)
         lines, stopped, cancelled = [], None, False
         for i, action in enumerate(actions):
             if should_stop():
                 cancelled = True
                 break
+            if on_action is not None:
+                on_action(i, len(actions))
             result, why = check_result(action, self.act(action), self.object_labels)
             lines.append(result.summary())
             if why is not None:

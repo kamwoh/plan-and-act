@@ -85,7 +85,8 @@ class PlanEnvironment(Protocol):
 
     def check_plan(self, belief: tuple[Entity, ...], keyframes: tuple[Keyframe, ...]) -> dict: ...
 
-    def execute_plan(self, keyframes: tuple[Keyframe, ...], should_stop: Callable[[], bool]) -> dict: ...
+    def execute_plan(self, keyframes: tuple[Keyframe, ...], should_stop: Callable[[], bool],
+                     on_action: Callable[[int, int], None] | None = None) -> dict: ...
 
 
 def match_entities(believed: list[str], truth: dict[str, list[str]]) -> dict[str, str]:

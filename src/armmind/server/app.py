@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from armmind.agent.loop import Agent, AgentConfig
 from armmind.agent.prompts import SYSTEM, example_step_text
-from armmind.env import Env, SimThread
+from armmind.env import Env, SimThread, keyframe_actions
 from armmind.llm.protocol import LLMBackend
 from armmind.plan.formats import Keyframe
 from armmind.scenes import SCENES, Scene, Task
@@ -170,10 +170,16 @@ class Runner:
 
         def before(emit) -> None:  # before the env, so that a failed start still has a pair of events
             emit("exec_start", {"run_id": folder.name, "scene": scene.name, "instruction": instruction, "seed": seed,
-                                "check": task.name if task else None, "keyframes": len(keyframes)})
+                                "check": task.name if task else None, "keyframes": len(keyframes), "step": step,
+                                "action_data": [a.to_dict() for a in keyframe_actions(keyframes)]})
 
         async def body(env, call, emit) -> None:
-            out = await call(env.execute_plan, keyframes, cancel.is_set)
+            loop = asyncio.get_running_loop()
+
+            def on_action(index: int, count: int) -> None:  # on the sim thread: emit on the event loop
+                loop.call_soon_threadsafe(emit, "action", {"step": step, "index": index, "of": count})
+
+            out = await call(env.execute_plan, keyframes, cancel.is_set, on_action)
             emit("step", {"step": step, "plan": "Run the saved keyframes once.", "observation": "",
                           "actions": out["actions"], "results": out["results"], "stopped": out["stopped"],
                           "truncated": False, "notes": "", "todo": [], "lessons": [], "success": out["success"],

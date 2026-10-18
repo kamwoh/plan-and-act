@@ -99,7 +99,8 @@ class Agent:
                 status = "stopped"
                 break
             obs = await call(env.observe)
-            emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png})
+            emit("observation", {"step": n, "front_png": obs.front_png, "top_png": obs.top_png,
+                                 "tcp": list(obs.tcp), "yaw": obs.gripper_yaw})
             text = build_user_text(env.scene_text, env.instruction, n, self.cfg.max_steps, obs, notes, todo, list(history),
                                    check_failed, env.image_text,
                                    [*self.saved_lessons, *self.run_lessons[-MAX_RUN_LESSONS:]], stopped_reason,
@@ -125,12 +126,14 @@ class Agent:
                 emit("bad_reply", {"step": n, "error": error.message if error else "no reply", **detail})
                 continue
             emit("reply", {"step": n, "observation": reply.observation, "plan": reply.plan,
-                           "actions": [a.describe() for a in reply.actions], "notes": reply.notes,
+                           "actions": [a.describe() for a in reply.actions],
+                           "action_data": [a.to_dict() for a in reply.actions], "notes": reply.notes,
                            "todo": list(reply.todo), "lessons": list(reply.lessons), "usage": _usage_dict(usage)})
             results, stopped = [], None
             for i, action in enumerate(reply.actions):
                 if self._stop.is_set():
                     break
+                emit("action", {"step": n, "index": i, "of": len(reply.actions)})  # the page marks the action that runs
                 result, why = check_result(action, await call(env.act, action), labels)
                 results.append(result)
                 if await call(env.success):

@@ -220,8 +220,10 @@ function paintBadges() {
 }
 
 function showImage(id, src) {
+  const was = $(id).hidden;
   $(id).src = src;
   $(id).hidden = viewMode !== "camera";  // the image waits behind the plan video
+  if ($(id).hidden !== was) drawPath();  // the path overlay shows only over a shown image
 }
 
 function clearPreviewError() {  // a good preview: drop the text of an earlier error
@@ -233,6 +235,7 @@ function showPreviewError(message) {  // hide the images and put the message whe
     $(img).hidden = true;
     $(fig).querySelector(".placeholder").textContent = message;
   }
+  drawPath();
 }
 
 // ---- Step details ----
@@ -543,6 +546,7 @@ function resetChat() {
   stepImages = {};
   stepEvents = {};
   stepPrompts = {};
+  stepStarts = {};
   $("chat").replaceChildren();
   $("chat_latest").hidden = true;
 }
@@ -867,6 +871,7 @@ function onEvent(ev, replay = false) {
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
     clearPlan();
     planRunId = ev.mode === "plan" ? ev.run_id : null;
+    runCams = ev.cameras || null;
     resetChat();
     emptyMemo();
     resetTotals();
@@ -876,16 +881,21 @@ function onEvent(ev, replay = false) {
     const old = stepImages[ev.step];
     if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
     stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };  // for the chat and the step details
+    if (Array.isArray(ev.tcp)) stepStarts[ev.step] = { xyz: ev.tcp, yaw: ev.yaw || 0 };
     setStatus(`step ${ev.step} · thinking`, "thinking");
   } else if (ev.kind === "ask") {
     onAsk(ev);
   } else if (ev.kind === "reply") {
     setStatus(`step ${ev.step} · moving`, "moving");
     onReply(ev);
+    setPath(ev.step, runCams, stepStarts[ev.step] || null, ev.action_data);
+  } else if (ev.kind === "action") {
+    onPathAction(ev);
   } else if (ev.kind === "step") {
     stepEvents[ev.step] = ev;
     addTotals(stepUsage(ev));
     onStepResults(ev);
+    onPathStep(ev);
     $("todo").replaceChildren(...(ev.todo.length ? ev.todo.map((t) => li(t)) : [li("Claude writes its plan here", "empty")]));
     $("notes").replaceChildren(ev.notes ? document.createTextNode(ev.notes) : el("span", "Nothing yet", "empty"));
     for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
@@ -894,9 +904,11 @@ function onEvent(ev, replay = false) {
     stepEvents[ev.step] = ev;
     addTotals(ev.usage);
     onPlan(ev);
+    planView = ev.view || null;
     addEntry(planCheckEntry(ev.scores || {}));
     if (ev.view) showPlan(ev.view);
   } else if (ev.kind === "exec_start") {
+    const own = planView && ev.run_id === planRunId;  // the cameras and the start pose of the plan on the page
     runCameras = cameraLabels(ev.scene);
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
     if (!replay) {
@@ -911,6 +923,7 @@ function onEvent(ev, replay = false) {
       setViewMode("camera");  // the live frames; a saved run keeps the imagined video
     }
     onExecStart(ev);
+    if (own) setPath(ev.step, planView.cameras, planView.track && planView.track.start, ev.action_data);
   } else if (ev.kind === "exec_end") {
     if (!replay) setRunning(false);
     if (!replay && $("history_dialog").open) fillHistory();
@@ -936,6 +949,98 @@ function onEvent(ev, replay = false) {
     else if (ev.status === "success") setStatus("success · task solved", "success");
     else if (ev.status === "done") setStatus("done · Claude says finished", "success");
     else setStatus(`ended: ${ev.status}${ev.message ? ` (${ev.message})` : ""}`, ev.status === "error" || ev.status === "llm_error" ? "bad" : "");
+  }
+}
+
+// ---- Path overlay: the planned actions of a step on the camera images ----
+const PATH_KEY = "armmind.showPath";
+let runCams = null;    // the camera data of the run on the page, or null for an old run without it
+let planView = null;   // the view of the plan on the page: its cameras and start pose serve Execute
+let stepStarts = {};   // step number -> { xyz, yaw }: the gripper pose of the observation
+let stepPath = null;   // { step, cameras, path, n, progress } of the last reply, or null
+
+function readShowPath() {
+  try {
+    return localStorage.getItem(PATH_KEY) !== "false";
+  } catch (err) {
+    return true;
+  }
+}
+
+function writeShowPath(on) {
+  try {
+    localStorage.setItem(PATH_KEY, on ? "true" : "false");
+  } catch (err) {
+    // storage is blocked: the choice lasts until the page closes
+  }
+}
+
+$("show_path").checked = readShowPath();
+$("show_path").addEventListener("change", () => {
+  writeShowPath($("show_path").checked);
+  drawPath();
+});
+
+const expectText = (e) => `→ ${String(e).replace(/_/g, " ")}`;
+
+// The actions of a step as overlay items. An open or a close sits at the last target, or at the start.
+function pathItems(actions, start) {
+  let at = start ? start.xyz : null;
+  let yaw = start ? start.yaw : 0;
+  return actions.map((a, index) => {
+    if (a.type === "move_to" && a.xyz) {
+      at = a.xyz;
+      if (typeof a.yaw === "number") yaw = a.yaw;
+      return { index, kind: "point", xyz: a.xyz, yaw, label: a.expect ? expectText(a.expect) : null };
+    }
+    if ((a.type === "open" || a.type === "close") && at) {
+      return { index, kind: "mark", xyz: at, shape: a.type === "open" ? "open" : "closed",
+               label: a.expect ? expectText(a.expect) : null };
+    }
+    return { index, kind: "none" };
+  });
+}
+
+function setPath(step, cams, start, actions) {
+  stepPath = cams && actions ? { step, cameras: cams, n: actions.length, progress: {},
+                             path: { start, items: pathItems(actions, start) } } : null;
+  drawPath();
+}
+
+function clearPath() {
+  stepPath = null;
+  drawPath();
+}
+
+function onPathAction(ev) {
+  if (!stepPath || stepPath.step !== ev.step) return;
+  stepPath.progress.current = ev.index;
+  drawPath();
+}
+
+// The step ended: the actions that ran are done, a stop turns its action red, and the rest is skipped.
+function onPathStep(ev) {
+  if (!stepPath || stepPath.step !== ev.step) return;
+  const ran = ev.stopped ? ev.stopped.after : (ev.results || []).filter((r) => !r.endsWith(": skipped")).length;
+  stepPath.progress = { ...stepPath.progress, ran, stoppedAt: ev.stopped ? ev.stopped.after - 1 : null };
+  drawPath();
+}
+
+function drawPath() {
+  const show = Boolean(stepPath && $("show_path").checked && viewMode === "camera" && window.PathOverlay);
+  const actionStates = show ? PathOverlay.states(stepPath.n, stepPath.progress) : [];
+  for (const [name, img] of [["front", "live"], ["top", "top"]]) {
+    const canvas = $(`path_${name}`);
+    const cam = show && stepPath.cameras.find((c) => c.name === name);
+    canvas.hidden = !cam || $(img).hidden;
+    if (canvas.hidden) continue;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = Math.round(cam.width * dpr), h = Math.round(cam.height * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+    PathOverlay.draw(canvas, cam, stepPath.path, actionStates);
   }
 }
 
@@ -977,6 +1082,8 @@ function showPlan(view) {
 function clearPlan() {
   if (player) player.unload();
   planRunId = null;
+  planView = null;
+  clearPath();
   for (const b of document.querySelectorAll(".exec-btn")) b.disabled = true;
   $("player").hidden = true;
   setViewMode("camera");
@@ -998,6 +1105,7 @@ function setViewMode(mode) {
   }
   for (const b of $("player").querySelectorAll(".seg button")) b.classList.toggle("active", b.dataset.mode === viewMode);
   paintBadges();
+  drawPath();
 }
 
 function showPlayerTime({ time, duration, index, keyframe, playing }) {

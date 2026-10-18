@@ -12,7 +12,9 @@ async def test_success_ends_run():
     status = await Agent(backend).run(env, direct, rec)
     assert status == "success"
     assert len(env.acts) == 2  # stops acting once the task is solved
-    assert rec.kinds() == ["run_start", "observation", "ask", "reply", "step", "run_end"]
+    assert rec.kinds() == ["run_start", "observation", "ask", "reply", "action", "action", "step", "run_end"]
+    assert [d for k, d in rec.events if k == "action"] == [{"step": 1, "index": 0, "of": 3},
+                                                           {"step": 1, "index": 1, "of": 3}]
     step = dict(rec.events)["step"]
     assert step["success"] is True and len(step["results"]) == 2
 
@@ -241,7 +243,7 @@ async def test_run_lessons_are_not_limited_by_history_steps():
 async def test_ask_comes_before_each_attempt_and_before_the_step():
     rec = Recorder()
     await Agent(FakeBackend([bad(), good()]), AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
-    assert rec.kinds() == ["run_start", "observation", "ask", "ask", "reply", "step", "run_end"]
+    assert rec.kinds() == ["run_start", "observation", "ask", "ask", "reply", "action", "step", "run_end"]
     asks = [d for k, d in rec.events if k == "ask"]
     step = dict(rec.events)["step"]
     assert [a["attempt"] for a in asks] == [1, 2] and all(a["step"] == 1 for a in asks)

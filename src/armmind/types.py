@@ -22,6 +22,19 @@ class Action:
     yaw: float | None = None  # degrees about world +z, 0 is the start orientation; None keeps the current yaw
     expect: str | None = None  # what the gripper should hold after the action: an object, or "nothing"
 
+    def to_dict(self) -> dict:
+        """The action as data for the page: the type, and only the fields that it uses."""
+        out: dict = {"type": self.type}
+        if self.xyz is not None:
+            out["xyz"] = [float(v) for v in self.xyz]
+        if self.yaw is not None:
+            out["yaw"] = float(self.yaw)
+        if self.type == "wait":
+            out["seconds"] = float(self.seconds)
+        if self.expect is not None:
+            out["expect"] = self.expect
+        return out
+
     def describe(self) -> str:
         if self.type == "move_to":
             if self.yaw is None:

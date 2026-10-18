@@ -28,6 +28,7 @@
             <img id="live" alt="Front camera" hidden>
             <canvas id="plan_front" class="plan3d" hidden title="Drag to turn the view. Double-click to go back to the camera."></canvas>
             <canvas id="plan_front_labels" class="plan3d-labels" hidden></canvas>
+            <canvas id="path_front" class="path-overlay" hidden></canvas>
             <span class="cam-label">Front</span>
             <span class="cam-badge">Preview</span>
           </div>
@@ -38,6 +39,7 @@
             <img id="top" alt="Top camera with grid" hidden>
             <canvas id="plan_top" class="plan3d" hidden title="Drag to turn the view. Double-click to go back to the camera."></canvas>
             <canvas id="plan_top_labels" class="plan3d-labels" hidden></canvas>
+            <canvas id="path_top" class="path-overlay" hidden></canvas>
             <span class="cam-label">Top · grid</span>
             <span class="cam-badge">Preview</span>
           </div>
@@ -71,6 +73,7 @@
               <div class="switches">
                 <label class="switch"><input id="use_lessons" type="checkbox" checked><span class="track"></span>Use saved lessons</label>
                 <label class="switch"><input id="show_positions" type="checkbox"><span class="track"></span>Debug: true object positions</label>
+                <label class="switch" title="Draw the planned actions of the step on the camera images"><input id="show_path" type="checkbox" checked><span class="track"></span>Path</label>
               </div>
             </div>
             <div class="buttons">
@@ -132,6 +135,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" async></script>
   <script src="camproj.js" defer></script>
   <script src="plan3d.js" defer></script>
+  <script src="overlay.js" defer></script>
   <script src="app.js" defer></script>
 </body>
 </html>

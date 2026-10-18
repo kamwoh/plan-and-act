@@ -320,6 +320,7 @@ canvas[hidden] { display: none; }
 .frame canvas.plan3d { cursor: grab; touch-action: none; }
 .frame canvas.plan3d:active { cursor: grabbing; }
 .frame canvas.plan3d-labels { pointer-events: none; }
+.frame canvas.path-overlay { pointer-events: none; }
 .cam.imagined .cam-badge { color: var(--think); }
 .player {
   grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 4px 8px; min-width: 0;
