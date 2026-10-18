@@ -252,3 +252,55 @@ def test_the_run_summary_counts_the_cost_of_the_verdict_call():
                              {"kind": "plan", "usage": {"in": 10, "out": 5, "cost_usd": 0.01}},
                              {"kind": "verdict", "usage": {"in": 4, "out": 1, "cost_usd": 0.002}}]))
     assert s["steps"] == 1 and s["cost_usd"] == 0.012 and (s["in_tokens"], s["out_tokens"]) == (14, 6)
+
+
+class PlanThenHang:
+    """Answers the plan call, then hangs on the verdict call until Stop cancels it."""
+    name = "plan-then-hang"
+
+    def __init__(self):
+        from tests.fakes import HangingBackend
+        self.plan, self.hang, self.calls = FakeBackend([good_plan()]), HangingBackend(), 0
+
+    async def open(self, system):
+        self.calls += 1
+        return await (self.plan if self.calls == 1 else self.hang).open(system)
+
+
+@pytest.mark.parametrize("auto", [False, True])
+def test_stop_during_the_verdict_call_ends_the_run(tmp_path, auto):
+    import time
+
+    from tests.test_replan_api import run_events
+    OUTCOMES[:] = ["failed"]
+    backend = PlanThenHang()
+    with TestClient(create_app(backend, factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
+        body = {"instruction": PICK, "auto": True, "rounds": 1} if auto else {"instruction": PICK}
+        run_id = c.post("/api/plan", json=body).json()["run_id"]
+        if not auto:
+            wait_idle(c)
+            assert c.post(f"/api/plan/{run_id}/execute").status_code == 200
+        end = time.monotonic() + 5
+        while backend.calls < 2:  # the verdict call hangs now
+            assert time.monotonic() < end
+            time.sleep(0.02)
+        assert c.get("/api/state").json()["running"] is True
+        assert c.post("/api/stop").status_code == 200
+        wait_idle(c)
+    evs = run_events(tmp_path, run_id)
+    v = next(e for e in evs if e["kind"] == "verdict")
+    assert v["done"] is None and v["error"]  # no verdict
+    if auto:
+        assert evs[-1]["kind"] == "loop_end" and evs[-1]["reason"] == "stopped" and evs[-1]["verdicts"] == []
+
+
+def test_an_llm_error_in_the_verdict_call_ends_the_run_with_no_verdict(tmp_path):
+    from armmind.llm.protocol import LLMError
+    from tests.test_replan_api import planned_and_executed, run_events, true_factory
+    backend = FakeBackend([good_plan(), [LLMError("backend", "the CLI failed")]])
+    with TestClient(create_app(backend, true_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
+        run_id = planned_and_executed(c)
+        assert c.get("/api/state").json()["running"] is False
+    v = run_events(tmp_path, run_id)[-1]
+    assert v["kind"] == "verdict" and v["done"] is None and v["error"] == "the CLI failed"
+    assert len(v["attempts"]) == 1  # no retry after an error of the model call
