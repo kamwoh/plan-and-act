@@ -87,9 +87,10 @@ and for any other object that you expect to move. Each item is {{"object": <name
 Write a "summary" of the plan in 1 or 2 sentences.
 The code scores your belief against the true scene and checks each keyframe. It can then run \
 the keyframes once in the physics. You get no images while they run.
-A re-plan message also has your last plan, the result of its execution and two end images. \
-Compare your last plan with the end images and find what went wrong. Then give a new plan for the whole task \
-from the start. The scene is back at its start.
+A re-plan message also has your last plan and the result of its execution. \
+Compare your last plan with the images and find what went wrong.
+In a re-plan from the start, the scene is back at its start. The message then also has two end images. \
+Give a new plan for the whole task.
 A re-plan that continues has no end images: the scene did not reset, so plan only what is left, from images 1 and 2 and the gripper now.
 In a re-plan, set "done" to true when the images show that the task is complete. Then "keyframes" can be empty. \
 In every other case, give at least 1 keyframe.

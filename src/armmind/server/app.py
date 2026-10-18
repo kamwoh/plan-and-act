@@ -238,6 +238,14 @@ def _copy_state(state: Path, folder: Path) -> Path:
 AUTO_VIEW_S = 20.0  # the Auto loop waits for the imagined video of a plan, at most this long, before Execute
 
 
+def _start_gripper(view: dict | None) -> str:
+    """The gripper at the start of a plan, from its view: "closed" in a round that continues closed."""
+    try:
+        return "closed" if view["track"]["start"]["state"] == "closed" else "open"
+    except (KeyError, TypeError):
+        return "open"
+
+
 def _view_seconds(view: dict | None, limit: float) -> float:
     try:
         return max(0.0, min(limit, float(view["track"]["duration"])))
@@ -305,10 +313,13 @@ class Runner:
             cancel.set()
 
         def before(emit) -> None:  # before the env, so that a failed start still has a pair of events
+            # A file of an earlier execution must not stand for this one, also when the env fails to start.
+            (folder / END_STATE).unlink(missing_ok=True)
+            actions = keyframe_actions(keyframes, _start_gripper(view))
             emit("exec_start", {"run_id": folder.name, "scene": scene.name, "instruction": instruction, "seed": seed,
                                 "check": task.name if task else None, "keyframes": len(keyframes), "step": step,
                                 "round": round_no, "round_mode": round_mode,
-                                "action_data": [a.to_dict() for a in keyframe_actions(keyframes)]})
+                                "action_data": [a.to_dict() for a in actions]})
 
         async def body(env, call, emit) -> None:
             loop = asyncio.get_running_loop()
@@ -317,7 +328,6 @@ class Runner:
                 loop.call_soon_threadsafe(emit, "action", {"step": step, "index": index, "of": count})
 
             end_state = folder / END_STATE
-            end_state.unlink(missing_ok=True)  # a file of an earlier execution must not stand for this one
             out = await call(env.execute_plan, keyframes, cancel.is_set, on_action)
             if hasattr(env, "save_state"):
                 try:
@@ -352,8 +362,10 @@ class Runner:
         exec_stop, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view,
                                                      round_no, round_mode, verdict_next=True)
         part: list[Callable[[], Awaitable[None]]] = [exec_stop]
+        stopped = threading.Event()
 
         async def stopper() -> None:
+            stopped.set()
             await part[0]()
 
         async def job() -> None:
@@ -362,40 +374,46 @@ class Runner:
             found = self.history.plan(folder.name)
             end = found["execution"]["end"] if found and found["execution"] else None
             if end and end.get("verdict_next"):
-                await self._judge(folder, scene, instruction, part)
+                await self._judge(folder, scene, instruction, part, stopped.is_set)
 
         self._launch(log, stopper, job())
 
-    async def _judge(self, folder: Path, scene: Scene, instruction: str,
-                     part: list[Callable[[], Awaitable[None]]]) -> Verdict | None:
-        """The verdict call after the last execution of a plan, when it ran to its end and has end images.
-        It sends the end images, the task and the plan: no true values. It writes a verdict event to the run
-        log. Gives the verdict, or None when no call ran or the call failed. part[0] becomes its stopper."""
-        found = self.history.plan(folder.name)
-        ex = found["execution"] if found else None
-        end = ex["end"] if ex else None
-        if not end or end.get("status") in ("cancelled", "error"):
-            return None
-        paths = [self.history.image(folder.name, end.get(k) if isinstance(end.get(k), str) else "")
-                 for k in ("front_png", "top_png")]
-        if not all(paths):
-            return None
-        log = RunLog.append_to(folder)
-        emit = self._emitter(log)
+    async def _judge(self, folder: Path, scene: Scene, instruction: str, part: list[Callable[[], Awaitable[None]]],
+                     should_stop: Callable[[], bool]) -> Verdict | None:
+        """The verdict call after the last execution of a plan. It sends the end images, the task and the plan:
+        no true values. It always writes a verdict event to the run log, with "error" when no verdict came:
+        a stop, an execution without an end, a model error or any other error. Gives the verdict, or None.
+        part[0] becomes its stopper."""
+        verdict, detail, fields = None, {}, {"check": None, "round": None, "step": None}
         try:
+            found = self.history.plan(folder.name)
+            ex = found["execution"] if found else None
+            end = ex["end"] if ex else None
+            if not end:
+                raise LookupError("the plan has no finished execution")
+            fields = {"check": bool(end.get("success")) if ex["start"].get("check") else None,
+                      "round": plan_round(found["start"]), "step": end.get("step")}
+            if end.get("status") in ("cancelled", "error"):
+                raise LookupError(f"the execution ended with {end.get('status')}")
+            paths = [self.history.image(folder.name, end.get(k) if isinstance(end.get(k), str) else "")
+                     for k in ("front_png", "top_png")]
+            if not all(paths):
+                raise LookupError("the execution has no end images")
             images = tuple(p.read_bytes() for p in paths)
+            objects, keyframes = _reply_format(found["plan"])
             agent = Agent(self.backend, run_id=folder.name)
             part[:] = [agent.stop]
-            objects, keyframes = _reply_format(found["plan"])
-            verdict, detail = await agent.verdict(scene.describe(), instruction, objects, keyframes, images,
-                                                  scene.image_text)
+            if should_stop():
+                detail = {"error": "stopped"}
+            else:
+                verdict, detail = await agent.verdict(scene.describe(), instruction, objects, keyframes, images,
+                                                      scene.image_text)
         except Exception as e:  # noqa: BLE001  the execution result stays, the verdict says why it is missing
-            verdict, detail = None, {"error": f"{type(e).__name__}: {e}"}
+            detail = {"error": f"{type(e).__name__}: {e}"}
+        log = RunLog.append_to(folder)
         try:
-            check = bool(end.get("success")) if ex["start"].get("check") else None
-            emit("verdict", {"done": verdict.done if verdict else None, "reason": verdict.reason if verdict else "",
-                             "check": check, "round": plan_round(found["start"]), "step": end.get("step"),
-                             **detail})
+            self._emitter(log)("verdict", {"done": verdict.done if verdict else None,
+                                           "reason": verdict.reason if verdict else "", **fields, **detail})
         finally:
             log.close()
         return verdict
@@ -420,6 +438,22 @@ class Runner:
             start = None  # the state file of a round that continues
             verdicts: list[dict] = []  # for each judged execution: {"round", "claude", "reason", "check"}
             pending: dict | None = None  # the last execution, until the next re-plan judges it
+
+            async def judge_last(judged: Path, round_no: int, check: bool | None, why: str) -> tuple[bool, str]:
+                """The verdict call on the last execution: gives the success and the reason of the loop end.
+                Without an auto-check, Claude's verdict is the success."""
+                verdict = await self._judge(judged, scene, req.instruction, part, stop.is_set)
+                if stop.is_set():
+                    return success, "stopped"
+                if verdict is not None:
+                    verdicts.append({"round": round_no, "claude": verdict.done, "reason": verdict.reason,
+                                     "check": check})
+                if task is not None:
+                    return success, why
+                if verdict is not None and verdict.done:
+                    return True, "Claude says the task is done"
+                return False, f"{why}, and {'Claude says not done' if verdict else 'the verdict call failed'}"
+
             try:
                 while True:
                     rounds_run += 1
@@ -436,8 +470,12 @@ class Runner:
                         break
                     found = self.history.plan(folder.name)
                     if pending is not None and status == "planned" and found:
-                        verdicts.append({**pending, "claude": bool(found["plan"].get("done")),
-                                         "reason": found["plan"].get("summary") or ""})
+                        verdicts.append({k: pending[k] for k in ("round", "check")} | {
+                            "claude": bool(found["plan"].get("done")), "reason": found["plan"].get("summary") or ""})
+                    elif pending is not None:  # the re-plan failed: a verdict call judges the execution before it
+                        success, reason = await judge_last(pending["folder"], pending["round"], pending["check"],
+                                                           f"the plan ended with {status or 'error'}")
+                        break
                     pending = None
                     if status == "planned" and found and found["plan"].get("done"):
                         success = task is None  # with a check, the last execution was not solved
@@ -476,18 +514,9 @@ class Runner:
                     elif req.mode == "continue" and (problem := state_problem(folder / END_STATE, scene, req.seed)):
                         reason = f"cannot continue: {problem}"
                     else:  # the next re-plan judges this execution
-                        feedback, pending = result, {"round": rounds_run, "check": check}
+                        feedback, pending = result, {"round": rounds_run, "check": check, "folder": folder}
                         continue
-                    verdict = await self._judge(folder, scene, req.instruction, part)  # the last execution
-                    if stop.is_set():
-                        reason = "stopped"
-                    elif verdict is not None:
-                        verdicts.append({"round": rounds_run, "claude": verdict.done, "reason": verdict.reason,
-                                         "check": check})
-                    if task is None and not stop.is_set():
-                        success = bool(verdict and verdict.done)
-                        reason = ("Claude says the task is done" if success else
-                                  f"{reason}, and {'Claude says not done' if verdict else 'the verdict call failed'}")
+                    success, reason = await judge_last(folder, rounds_run, check, reason)  # the last execution
                     break
             except Exception as e:  # noqa: BLE001  end the loop with a reason, never kill the server
                 reason = f"error: {type(e).__name__}: {e}"

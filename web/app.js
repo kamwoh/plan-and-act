@@ -18,6 +18,7 @@ let planRunId = null;      // the id of the plan run on the page, for Execute an
 let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
 let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
 let planDone = false;      // Claude's re-plan on the page says that the task is done
+let parentCheck = null;    // the auto-check of the execution before this re-plan: true, false or null
 let execError = false;     // the last execution of the plan on the page ended with an error: it has no end state
 const MAX_ROUND = 5;
 let autoLoop = false;      // a live Auto loop: the page stays busy from round to round until loop_end
@@ -996,6 +997,7 @@ function onEvent(ev, replay = false) {
     planRound = ev.round || 1;
     planMode = ev.round_mode || null;
     planDone = false;
+    parentCheck = typeof ev.parent_check === "boolean" ? ev.parent_check : null;
     execError = false;
     if (!replay) autoLoop = Boolean(ev.auto_rounds);
     runCams = ev.cameras || null;
@@ -1326,7 +1328,10 @@ function movesText(moves) {
 
 function planCheckEntry(scores, keyframes = [], done = false) {
   const item = entry("plan", "◎ Plan check");
-  if (done) item.append(el("div", "Claude says the task is done.", "done-note"));
+  if (done) {
+    const last = parentCheck === null ? "" : ` The last auto-check says ${parentCheck ? "solved" : "not solved"}.`;
+    item.append(el("div", `Claude says the task is done.${last}`, "done-note"));
+  }
   const rows = scores.perception || [];
   if (rows.length) {
     const table = el("table", "", "ptable");

@@ -58,6 +58,13 @@ def _sum_usage(attempts: list[dict]) -> dict | None:
 
 
 
+def _parent_check(feedback: Feedback | None) -> bool | None:
+    """The auto-check of the execution that a re-plan follows, for the page. None: no check, or no result."""
+    if feedback is None or not feedback.check or feedback.status in ("cancelled", "error"):
+        return None
+    return feedback.success
+
+
 MAX_RUN_LESSONS = 30  # the newest lessons of this run that go into each step message
 
 
@@ -198,7 +205,8 @@ class Agent:
                            "saved_lessons": list(self.saved_lessons),
                            "round": feedback.round if feedback else 1, "parent": feedback.parent if feedback else None,
                            "end_step": feedback.end_step if feedback else None, "auto_rounds": auto_rounds,
-                           "round_mode": feedback.mode if feedback else None})
+                           "round_mode": feedback.mode if feedback else None,
+                           "parent_check": _parent_check(feedback)})
         status = "error"
         try:
             status = await self._plan(env, call, emit, feedback)

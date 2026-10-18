@@ -218,6 +218,8 @@ def test_the_demo_loop_continues_from_where_round_1_left_the_cube(tmp_path):
     assert view["track"]["start"]["state"] == "closed" and view["track"]["start"]["carrying"] == "red cube"
     plan = next(e for e in rounds[1] if e["kind"] == "plan")
     assert len(plan["keyframes"]) == 1 and all(m["ok"] for m in plan["scores"]["marks"])
+    action_data = next(e for e in rounds[1] if e["kind"] == "exec_start")["action_data"]
+    assert [a["type"] for a in action_data] == ["move_to"]  # the gripper starts closed: no extra close
     end = loop_end(rounds)
     assert end["success"] is True and end["rounds_run"] == 2
     # Round 1: the re-plan says not done, and the check agrees. Round 2: the verdict call says done, as the check.
