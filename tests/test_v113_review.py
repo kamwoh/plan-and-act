@@ -170,3 +170,15 @@ def test_an_execution_error_in_the_last_round_ends_the_loop(tmp_path):
     rounds = run_loop(tmp_path, [good_plan()], ["error"], PICK, rounds=1)
     end = loop_end(rounds)
     assert (end["success"], end["reason"], end["rounds_run"]) == (False, "the execution failed", 1)
+
+
+def test_a_start_round_after_a_continue_round_gets_no_state_file(tmp_path):
+    from tests.test_done_verdict import ENVS
+    ENVS.clear()
+    rounds = run_loop(tmp_path, [good_plan(), good_plan(), good_plan(), judged(True)], ["failed", "error", "success"],
+                      PICK)
+    assert [r[0].get("round_mode") for r in rounds] == [None, "continue", "start"]
+    assert getattr(ENVS[2], "start", None) is not None  # round 2 continues from the end of round 1
+    assert all(getattr(e, "start", None) is None for e in ENVS[-2:])  # round 3: its plan and execute reset
+    assert not list((tmp_path / "runs" / rounds[2][0]["run_id"]).glob("start_state.npz"))
+    assert loop_end(rounds)["success"] is True
