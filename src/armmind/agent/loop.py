@@ -15,6 +15,7 @@ from armmind.agent.prompts import (
     PLAN_SYSTEM,
     REPLY_SCHEMA,
     SYSTEM,
+    Feedback,
     StepSummary,
     build_plan_text,
     build_user_text,
@@ -182,30 +183,34 @@ class Agent:
                 status = "stopped"
         return status
 
-    async def plan(self, env: Env, call: Call, emit: Emit, seed: int = 0) -> str:
+    async def plan(self, env: Env, call: Call, emit: Emit, seed: int = 0, feedback: Feedback | None = None) -> str:
         """One model call: the belief of the scene and the keyframes of the whole task. The code then scores
-        the plan and builds the view of the page. Nothing moves."""
+        the plan and builds the view of the page. Nothing moves. With feedback, this is a re-plan: a later round
+        that sees the last plan, its result and its end images."""
         self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
         emit("run_start", {"mode": "plan", "scene": env.scene_name, "instruction": env.instruction, "seed": seed,
                            "run_id": self.run_id, "max_steps": 1, "check": env.check_name,
                            "system_prompt": PLAN_SYSTEM, "use_lessons": self.use_lessons,
-                           "saved_lessons": list(self.saved_lessons)})
+                           "saved_lessons": list(self.saved_lessons),
+                           "round": feedback.round if feedback else 1, "parent": feedback.parent if feedback else None,
+                           "end_step": feedback.end_step if feedback else None})
         status = "error"
         try:
-            status = await self._plan(env, call, emit)
+            status = await self._plan(env, call, emit, feedback)
         finally:
             emit("run_end", {"status": status})
         return status
 
-    async def _plan(self, env: Env, call: Call, emit: Emit) -> str:
+    async def _plan(self, env: Env, call: Call, emit: Emit, feedback: Feedback | None) -> str:
         obs = await call(env.observe)
         emit("observation", {"step": 1, "front_png": obs.front_png, "top_png": obs.top_png})
-        text = build_plan_text(env.scene_text, env.instruction, obs, env.image_text, self.saved_lessons)
+        text = build_plan_text(env.scene_text, env.instruction, obs, env.image_text, self.saved_lessons, feedback)
+        images = (obs.front_png, obs.top_png, *(feedback.images if feedback else ()))
         self._conv = await self.backend.open(PLAN_SYSTEM)
         attempts: list[dict] = []
         try:
             reply, error, _ = await self._ask(
-                Message("user", text, (obs.front_png, obs.top_png)), attempts,
+                Message("user", text, images), attempts,
                 lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), PLAN_REPLY_SCHEMA, parse_plan)
         finally:
             conv, self._conv = self._conv, None
@@ -219,12 +224,28 @@ class Agent:
         if reply is None:
             emit("bad_reply", {"step": 1, "error": error.message if error else "no reply", **detail})
             return "bad_reply"
+        self._save_plan_lessons(env.scene_name, reply.lessons, feedback)
         scores = await call(env.check_plan, reply.objects, reply.keyframes)
         view = await call(env.plan_view, reply.objects, reply.keyframes, scores["marks"])
         emit("plan", {"step": 1, "summary": reply.summary, "objects": [o.to_dict() for o in reply.objects],
                       "keyframes": [k.to_dict() for k in reply.keyframes], "warnings": list(reply.warnings),
-                      "scores": scores, "view": view, **detail})
+                      "lessons": list(reply.lessons), "scores": scores, "view": view, **detail})
         return "planned"
+
+    def _save_plan_lessons(self, scene: str, lessons: tuple[str, ...], feedback: Feedback | None) -> None:
+        """Save the lessons of a re-plan with the status of the execution that the feedback describes.
+        A round 1 plan saw no result, so its lessons are not saved."""
+        if not lessons:
+            return
+        if feedback is None:
+            logging.getLogger(__name__).info("a round 1 plan wrote %d lessons: they are not saved", len(lessons))
+            return
+        if self.store is None or not self.use_lessons:
+            return
+        try:
+            self.store.append(scene, list(lessons), run=self.run_id, outcome=feedback.status)
+        except OSError as e:
+            logging.getLogger(__name__).warning("cannot save the lessons of scene %s: %s", scene, e)
 
     def _save_lessons(self, scene: str, status: str) -> None:
         """Save the new lessons of the run. A failed write gives a warning and does not stop the run."""

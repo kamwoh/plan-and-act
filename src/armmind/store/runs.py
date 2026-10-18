@@ -39,7 +39,7 @@ def _num(value) -> float:
 def summarize(name: str, events: Iterator[dict]) -> dict:
     s = {"id": name, "started": None, "scene": "cubes", "instruction": "", "check": None,
          "steps": 0, "cost_usd": 0.0, "in_tokens": 0, "out_tokens": 0, "status": "unfinished",
-         "mode": "run", "exec_status": None}
+         "mode": "run", "exec_status": None, "round": 1, "parent": None}
     for ev in events:
         kind = ev.get("kind")
         if s["started"] is None:
@@ -50,6 +50,8 @@ def summarize(name: str, events: Iterator[dict]) -> dict:
             s["instruction"] = ev.get("instruction") or ""
             s["check"] = ev.get("check")
             s["mode"] = "plan" if ev.get("mode") == "plan" else "run"
+            s["round"] = ev.get("round") if isinstance(ev.get("round"), int) else 1
+            s["parent"] = ev.get("parent") if isinstance(ev.get("parent"), str) else None
         elif kind in STEP_KINDS:
             s["steps"] += 1
             u = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
@@ -150,23 +152,28 @@ class RunStore:
         return out
 
     def plan(self, run_id: str) -> dict | None:
-        """The run_start and the plan event of a finished plan run, or None."""
+        """The run_start and the plan event of a finished plan run, or None. "execution" holds the events of
+        the last execution ({"start", "step", "end"}), or None when the plan has not run yet."""
         folder = self.folder(run_id)
         if folder is None:
             return None
-        start = plan = None
+        start = plan = last = None
         executions = 0
         try:
             for ev in read_events(folder / "events.jsonl"):
-                if ev.get("kind") == "run_start":
+                kind = ev.get("kind")
+                if kind == "run_start":
                     start = ev
-                elif ev.get("kind") == "plan":
+                elif kind == "plan":
                     plan = ev
-                elif ev.get("kind") == "exec_start":
+                elif kind == "exec_start":
                     executions += 1
+                    last = {"start": ev, "step": None, "end": None}
+                elif kind in ("step", "exec_end") and last is not None:
+                    last["step" if kind == "step" else "end"] = ev
         except OSError:
             return None
         if not (start and start.get("mode") == "plan" and plan and isinstance(plan.get("view"), dict)
                 and isinstance(plan.get("keyframes"), list)):
             return None
-        return {"start": start, "plan": plan, "folder": folder, "executions": executions}
+        return {"start": start, "plan": plan, "folder": folder, "executions": executions, "execution": last}

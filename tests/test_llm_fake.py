@@ -22,3 +22,21 @@ async def test_demo_backend_replies_by_step_number():
         final = next(e for e in events if isinstance(e, Final))
         assert final.parsed == DEMO_REPLIES[n - 1]
         parse_reply(final.parsed)
+
+
+async def test_demo_backend_plans_low_then_replans_with_a_lesson():
+    from armmind.agent.parse import parse_plan
+    from armmind.agent.prompts import PLAN_REPLY_SCHEMA
+    from armmind.llm.fake import DEMO_PLAN, DEMO_PLAN_LOW, DemoBackend
+    conv = await DemoBackend(delay_s=0).open("s")
+
+    async def ask(text):
+        events = [e async for e in conv.send(Message("user", text), PLAN_REPLY_SCHEMA)]
+        return next(e for e in events if isinstance(e, Final)).parsed
+
+    first = await ask("Task: t\nPlan the whole task now, in one reply.")
+    assert first == DEMO_PLAN_LOW and not parse_plan(first).lessons
+    assert first["keyframes"][-1]["xyz"][2] < 0.1  # the lift is too low for the pick check
+    second = await ask("Task: t\nThis is a re-plan, round 2. Your last plan ran once in the physics.")
+    assert {k: v for k, v in second.items() if k != "lessons"} == DEMO_PLAN
+    assert len(parse_plan(second).lessons) == 1

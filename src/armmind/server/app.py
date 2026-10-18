@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from armmind.agent.loop import Agent, AgentConfig
-from armmind.agent.prompts import SYSTEM, example_step_text
+from armmind.agent.prompts import SYSTEM, Feedback, example_step_text
 from armmind.env import Env, SimThread, keyframe_actions
 from armmind.llm.protocol import LLMBackend
 from armmind.plan.formats import Keyframe
@@ -139,6 +139,56 @@ def _prediction(view: dict | None, out: dict) -> dict | None:
         return None
 
 
+MAX_ROUND = 5  # a plan and at most 4 re-plans
+
+
+def plan_round(start: dict) -> int:
+    """The round of a plan run. Plans from before v1.12 have no round: they are round 1."""
+    r = start.get("round")
+    return r if isinstance(r, int) and not isinstance(r, bool) and r >= 1 else 1
+
+
+def _reply_format(plan: dict) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
+    """The belief and the keyframes of a saved plan event, in the format of the plan reply."""
+    objects = tuple({k: o.get(k) for k in ("name", "shape", "size", "xyz", "yaw")} for o in plan.get("objects") or [])
+    keyframes = []
+    for k in plan["keyframes"]:
+        d = {"xyz": k.get("xyz"), "yaw": k.get("yaw"), "gripper": k.get("state"),
+             "holding": k.get("carrying") or "nothing", "note": k.get("note", "")}
+        if k.get("moves"):
+            d["moves"] = [{"object": m.get("name"), "xyz": m.get("xyz"), "yaw": m.get("yaw")} for m in k["moves"]]
+        keyframes.append(d)
+    return objects, tuple(keyframes)
+
+
+def _feedback(found: dict, history: RunStore) -> Feedback | None:
+    """The feedback of the last execution of a saved plan, or None when it has not run to its end. It reads
+    only the model's own plan, the status, the stop and the end images: never the scores or the true poses."""
+    ex = found["execution"]
+    if ex is None or ex["end"] is None:
+        return None
+    end, actions = ex["end"], (ex["step"] or {}).get("actions") or []
+    run_id = found["folder"].name
+    stopped = end.get("stopped") if isinstance(end.get("stopped"), dict) else None
+    stopped_action = None
+    if stopped:
+        try:
+            stopped_action = str(actions[int(stopped["after"]) - 1])
+        except (KeyError, IndexError, TypeError, ValueError):
+            stopped_action = None
+    images: tuple[bytes, ...] = ()
+    paths = [history.image(run_id, end.get(k) if isinstance(end.get(k), str) else "") for k in ("front_png", "top_png")]
+    if all(paths):
+        try:
+            images = tuple(path.read_bytes() for path in paths)
+        except OSError:
+            images = ()
+    objects, keyframes = _reply_format(found["plan"])
+    return Feedback(objects, keyframes, str(end.get("status") or "error"), bool(ex["start"].get("check")),
+                    bool(end.get("success")), stopped, stopped_action, images, run_id,
+                    plan_round(found["start"]) + 1, end.get("step") if images else None)
+
+
 class Runner:
     def __init__(self, backend: LLMBackend, env_factory: EnvFactory, runs_dir: Path, hub: Hub, lessons: LessonStore):
         self.backend, self.env_factory, self.runs_dir, self.hub = backend, env_factory, runs_dir, hub
@@ -160,14 +210,16 @@ class Runner:
         self._launch(log, agent.stop, scene, task, req.instruction, req.seed, req.show_positions, agent.run)
         return log.dir
 
-    async def start_plan(self, req: PlanRequest, scene: Scene, task: Task | None) -> Path:
-        """A run of kind "plan": one model call, no motion. The env never gets the true positions."""
+    async def start_plan(self, req: PlanRequest, scene: Scene, task: Task | None,
+                         feedback: Feedback | None = None) -> Path:
+        """A run of kind "plan": one model call, no motion. The env never gets the true positions.
+        With feedback, it is a re-plan of the run feedback.parent."""
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog(self.runs_dir)
         agent = Agent(self.backend, store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
         self._launch(log, agent.stop, scene, task, req.instruction, req.seed, False,
-                     lambda env, call, emit: agent.plan(env, call, emit, seed=req.seed))
+                     lambda env, call, emit: agent.plan(env, call, emit, seed=req.seed, feedback=feedback))
         return log.dir
 
     async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
@@ -198,8 +250,14 @@ class Runner:
                           "actions": out["actions"], "results": out["results"], "stopped": out["stopped"],
                           "truncated": False, "notes": "", "todo": [], "lessons": [], "success": out["success"],
                           "done": False, "prompt": "", "attempts": [], "usage": None})
+            images = {}  # the end images, for a re-plan
+            try:
+                obs = await call(env.observe)
+                images = {"front_png": obs.front_png, "top_png": obs.top_png}
+            except Exception as e:  # noqa: BLE001  the result stays, a re-plan then has no end images
+                logging.getLogger(__name__).warning("no end images of the execution: %s: %s", type(e).__name__, e)
             emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"],
-                              "prediction": _prediction(view, out)})
+                              "prediction": _prediction(view, out), "step": step, **images})
 
         self._launch(log, stopper, scene, task, instruction, seed, False, body, end_kind="exec_end", before=before)
 
@@ -324,6 +382,31 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
                                    step=2 + found["executions"], view=plan.get("view"))
         return {"run_id": run_id}
+
+    @app.post("/api/plan/{run_id}/replan", dependencies=[Depends(same_origin)])
+    async def replan(run_id: str) -> dict:
+        found = history.plan(run_id)
+        if found is None:
+            raise HTTPException(404, "no such plan")
+        if runner.running:
+            raise HTTPException(409, "a run is already active")
+        start = found["start"]
+        feedback = _feedback(found, history)
+        if feedback is None:
+            raise HTTPException(404, "the plan has no finished execution yet: execute it first")
+        if plan_round(start) >= MAX_ROUND:
+            raise HTTPException(409, f"this plan is round {plan_round(start)}, the last round of {MAX_ROUND}")
+        scene = SCENES.get(start.get("scene") or "")
+        try:
+            req = PlanRequest(instruction=start.get("instruction") or "", scene=start.get("scene") or "",
+                              seed=int(start.get("seed", 0)), use_lessons=start.get("use_lessons") is not False)
+        except (TypeError, ValueError):
+            req = None
+        if scene is None or req is None:
+            raise HTTPException(404, "the plan cannot run")
+        task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
+        folder = await runner.start_plan(req, scene, task, feedback)
+        return {"run_dir": str(folder), "run_id": folder.name}
 
     @app.post("/api/plan/{rest:path}")
     def no_plan(rest: str) -> None:

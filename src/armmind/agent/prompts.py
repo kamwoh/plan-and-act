@@ -1,6 +1,7 @@
 """The system prompt, the reply schema and the text of each step's message."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from armmind.types import Observation, fmt
@@ -85,7 +86,12 @@ and for any other object that you expect to move. Each item is {{"object": <name
 "yaw": <degrees>}}: the pose of the object at the end of the keyframe. Do not list the held object. \
 Write a "summary" of the plan in 1 or 2 sentences.
 The code scores your belief against the true scene and checks each keyframe. It can then run \
-the keyframes once in the physics, with no more images."""
+the keyframes once in the physics. You get no images while they run.
+A re-plan message also has your last plan, the result of its execution and two end images. \
+Compare your last plan with the end images and find what went wrong. Then give a new plan for the whole task \
+from the start. The scene is back at its start.
+Write a "lessons" item only in a re-plan, and only when the last plan had a result you did not expect. \
+Write it as cause and effect, for example "A grasp 2 cm above the cube centre slipped. 1 cm held.\""""
 
 REPLY_SCHEMA = {
     "type": "object",
@@ -162,6 +168,7 @@ PLAN_REPLY_SCHEMA = {
             },
         },
         "summary": {"type": "string"},
+        "lessons": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
     },
 }
 
@@ -221,10 +228,52 @@ def example_step_text() -> str:
     return build_user_text(cubes.describe(), cubes.tasks["stack"].instruction, 1, 30, obs, "", (), [])
 
 
+@dataclass(frozen=True)
+class Feedback:
+    """What the last plan did in the physics, for a re-plan. It holds only what the model wrote, what the arm
+    reported and the end images. It never holds the true poses or the scores of the page."""
+    objects: tuple[dict, ...]  # the last belief, in the reply format
+    keyframes: tuple[dict, ...]  # the last keyframes, in the reply format
+    status: str  # the status of the execution, for example "stopped"
+    check: bool  # the task has an automatic check
+    success: bool
+    stopped: dict | None  # {"after", "of", "reason"} when the execution stopped early
+    stopped_action: str | None  # the action that stopped, for example "close"
+    images: tuple[bytes, ...]  # the end images: front (or side), then top. Empty when they are missing
+    parent: str  # the run id of the last plan
+    round: int  # the round of the new plan
+    end_step: int | None  # the step of the end images in the parent run
+
+
+def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
+    last = json.dumps({"objects": list(f.objects), "keyframes": list(f.keyframes)}, separators=(",", ":"),
+                      ensure_ascii=False)
+    lines = [f"This is a re-plan, round {f.round}. Your last plan ran once in the physics.",
+             f"Your last plan: {last}",
+             f"Execution status: {f.status}."]
+    if f.check:
+        lines.append(f"The automatic check says the task is {'solved' if f.success else 'not solved'}.")
+    else:
+        lines.append("There is no automatic check for this task.")
+    if f.stopped:
+        action = f" ({f.stopped_action})" if f.stopped_action else ""
+        lines.append(f"The execution stopped at action {f.stopped['after']} of {f.stopped['of']}{action}: "
+                     f"{f.stopped['reason']}.")
+    else:
+        lines.append("All actions ran.")
+    if len(f.images) == 2:
+        lines.append(f"Images 3 and 4 show the end of the last execution. The scene is now back at its start, "
+                     f"as in images 1 and 2. Image 3: the {first_camera} camera at the end of the last execution. "
+                     "Image 4: the top camera at the end.")
+    else:
+        lines.append("There are no images of the end of the last execution.")
+    return lines
+
+
 def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: str | None = None,
-                    lessons: list[str] | tuple[str, ...] = ()) -> str:
-    """The plan message: the scene, the task, the gripper and the lessons, as in step 1. It never has the true
-    positions, yaws or joints, even when the observation has them."""
+                    lessons: list[str] | tuple[str, ...] = (), feedback: Feedback | None = None) -> str:
+    """The plan message: the scene, the task, the gripper and the lessons, as in step 1. A re-plan adds the
+    feedback part. It never has the true positions, yaws or joints, even when the observation has them."""
     lines = [
         f"Scene: {scene}",
         f"Task: {instruction}",
@@ -234,5 +283,8 @@ def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: 
     ]
     unique = list(dict.fromkeys(lessons))
     lines += ["Lessons:", *(f"- {t}" for t in unique)] if unique else ["Lessons: (none)"]
-    lines.append(image_text or IMAGE_TEXT)
+    images = image_text or IMAGE_TEXT
+    lines.append(images)
+    if feedback is not None:
+        lines += _feedback_lines(feedback, "side" if "side camera" in images else "front")
     return "\n".join(lines)

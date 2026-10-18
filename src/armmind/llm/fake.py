@@ -77,6 +77,13 @@ DEMO_PLAN = {  # an invented plan for seed 0 of the cubes scene: push the green 
 }
 
 
+# Round 1 of the demo lifts the red cube too little, so the pick check fails. The re-plan lifts it enough.
+DEMO_PLAN_LOW = {**DEMO_PLAN, "keyframes": [*DEMO_PLAN["keyframes"][:-1],
+                                            {**DEMO_PLAN["keyframes"][-1], "xyz": [0.56, -0.11, 0.08]}],
+                 "summary": "Push the green cube 5 cm to the left, then grasp the red cube and lift it 6 cm."}
+DEMO_REPLAN = {**DEMO_PLAN, "lessons": ["A lift to z 0.08 left the cube under the 10 cm goal. Lift to z 0.20."]}
+
+
 class DemoConversation:
     def __init__(self, backend: DemoBackend):
         self.backend = backend
@@ -84,7 +91,7 @@ class DemoConversation:
     async def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]:
         await asyncio.sleep(self.backend.delay_s)
         if schema is not None and "keyframes" in schema.get("properties", {}):
-            yield Final("", DEMO_PLAN)
+            yield Final("", DEMO_REPLAN if "This is a re-plan" in msg.text else DEMO_PLAN_LOW)
             yield Usage("demo", self.backend.delay_s, 2400, 400, 0.006, 0, 0)
             return
         step = re.search(r"Step (\d+) of", msg.text)  # the same reply for the same step in each run

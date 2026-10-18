@@ -88,12 +88,16 @@ def parse_reply(obj, max_actions: int = 8) -> Reply:
     done = obj.get("done", False)
     if not isinstance(done, bool):
         raise ReplyError("'done' must be true or false")
+    return Reply(str(obj.get("observation", "")), str(obj.get("plan", "")), tuple(actions[:max_actions]),
+                 notes, tuple(todo[:5]), len(actions) > max_actions, done, _lessons(obj))
+
+
+def _lessons(obj: dict) -> tuple[str, ...]:
+    """The optional "lessons" of a reply: at most MAX_LESSONS, each cut to LESSON_CHARS."""
     lessons = obj.get("lessons") or []
     if not isinstance(lessons, list) or not all(isinstance(t, str) for t in lessons):
         raise ReplyError("'lessons' must be a list of strings")
-    lessons = [t.strip()[:LESSON_CHARS] for t in lessons if t.strip()][:MAX_LESSONS]
-    return Reply(str(obj.get("observation", "")), str(obj.get("plan", "")), tuple(actions[:max_actions]),
-                 notes, tuple(todo[:5]), len(actions) > max_actions, done, tuple(lessons))
+    return tuple([t.strip()[:LESSON_CHARS] for t in lessons if t.strip()][:MAX_LESSONS])
 
 
 # ---- The plan reply ----
@@ -109,6 +113,7 @@ class PlanReply:
     keyframes: tuple[Keyframe, ...]
     summary: str
     warnings: tuple[str, ...] = ()  # e.g. "keyframe 2: yaw clamped to 90"
+    lessons: tuple[str, ...] = ()
 
 
 def _vec(where: str, key: str, v, positive: bool = False) -> tuple[float, float, float]:
@@ -240,4 +245,4 @@ def parse_plan(obj) -> PlanReply:
     names = {norm_name(e.name): e.name for e in entities}
     return PlanReply(entities,
                      _released_not_moved(tuple(_plan_keyframe(i, k, warnings, names) for i, k in enumerate(keyframes))),
-                     summary.strip()[:SUMMARY_CHARS], tuple(warnings))
+                     summary.strip()[:SUMMARY_CHARS], tuple(warnings), _lessons(obj))
