@@ -166,3 +166,9 @@ def test_the_camera_view_stops_the_hidden_video():
     assert "player.sleep()" in _body(js, "function setViewMode")
     p3 = _web("plan3d.js")
     assert "sleep()" in p3 and "wake()" in p3
+
+
+def test_a_slider_drag_reads_the_new_time_before_the_pause():
+    body = _body(_web("app.js"), '$("play_slider").addEventListener("input"', "\n});\n")
+    assert body.index('const t = Number($("play_slider").value)') < body.index("player.pause()")
+    assert "player.seek(t)" in body

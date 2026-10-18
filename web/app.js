@@ -1170,9 +1170,10 @@ $("play_btn").addEventListener("click", () => {
 });
 $("play_slider").addEventListener("input", () => {
   if (!player || !player.view) return;
+  const t = Number($("play_slider").value);  // read it first: pause() writes the old time back to the slider
   if (viewMode === "camera") setViewMode("imagined");
   player.pause();
-  player.seek(Number($("play_slider").value));
+  player.seek(t);
 });
 for (const b of $("player").querySelectorAll(".seg button")) b.addEventListener("click", () => setViewMode(b.dataset.mode));
 
