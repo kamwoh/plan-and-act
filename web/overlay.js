@@ -109,13 +109,15 @@
   // Draw the path on a canvas over an image of cam.width x cam.height pixels. scale: image pixels for one
   // screen pixel, so that the text and the lines keep their size when the image shows smaller. An empty
   // path clears the canvas.
+  const MAX_SCALE = 2;
+
   function draw(canvas, cam, path, actionStates, scale = 1) {
     const ctx = canvas.getContext("2d");
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     if (!path || !cam) return;
     const r = canvas.width / cam.width;
-    const k = scale;
+    const k = Math.min(scale, MAX_SCALE);  // on a small image, full-size text would hide the scene
     ctx.setTransform(r, 0, 0, r, 0, 0);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";

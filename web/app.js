@@ -663,7 +663,14 @@ function showFirstPlan(ev) {
   box.classList.remove("open");
   box.setAttribute("aria-expanded", "false");
   box.hidden = false;
-  box.classList.toggle("clipped", body.scrollHeight > body.clientHeight + 1);  // a fade shows the folded text
+  markClipped();
+}
+
+// A fade shows the folded text. A new box width can change it.
+function markClipped() {
+  const box = $("first_plan");
+  const body = box.querySelector(".fp-body");
+  if (!box.hidden && body) box.classList.toggle("clipped", body.scrollHeight > body.clientHeight + 1);
 }
 
 function toggleFirstPlan() {
@@ -1080,6 +1087,7 @@ if (window.ResizeObserver) {  // a new box size changes the scale of the text
     if (stepPath) drawPath();
   });
   for (const id of ["cam_front", "cam_top"]) resized.observe($(id).querySelector(".frame"));
+  new ResizeObserver(markClipped).observe($("first_plan"));
 }
 
 // ---- Plan first: the imagined video, the plan entries and Execute ----

@@ -20,6 +20,11 @@ def _env(scene="cubes", seed=0):
     return MujocoEnv(SCENES[scene], None, seed, "")
 
 
+def _seen_centre(pos, camera):
+    x, y, z = (float(v) for v in pos)
+    return [x, y, z + HALF_CUBE] if camera == "top" else [x, y, z]
+
+
 @pytest.mark.assets
 @pytest.mark.parametrize("scene", ["cubes", "drawer"])
 async def test_run_start_has_the_cameras_of_the_scene(scene):
@@ -55,13 +60,17 @@ def _colour_centroid(img, rgba):
     mask = (px[..., ch] > 60) & (px[..., ch] > px[..., a] + 70) & (px[..., ch] > px[..., b] + 70)
     ys, xs = np.nonzero(mask)
     assert len(xs) > 100, "the object is not in the image"
-    return [float(xs.mean()) + 0.5, float(ys.mean()) + 0.5]
+    # The arm has a few pixels of the same colour. Keep only the pixels near the median of the mask.
+    mx, my = np.median(xs), np.median(ys)
+    near = np.hypot(xs - mx, ys - my) < 25
+    return [float(xs[near].mean()) + 0.5, float(ys[near].mean()) + 0.5]
 
 
-# The page projection against MuJoCo's own render. The colour centroid of a 4 cm cube is not exactly its
-# projected centre: the camera sees its top and some sides. Measured over seeds 0 to 2, this costs at most
-# 1.6 px, so the limit stays at 2 px. The front camera of the drawer scene is its side camera.
-CUBES = {"cubes": ["red_cube", "blue_cube"], "drawer": ["red_cube"]}
+# The page projection against MuJoCo's own render. The front camera sees the top and the sides of a cube, so
+# its colour centroid lies near the cube centre. The top camera sees mostly the top face, so the test projects
+# the centre of that face. The front camera of the drawer scene is its side camera.
+CUBES = {"cubes": ["red_cube", "blue_cube", "green_cube"], "drawer": ["red_cube"]}
+HALF_CUBE = 0.02
 
 
 @pytest.mark.assets
@@ -76,7 +85,7 @@ def test_the_page_projection_matches_the_mujoco_render(scene, seed, tmp_path):
             img = env.cams.render(c["name"])
             objs = [o for o in env.world.objects if o.name in CUBES[scene]]
             cases.append({"camera": c, "limit": 2.0,
-                          "points": [[float(v) for v in env.world.object_pos(o.name)] for o in objs],
+                          "points": [_seen_centre(env.world.object_pos(o.name), c["name"]) for o in objs],
                           "pixels": [_colour_centroid(img, [float(v) for v in o.rgba.split()]) for o in objs]})
     finally:
         env.close()
@@ -209,3 +218,14 @@ def test_the_first_plan_box_is_a_div_with_keys_and_hides_well():
     assert 'role="button"' in tag and 'tabindex="0"' in tag and 'aria-expanded="false"' in tag and " hidden" in tag
     assert ".first-plan[hidden] { display: none; }" in css
     assert '"Enter"' in js and '" "' in js and "toggleFirstPlan" in js
+
+
+def test_the_label_scale_has_a_cap():
+    js = (WEB / "overlay.js").read_text()
+    assert "const MAX_SCALE = 2;" in js and "Math.min(scale, MAX_SCALE)" in js
+
+
+def test_a_new_box_width_checks_the_fade_again():
+    js = (WEB / "app.js").read_text()
+    assert "new ResizeObserver(markClipped)" in js
+    assert "markClipped()" in _body(js, "function showFirstPlan")
