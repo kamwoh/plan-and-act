@@ -143,3 +143,30 @@ def test_exec_start_action_data_starts_from_the_gripper_of_the_plan_view():
     assert [a.type for a in keyframe_actions(lift, _start_gripper({"track": {"start": {"state": "closed"}}}))] == \
         ["move_to"]
 
+
+
+# 9. The Re-plan button keeps the mode of the moment it was made.
+def test_the_replan_button_captures_its_mode_when_it_is_made():
+    js = _web("app.js")
+    button = _body(js, "function replanButton")
+    assert "const fromStart = execError;" in button and "() => replan(fromStart)" in button
+    body = _body(js, "async function replan")
+    assert "async function replan(fromStart = false)" in js and "fromStart ? \"start\" : roundMode()" in body
+    assert "execError" not in body
+
+
+# 10. In continue mode, the round after an execution error starts from the start.
+def test_the_loop_round_after_an_execution_error_starts_from_the_start(tmp_path):
+    from tests.test_done_verdict import ENVS
+    ENVS.clear()
+    rounds = run_loop(tmp_path, [good_plan(), good_plan(), judged(True)], ["error", "success"], PICK)
+    assert len(rounds) == 2 and rounds[1][0]["round_mode"] == "start"
+    assert all(getattr(e, "start", None) is None for e in ENVS)  # no state file: a fresh reset
+    end = loop_end(rounds)
+    assert (end["success"], end["reason"]) == (True, "the auto-check passed")
+
+
+def test_an_execution_error_in_the_last_round_ends_the_loop(tmp_path):
+    rounds = run_loop(tmp_path, [good_plan()], ["error"], PICK, rounds=1)
+    end = loop_end(rounds)
+    assert (end["success"], end["reason"], end["rounds_run"]) == (False, "the execution failed", 1)

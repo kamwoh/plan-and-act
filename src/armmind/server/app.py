@@ -458,8 +458,8 @@ class Runner:
                 while True:
                     rounds_run += 1
                     plan_log = log if rounds_run == 1 else RunLog(self.runs_dir)
-                    if feedback is not None and feedback.mode == "continue":
-                        start = _copy_state(folder / END_STATE, plan_log.dir)
+                    continues = feedback is not None and feedback.mode == "continue"
+                    start = _copy_state(folder / END_STATE, plan_log.dir) if continues else None
                     folder = self.run_dir = plan_log.dir
                     agent, body = self._plan_part(plan_log, req, feedback, req.rounds)
                     part[:] = [agent.stop]
@@ -503,9 +503,12 @@ class Runner:
                     if stop.is_set():
                         reason = "stopped"
                         break
-                    if result is None or result.status == "error":
+                    if result is None or (result.status == "error" and rounds_run >= req.rounds):
                         reason = "the execution failed"
                         break
+                    if result.status == "error":  # no end state: the next round starts from the start
+                        feedback, pending = _feedback(found, self.history, "start"), None
+                        continue
                     check = result.success if task else None
                     if result.success:
                         success, reason = True, "the auto-check passed"

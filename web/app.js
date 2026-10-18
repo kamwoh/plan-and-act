@@ -1445,17 +1445,18 @@ function replanButton() {
   b.disabled = running || !planRunId;
   b.title = "Claude sees this plan and its result. With Continue on, it plans the rest from where the execution " +
     "ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
-  b.addEventListener("click", replan);
-  if (!execError) return b;
+  const fromStart = execError;  // the mode when the button is made: a later Execute must not change it
+  b.addEventListener("click", () => replan(fromStart));
+  if (!fromStart) return b;
   // An execution that failed with an error saved no end state, so a re-plan cannot continue from it.
   const box = el("div", "", "replan-box");
   box.append(b, el("div", "The execution failed, so this re-plan starts from the start, also with Continue on.", "muted"));
   return box;
 }
 
-async function replan() {
+async function replan(fromStart = false) {
   if (running || !planRunId) return;
-  const mode = execError ? "start" : roundMode();  // no end state after an error: see replanButton
+  const mode = fromStart ? "start" : roundMode();  // no end state after an error: see replanButton
   setStatus(`re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
   if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, { mode })) setRunning(true);
 }
