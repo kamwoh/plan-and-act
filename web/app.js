@@ -18,6 +18,7 @@ let planRunId = null;      // the id of the plan run on the page, for Execute an
 let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
 let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
 let planDone = false;      // Claude's re-plan on the page says that the task is done
+let execError = false;     // the last execution of the plan on the page ended with an error: it has no end state
 const MAX_ROUND = 5;
 let autoLoop = false;      // a live Auto loop: the page stays busy from round to round until loop_end
 let feedbackImages = null; // a re-plan: the end images of the last round, as server URLs
@@ -995,6 +996,7 @@ function onEvent(ev, replay = false) {
     planRound = ev.round || 1;
     planMode = ev.round_mode || null;
     planDone = false;
+    execError = false;
     if (!replay) autoLoop = Boolean(ev.auto_rounds);
     runCams = ev.cameras || null;
     resetChat();
@@ -1068,6 +1070,7 @@ function onEvent(ev, replay = false) {
       stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };
     }
     setCamState("ended");
+    execError = ev.status === "error";
     const endItem = onExecEnd(ev);
     const pred = ev.prediction ? predictionEntry(ev.prediction) : null;
     if (planRunId && planRound < MAX_ROUND) (pred || endItem).append(replanButton());
@@ -1438,12 +1441,16 @@ function replanButton() {
   b.title = "Claude sees this plan and its result. With Continue on, it plans the rest from where the execution " +
     "ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
   b.addEventListener("click", replan);
-  return b;
+  if (!execError) return b;
+  // An execution that failed with an error saved no end state, so a re-plan cannot continue from it.
+  const box = el("div", "", "replan-box");
+  box.append(b, el("div", "The execution failed, so this re-plan starts from the start, also with Continue on.", "muted"));
+  return box;
 }
 
 async function replan() {
   if (running || !planRunId) return;
-  const mode = roundMode();
+  const mode = execError ? "start" : roundMode();  // no end state after an error: see replanButton
   setStatus(`re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
   if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, { mode })) setRunning(true);
 }

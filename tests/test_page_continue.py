@@ -26,7 +26,7 @@ def test_the_switch_sets_the_mode_of_replan_and_of_the_auto_loop():
     assert '$("continue").checked ? "continue" : "start"' in _body(js, "function roundMode")
     assert "mode: roundMode()," in _body(js, "async function startPlan")
     body = _body(js, "async function replan")
-    assert "const mode = roundMode();" in body and "/replan`, { mode })" in body
+    assert "roundMode();" in body and "/replan`, { mode })" in body
 
 
 def test_a_plan_after_round_1_shows_its_mode():
@@ -65,3 +65,13 @@ def test_the_page_shows_claudes_verdict_next_to_the_auto_check():
     assert "ev.reason" in entry and "disagree" in entry
     end = _body(js, "function loopEndEntry")
     assert "ev.verdicts" in end and "ev.agree" in end and "ev.compared" in end
+
+
+def test_a_replan_after_an_execution_error_falls_back_to_from_start():
+    js = _web("app.js")
+    assert 'const mode = execError ? "start" : roundMode();' in _body(js, "async function replan")
+    button = _body(js, "function replanButton")
+    assert "if (!execError) return b;" in button and "starts from the start, also with Continue on" in button
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    assert 'execError = ev.status === "error";' in handler
+    assert handler.index('execError = ev.status === "error";') < handler.index("replanButton()")
