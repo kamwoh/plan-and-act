@@ -20,7 +20,7 @@ let planMode = null;       // the mode of the plan on the page: "continue", "sta
 let planDone = false;      // Claude's re-plan on the page says that the task is done
 let parentCheck = null;    // the auto-check of the execution before this re-plan: true, false or null
 let execError = false;     // the last execution of the plan on the page ended with an error: it has no end state
-const MAX_ROUND = 5;
+const MAX_ROUND = 30;
 let autoLoop = false;      // a live Auto loop: the page stays busy from round to round until loop_end
 let feedbackImages = null; // a re-plan: the end images of the last round, as server URLs
 
@@ -916,11 +916,11 @@ async function startPlan() {
   if (await postJson("/api/plan", body)) setRunning(true);
 }
 
-// The Rounds field as a whole number from 1 to 5 (MAX_ROUND). An empty or bad field gives 3.
+// The Rounds field as a whole number from 1 to 30 (MAX_ROUND). An empty or bad field gives 3.
 function roundsValue(text) {
   const n = Math.round(Number(text));
   if (String(text).trim() === "" || !Number.isFinite(n)) return 3;
-  return Math.min(5, Math.max(1, n));
+  return Math.min(MAX_ROUND, Math.max(1, n));
 }
 
 // ---- The Auto switch ----

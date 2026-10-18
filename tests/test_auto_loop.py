@@ -147,9 +147,9 @@ def test_exec_start_has_the_round(tmp_path):
     assert [next(e for e in r if e["kind"] == "exec_start")["round"] for r in rounds] == [1, 2]
 
 
-def test_rounds_must_be_1_to_5(tmp_path):
+def test_rounds_must_be_1_to_30(tmp_path):
     with loop_client(tmp_path, FakeBackend([])) as c:
-        for rounds in (0, 6, "x"):
+        for rounds in (0, 31, "x"):
             assert c.post("/api/plan", json={"instruction": PICK, "auto": True, "rounds": rounds}).status_code == 422
 
 

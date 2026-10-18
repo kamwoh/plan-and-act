@@ -41,7 +41,7 @@ EnvFactory = Callable[..., Env]
 Preview = Callable[[Scene, int], dict]
 
 
-MAX_ROUND = 5  # a plan and at most 4 re-plans
+MAX_ROUND = 30  # a plan and at most 29 re-plans
 RoundMode = Literal["continue", "start"]  # a re-plan goes on from the end state, or starts at the reset
 
 

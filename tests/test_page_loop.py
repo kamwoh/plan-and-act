@@ -29,7 +29,7 @@ def test_enter_in_the_instruction_runs_plan():
 def test_rounds_replaces_max_steps():
     html = _web("index.html")
     assert 'id="max_steps"' not in html
-    assert re.search(r'<input id="rounds" type="number" value="3" min="1" max="5">', html)
+    assert re.search(r'<input id="rounds" type="number" value="3" min="1" max="30">', html)
     body = _body(_web("app.js"), "async function startPlan")
     assert 'auto: $("auto").checked' in body and 'rounds: roundsValue($("rounds").value)' in body
 
@@ -50,7 +50,7 @@ def test_replan_button_follows_the_execute_rules():
     handler = _body(js, "function onEvent(ev, replay = false)")
     end = handler[handler.index('ev.kind === "exec_end"'):handler.index('ev.kind === "loop_end"')]
     assert "planRound < MAX_ROUND" in end and "replanButton()" in end
-    assert "const MAX_ROUND = 5" in js
+    assert "const MAX_ROUND = 30" in js
 
 
 def test_the_page_follows_the_auto_loop():
@@ -117,10 +117,10 @@ def test_a_second_execute_revokes_the_old_end_images():
     assert end.index("URL.revokeObjectURL") < end.index("stepImages[ev.step] = ")
 
 
-@pytest.mark.parametrize("value, want", [("", 3), ("0", 1), ("9", 5), ("2", 2), ("abc", 3), ("2.6", 3)])
+@pytest.mark.parametrize("value, want", [("", 3), ("0", 1), ("9", 9), ("31", 30), ("2", 2), ("abc", 3), ("2.6", 3)])
 def test_rounds_value_falls_back_and_clamps(value, want):
     body = _body(_web("app.js"), "function roundsValue")
-    script = f"{body}\n}}\nconsole.log(roundsValue({value!r}));"
+    script = f"const MAX_ROUND = 30;\n{body}\n}}\nconsole.log(roundsValue({value!r}));"
     out = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
     assert int(out) == want
     assert 'rounds: roundsValue($("rounds").value)' in _body(_web("app.js"), "async function startPlan")

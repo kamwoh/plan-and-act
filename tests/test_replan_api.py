@@ -114,7 +114,8 @@ def test_replan_during_a_run_is_409_and_needs_same_origin(tmp_path):
         wait_idle(c)
 
 
-def test_replan_of_round_5_is_409(tmp_path):
+def test_replan_of_the_last_round_is_409(tmp_path, monkeypatch):
+    monkeypatch.setattr("armmind.server.app.MAX_ROUND", 5)  # 5 rounds keep the test short
     backend = FakeBackend([r for _ in range(5) for r in (good_plan(), judged())])
     with client(tmp_path, backend) as c:
         run_id = planned_and_executed(c)
