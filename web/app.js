@@ -646,7 +646,29 @@ $("lessons_clear").addEventListener("click", () => {
   if (confirm(`Delete all ${savedLessons.length} saved lessons of this scene?`)) deleteLessons(null);
 });
 
+// The plan and the to-do list of the first reply stay at the top of the To-do column, folded to 2 lines.
+function showFirstPlan(ev) {
+  const body = el("div", "", "fp-body");
+  body.append(el("span", "First plan", "fp-label"), document.createTextNode(ev.plan || "(no plan)"));
+  if (ev.todo && ev.todo.length) {
+    const ol = el("ol");
+    ol.append(...ev.todo.map((t) => li(t)));
+    body.append(ol);
+  }
+  $("first_plan").replaceChildren(body);
+  $("first_plan").classList.remove("open");
+  $("first_plan").setAttribute("aria-expanded", "false");
+  $("first_plan").hidden = false;
+}
+
+$("first_plan").addEventListener("click", () => {
+  const open = $("first_plan").classList.toggle("open");
+  $("first_plan").setAttribute("aria-expanded", String(open));
+});
+
 function emptyMemo() {
+  $("first_plan").hidden = true;
+  $("first_plan").replaceChildren();
   $("todo").replaceChildren(li("Claude writes its plan here", "empty"));
   $("notes").replaceChildren(el("span", "Nothing yet", "empty"));
   runLessons = [];
@@ -888,6 +910,7 @@ function onEvent(ev, replay = false) {
   } else if (ev.kind === "reply") {
     setStatus(`step ${ev.step} · moving`, "moving");
     onReply(ev);
+    if ($("first_plan").hidden) showFirstPlan(ev);  // the first reply of the run
     setPath(ev.step, runCams, stepStarts[ev.step] || null, ev.action_data);
   } else if (ev.kind === "action") {
     onPathAction(ev);

@@ -130,3 +130,14 @@ def test_the_overlay_clears_on_a_new_run_a_preview_and_a_reset():
         assert "clearPlan();" in _body(js, caller)
     handler = _body(js, "function onEvent(ev, replay = false)")
     assert 'ev.kind === "action"' in handler and "setPath(" in handler and "onPathStep(ev)" in handler
+
+
+def test_the_first_plan_stays_at_the_top_of_the_todo_column():
+    html, js = (WEB / "index.html").read_text(), (WEB / "app.js").read_text()
+    col = _body(html, "<h2>To-do</h2>", "</div>")
+    assert col.index('id="first_plan"') < col.index('id="todo"')
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    reply = handler[handler.index('ev.kind === "reply"'):handler.index('ev.kind === "action"')]
+    assert "showFirstPlan(ev)" in reply and '$("first_plan").hidden' in reply  # only the first reply of a run
+    assert '$("first_plan").hidden = true;' in _body(js, "function emptyMemo()")
+    assert ".first-plan .fp-body { max-height: 2.8em;" in (WEB / "style.css").read_text()  # 2 lines, folded
