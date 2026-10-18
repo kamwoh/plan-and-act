@@ -147,6 +147,13 @@ class World:
         self.events = []
         self.monitors = [make() for make in self.scene.monitors]  # fresh monitors are armed
 
+    def resume(self, events: list[str]) -> None:
+        """After a loaded state: keep its events, and let each fresh monitor see the state once. A button that
+        is down now then does not give a second press event."""
+        self.events = list(events)
+        for m in self.monitors:
+            m(self)
+
     def step(self, n: int = 1) -> None:
         if not self.monitors:
             mujoco.mj_step(self.model, self.data, nstep=n)

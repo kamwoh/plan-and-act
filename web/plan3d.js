@@ -141,7 +141,8 @@
   }
 
   // The poses of a set of entities at time t. carriedAt(k, keyframe) names the entity of the set that the
-  // agent carries after keyframe k, or gives null. movesAt(k, keyframe) gives the predicted moves of keyframe
+  // agent carries after keyframe k, or gives null. carriedAt(-1, track.start) names the entity in the hand at
+  // the start. movesAt(k, keyframe) gives the predicted moves of keyframe
   // k: [{ name, xyz, yaw }]. On the segment into keyframe k, each moved entity goes to its new pose with the
   // timing of the agent. A carried entity does not move. A release drops the entity (see dropPose).
   // src/armmind/plan/track.py has the same rules.
@@ -153,6 +154,8 @@
       byName[e.name] = e;
     }
     let carried = null;
+    const first = carriedAt(-1, track.start) || null;  // a round that continues can start with it in the hand
+    if (first && poses[first]) carried = { name: first, local: toLocal(track.start, poses[first]), from: -1 };
     let t0 = 0;
     const kfs = track.keyframes;
     const free = (name) => poses[name] && !(carried && carried.name === name);

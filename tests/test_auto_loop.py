@@ -47,10 +47,11 @@ def events(folder):
     return [json.loads(x) for x in (folder / "events.jsonl").read_text().splitlines()]
 
 
-def run_loop(tmp_path, backend, outcomes, rounds=3, instruction=PICK, timeout=10.0):
+def run_loop(tmp_path, backend, outcomes, rounds=3, instruction=PICK, timeout=10.0, mode="start"):
     OUTCOMES[:] = outcomes
     with loop_client(tmp_path, backend) as c:
-        r = c.post("/api/plan", json={"instruction": instruction, "seed": 7, "auto": True, "rounds": rounds})
+        r = c.post("/api/plan", json={"instruction": instruction, "seed": 7, "auto": True, "rounds": rounds,
+                                      "mode": mode})
         assert r.status_code == 200, r.text
         wait_idle(c, timeout)
         first = r.json()["run_id"]
@@ -105,7 +106,7 @@ def test_the_loop_ends_after_round_1_without_an_auto_check(tmp_path):
 def test_stop_ends_the_loop(tmp_path):
     OUTCOMES[:] = ["failed", "hang"]
     with loop_client(tmp_path, FakeBackend([good_plan(), good_plan(), good_plan()])) as c:
-        r = c.post("/api/plan", json={"instruction": PICK, "auto": True, "rounds": 3})
+        r = c.post("/api/plan", json={"instruction": PICK, "auto": True, "rounds": 3, "mode": "start"})
         assert r.status_code == 200
         end = time.monotonic() + 5
         while len(list((tmp_path / "runs").iterdir())) < 2 or "exec_start" not in \
@@ -126,7 +127,7 @@ def test_stop_ends_the_loop(tmp_path):
 def test_state_follows_the_round(tmp_path):
     OUTCOMES[:] = ["failed", "hang"]
     with loop_client(tmp_path, FakeBackend([good_plan(), good_plan()])) as c:
-        c.post("/api/plan", json={"instruction": PICK, "auto": True, "rounds": 2})
+        c.post("/api/plan", json={"instruction": PICK, "auto": True, "rounds": 2, "mode": "start"})
         end = time.monotonic() + 5
         while len(list((tmp_path / "runs").iterdir())) < 2:
             assert time.monotonic() < end
@@ -167,7 +168,7 @@ def test_the_demo_loop_fails_round_1_and_solves_round_2(tmp_path):
                      lessons_dir=tmp_path / "lessons")
     app.state.runner.auto_view_s = 0.0  # no wait for the imagined video
     with TestClient(app) as c:
-        r = c.post("/api/plan", json={"instruction": PICK, "seed": 0, "auto": True, "rounds": 3})
+        r = c.post("/api/plan", json={"instruction": PICK, "seed": 0, "auto": True, "rounds": 3, "mode": "start"})
         assert r.status_code == 200
         wait_idle(c, timeout=180)
         saved = c.get("/api/lessons", params={"scene": "cubes"}).json()
@@ -187,3 +188,34 @@ def test_state_shows_auto_at_once(tmp_path):
         c.post("/api/stop")
         wait_idle(c)
         assert c.get("/api/state").json()["auto"] is False
+
+
+@pytest.mark.assets
+def test_the_demo_loop_continues_from_where_round_1_left_the_cube(tmp_path):
+    import numpy as np
+
+    from armmind.llm.fake import DemoBackend
+    from armmind.server.app import default_env_factory
+    from armmind.sim.state import END_STATE, START_STATE
+    app = create_app(DemoBackend(delay_s=0.0), default_env_factory, tmp_path / "runs",
+                     lessons_dir=tmp_path / "lessons")
+    app.state.runner.auto_view_s = 0.0
+    with TestClient(app) as c:
+        r = c.post("/api/plan", json={"instruction": PICK, "seed": 0, "auto": True, "rounds": 3})  # continue
+        assert r.status_code == 200
+        wait_idle(c, timeout=180)
+    dirs = folders(tmp_path)
+    rounds = [events(f) for f in dirs]
+    assert len(rounds) == 2 and rounds[1][0]["round_mode"] == "continue"
+    ends = [next(e for e in evs if e["kind"] == "exec_end") for evs in rounds]
+    assert [e["status"] for e in ends] == ["failed", "success"]
+    with np.load(dirs[0] / END_STATE) as a, np.load(dirs[1] / START_STATE) as b:
+        assert np.array_equal(a["qpos"], b["qpos"])
+    view = next(e for e in rounds[1] if e["kind"] == "plan")["view"]
+    red = next(e for e in view["true_start"] if e["name"] == "red_cube")
+    assert red["xyz"][2] > 0.05  # in the hand, where round 1 left it, not back on the table
+    assert view["track"]["start"]["state"] == "closed" and view["track"]["start"]["carrying"] == "red cube"
+    plan = next(e for e in rounds[1] if e["kind"] == "plan")
+    assert len(plan["keyframes"]) == 1 and all(m["ok"] for m in plan["scores"]["marks"])
+    end = loop_end(rounds)
+    assert end["success"] is True and end["rounds_run"] == 2

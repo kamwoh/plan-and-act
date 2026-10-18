@@ -69,7 +69,7 @@ def test_replan_makes_a_new_round_with_the_feedback(tmp_path):
     backend = FakeBackend([good_plan(), good_plan()])
     with TestClient(create_app(backend, true_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
         first = planned_and_executed(c)
-        r = c.post(f"/api/plan/{first}/replan")
+        r = c.post(f"/api/plan/{first}/replan", json={"mode": "start"})
         assert r.status_code == 200
         wait_idle(c)
         second = r.json()["run_id"]
@@ -95,10 +95,10 @@ def test_replan_makes_a_new_round_with_the_feedback(tmp_path):
 def test_replan_of_an_unknown_run_or_a_plan_without_an_execution_is_404(tmp_path):
     with client(tmp_path, FakeBackend([good_plan()])) as c:
         for run_id in ("20261017-000000", "nope", "%2E%2E"):
-            assert c.post(f"/api/plan/{run_id}/replan").status_code == 404
+            assert c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"}).status_code == 404
         run_id = c.post("/api/plan", json={"instruction": PICK}).json()["run_id"]
         wait_idle(c)
-        r = c.post(f"/api/plan/{run_id}/replan")
+        r = c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"})
         assert r.status_code == 404 and "execut" in r.json()["detail"]
 
 
@@ -109,7 +109,7 @@ def test_replan_during_a_run_is_409_and_needs_same_origin(tmp_path):
                                lessons_dir=tmp_path / "lessons")) as c:
         assert c.post(f"/api/plan/{run_id}/replan", headers={"Origin": "http://evil.example"}).status_code == 403
         assert c.post("/api/plan", json={"instruction": PICK}).status_code == 200
-        assert c.post(f"/api/plan/{run_id}/replan").status_code == 409
+        assert c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"}).status_code == 409
         c.post("/api/stop")
         wait_idle(c)
 
@@ -119,17 +119,17 @@ def test_replan_of_round_5_is_409(tmp_path):
     with client(tmp_path, backend) as c:
         run_id = planned_and_executed(c)
         for n in range(2, 6):
-            r = c.post(f"/api/plan/{run_id}/replan")
+            r = c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"})
             assert r.status_code == 200, r.text
             wait_idle(c)
             run_id = r.json()["run_id"]
             assert run_events(tmp_path, run_id)[0]["round"] == n
             if n == 5:  # the round comes before the missing execution
-                r = c.post(f"/api/plan/{run_id}/replan")
+                r = c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"})
                 assert r.status_code == 409 and "5" in r.json()["detail"]
             assert c.post(f"/api/plan/{run_id}/execute").status_code == 200
             wait_idle(c)
-        r = c.post(f"/api/plan/{run_id}/replan")
+        r = c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"})
         assert r.status_code == 409 and "5" in r.json()["detail"]
 
 
@@ -137,7 +137,7 @@ def test_replan_lessons_reach_the_store(tmp_path):
     body = {**PLAN, "lessons": ["Closing on the near edge slipped."]}
     with client(tmp_path, FakeBackend([good_plan(), good_plan(body)])) as c:
         first = planned_and_executed(c)
-        second = c.post(f"/api/plan/{first}/replan").json()["run_id"]
+        second = c.post(f"/api/plan/{first}/replan", json={"mode": "start"}).json()["run_id"]
         wait_idle(c)
         saved = c.get("/api/lessons", params={"scene": "cubes"}).json()
     assert [(s["text"], s["run"], s["outcome"]) for s in saved] == [
@@ -172,7 +172,7 @@ def test_replan_after_a_stopped_execution_says_the_person_stopped_it(tmp_path):
             time.sleep(0.01)
         c.post("/api/stop")
         wait_idle(c)
-        assert c.post(f"/api/plan/{run_id}/replan").status_code == 200
+        assert c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"}).status_code == 200
         wait_idle(c)
     msg = backend.sent[-1][0]
     assert "The person stopped the execution after action 3 of 7." in msg.text

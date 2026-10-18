@@ -4,12 +4,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
 import logging
+import shutil
 import threading
 import time
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
@@ -26,16 +29,19 @@ from armmind.plan.scores import prediction
 from armmind.scenes import SCENES, Scene, Task
 from armmind.sim.assets import AssetsMissing
 from armmind.sim.meshes import warm
+from armmind.sim.state import END_STATE, START_STATE, state_problem
 from armmind.store.lessons import LessonChanged, LessonStore
 from armmind.store.runlog import RunLog
 from armmind.store.runs import RunStore
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
-EnvFactory = Callable[[Scene, Task | None, str, int, bool, Callable[[str, bytes], None]], Env]
+# (scene, task, instruction, seed, show_positions, on_frame). A round that continues adds start=<state file>.
+EnvFactory = Callable[..., Env]
 Preview = Callable[[Scene, int], dict]
 
 
 MAX_ROUND = 5  # a plan and at most 4 re-plans
+RoundMode = Literal["continue", "start"]  # a re-plan goes on from the end state, or starts at the reset
 
 
 class RunRequest(BaseModel):
@@ -68,11 +74,16 @@ class PlanRequest(BaseModel):
     use_lessons: bool = True
     auto: bool = False  # the Auto loop: plan, execute and re-plan until the auto-check passes
     rounds: int = Field(3, ge=1, le=MAX_ROUND)  # the rounds of the Auto loop
+    mode: RoundMode = "continue"  # the mode of each round of the Auto loop after round 1
 
     @field_validator("instruction")
     @classmethod
     def _strip(cls, v: str) -> str:
         return RunRequest._strip(v)
+
+
+class ReplanRequest(BaseModel):
+    mode: RoundMode = "continue"
 
 
 class Hub:
@@ -107,9 +118,9 @@ class Pacer:
 
 
 def default_env_factory(scene: Scene, task: Task | None, instruction: str, seed: int, show_positions: bool,
-                        on_frame: Callable[[str, bytes], None]) -> Env:
+                        on_frame: Callable[[str, bytes], None], start: Path | None = None) -> Env:
     from armmind.env import MujocoEnv
-    return MujocoEnv(scene, task, seed, instruction, show_positions=show_positions, on_frame=on_frame)
+    return MujocoEnv(scene, task, seed, instruction, show_positions=show_positions, on_frame=on_frame, start=start)
 
 
 def default_preview(scene: Scene, seed: int) -> dict:
@@ -164,9 +175,10 @@ def _reply_format(plan: dict) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
     return objects, tuple(keyframes)
 
 
-def _feedback(found: dict, history: RunStore) -> Feedback | None:
+def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback | None:
     """The feedback of the last execution of a saved plan, or None when it has not run to its end. It reads
-    only the model's own plan, the status, the stop and the end images: never the scores or the true poses."""
+    only the model's own plan, the status, the stop and the end images: never the scores or the true poses.
+    In the mode "continue", the new round starts at the end, so its own images are the end images."""
     ex = found["execution"]
     if ex is None or ex["end"] is None:
         return None
@@ -181,7 +193,7 @@ def _feedback(found: dict, history: RunStore) -> Feedback | None:
             stopped_action = None
     images: tuple[bytes, ...] = ()
     paths = [history.image(run_id, end.get(k) if isinstance(end.get(k), str) else "") for k in ("front_png", "top_png")]
-    if all(paths):
+    if all(paths) and mode != "continue":
         try:
             images = tuple(path.read_bytes() for path in paths)
         except OSError:
@@ -191,7 +203,12 @@ def _feedback(found: dict, history: RunStore) -> Feedback | None:
     return Feedback(objects, keyframes, str(end.get("status") or "error"), bool(ex["start"].get("check")),
                     bool(end.get("success")), stopped, stopped_action, images, run_id,
                     plan_round(found["start"]) + 1, end.get("step") if images else None,
-                    ran=ex["actions"], total=total)
+                    ran=ex["actions"], total=total, mode=mode)
+
+
+def start_state(found: dict) -> Path | None:
+    """The state file that a saved plan starts from: its START_STATE in a round that continues, else None."""
+    return found["folder"] / START_STATE if found["start"].get("round_mode") == "continue" else None
 
 
 def saved_plan(found: dict) -> tuple[Scene, Task | None, str, int, tuple[Keyframe, ...]] | None:
@@ -208,6 +225,13 @@ def saved_plan(found: dict) -> tuple[Scene, Task | None, str, int, tuple[Keyfram
     instruction = start.get("instruction") or ""
     task = next((t for t in scene.tasks.values() if t.instruction == instruction), None)
     return scene, task, instruction, seed, keyframes
+
+
+def _copy_state(state: Path, folder: Path) -> Path:
+    """Copy the end state of the parent into the run folder of a round that continues. Gives the copy."""
+    target = folder / START_STATE
+    shutil.copyfile(state, target)
+    return target
 
 
 AUTO_VIEW_S = 20.0  # the Auto loop waits for the imagined video of a plan, at most this long, before Execute
@@ -252,22 +276,27 @@ class Runner:
                                                          auto_rounds=auto_rounds)
 
     async def start_plan(self, req: PlanRequest, scene: Scene, task: Task | None,
-                         feedback: Feedback | None = None) -> Path:
+                         feedback: Feedback | None = None, state: Path | None = None) -> Path:
         """A run of kind "plan": one model call, no motion. The env never gets the true positions.
-        With feedback, it is a re-plan of the run feedback.parent. With req.auto, it starts the Auto loop."""
+        With feedback, it is a re-plan of the run feedback.parent. With req.auto, it starts the Auto loop.
+        With `state`, the end state of the parent, the round continues: the state file goes into the new run
+        folder, and the env of the plan and of each Execute starts from it."""
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog(self.runs_dir)
         if req.auto:
             self._start_loop(log, req, scene, task)
             return log.dir
+        start = _copy_state(state, log.dir) if state is not None else None
         agent, body = self._plan_part(log, req, feedback, None)
-        self._launch(log, agent.stop, self._session(log, scene, task, req.instruction, req.seed, False, body))
+        self._launch(log, agent.stop, self._session(log, scene, task, req.instruction, req.seed, False, body,
+                                                    start=start))
         return log.dir
 
     def _execute_part(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
                       keyframes: tuple[Keyframe, ...], step: int, view: dict | None, round_no: int = 1):
-        """The stopper, the before hook and the session body of one execution of a saved plan."""
+        """The stopper, the before hook and the session body of one execution of a saved plan. The body saves
+        the end state in END_STATE of the folder, also after a stop."""
         cancel = threading.Event()
 
         async def stopper() -> None:
@@ -285,7 +314,14 @@ class Runner:
             def on_action(index: int, count: int) -> None:  # on the sim thread: emit on the event loop
                 loop.call_soon_threadsafe(emit, "action", {"step": step, "index": index, "of": count})
 
+            end_state = folder / END_STATE
+            end_state.unlink(missing_ok=True)  # a file of an earlier execution must not stand for this one
             out = await call(env.execute_plan, keyframes, cancel.is_set, on_action)
+            if hasattr(env, "save_state"):
+                try:
+                    await call(env.save_state, end_state)
+                except Exception as e:  # noqa: BLE001  the result stays, a re-plan then cannot continue
+                    logging.getLogger(__name__).warning("cannot save the end state: %s: %s", type(e).__name__, e)
             emit("step", {"step": step, "plan": "Run the saved keyframes once.", "observation": "",
                           "actions": out["actions"], "results": out["results"], "stopped": out["stopped"],
                           "truncated": False, "notes": "", "todo": [], "lessons": [], "success": out["success"],
@@ -303,16 +339,17 @@ class Runner:
 
     async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
                             keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None,
-                            round_no: int = 1) -> None:
-        """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed. No model is called.
-        The events go to the end of the plan's own log. With the plan view, exec_end has the prediction score."""
+                            round_no: int = 1, start: Path | None = None) -> None:
+        """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed, or from the state
+        file `start`. No model is called. The events go to the end of the plan's own log. With the plan view,
+        exec_end has the prediction score."""
         if self.running:
             raise HTTPException(409, "a run is already active")
         log = RunLog.append_to(folder)
         stopper, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view,
                                                    round_no)
         self._launch(log, stopper, self._session(log, scene, task, instruction, seed, False, body,
-                                                 end_kind="exec_end", before=before))
+                                                 end_kind="exec_end", before=before, start=start))
 
     def _start_loop(self, log: RunLog, req: PlanRequest, scene: Scene, task: Task | None) -> None:
         """The Auto loop as one job: plan, execute, then re-plan, until the auto-check passes or the rounds end.
@@ -327,14 +364,18 @@ class Runner:
 
         async def loop() -> None:
             feedback, rounds_run, success, reason, folder = None, 0, False, "", log.dir
+            start = None  # the state file of a round that continues
             try:
                 while True:
                     rounds_run += 1
                     plan_log = log if rounds_run == 1 else RunLog(self.runs_dir)
+                    if feedback is not None and feedback.mode == "continue":
+                        start = _copy_state(folder / END_STATE, plan_log.dir)
                     folder = self.run_dir = plan_log.dir
                     agent, body = self._plan_part(plan_log, req, feedback, req.rounds)
                     part[:] = [agent.stop]
-                    status = await self._session(plan_log, scene, task, req.instruction, req.seed, False, body)
+                    status = await self._session(plan_log, scene, task, req.instruction, req.seed, False, body,
+                                                 start=start)
                     if stop.is_set():
                         reason = "stopped"
                         break
@@ -353,9 +394,9 @@ class Runner:
                     part[:] = [exec_stop]
                     exec_log = RunLog.append_to(folder)
                     await self._session(exec_log, scene, task, req.instruction, req.seed, False, body,
-                                        end_kind="exec_end", before=before)
+                                        end_kind="exec_end", before=before, start=start)
                     found = self.history.plan(folder.name)
-                    result = _feedback(found, self.history) if found else None
+                    result = _feedback(found, self.history, req.mode) if found else None
                     if stop.is_set():
                         reason = "stopped"
                     elif result is None or result.status == "error":
@@ -366,6 +407,8 @@ class Runner:
                         reason = "no automatic check: nothing can tell success, so the loop ends after round 1"
                     elif rounds_run >= req.rounds:
                         reason = f"the {req.rounds} rounds ended without success"
+                    elif req.mode == "continue" and (problem := state_problem(folder / END_STATE, scene, req.seed)):
+                        reason = f"cannot continue: {problem}"
                     else:
                         feedback = result
                         continue
@@ -401,9 +444,11 @@ class Runner:
 
     async def _session(self, log: RunLog, scene: Scene, task: Task | None, instruction: str, seed: int,
                        show_positions: bool, body: Callable[[Env, Callable, Callable[[str, dict], None]], Awaitable],
-                       end_kind: str = "run_end", before: Callable[[Callable[[str, dict], None]], None] | None = None):
+                       end_kind: str = "run_end", before: Callable[[Callable[[str, dict], None]], None] | None = None,
+                       start: Path | None = None):
         """Make the env on a fresh sim thread, run `body`, and clean up. Gives what `body` gives. An error ends
-        with an `end_kind` event and gives None. The log is closed at the end."""
+        with an `end_kind` event and gives None. The log is closed at the end. With `start`, a state file, the
+        env starts from that state."""
         pacer = Pacer()
 
         def on_frame(cam: str, jpg: bytes) -> None:
@@ -416,7 +461,8 @@ class Runner:
         try:
             if before is not None:
                 before(emit)
-            env = await sim.call(self.env_factory, scene, task, instruction, seed, show_positions, on_frame)
+            make = self.env_factory if start is None else functools.partial(self.env_factory, start=start)
+            env = await sim.call(make, scene, task, instruction, seed, show_positions, on_frame)
             return await body(env, sim.call, emit)
         except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
             emit(end_kind, {"status": "error", "message": f"{type(e).__name__}: {e}"})
@@ -501,13 +547,17 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         if saved is None:
             raise HTTPException(404, "the plan cannot run")
         scene, task, instruction, seed, keyframes = saved
+        start = start_state(found)
+        if start is not None and (problem := state_problem(start, scene, seed)):
+            raise HTTPException(409, f"the plan continues from a saved state, but {problem}")
         await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
                                    step=2 + found["executions"], view=found["plan"].get("view"),
-                                   round_no=plan_round(found["start"]))
+                                   round_no=plan_round(found["start"]), start=start)
         return {"run_id": run_id}
 
     @app.post("/api/plan/{run_id}/replan", dependencies=[Depends(same_origin)])
-    async def replan(run_id: str) -> dict:
+    async def replan(run_id: str, body: ReplanRequest | None = None) -> dict:
+        mode = (body or ReplanRequest()).mode
         found = history.plan(run_id)
         if found is None:
             raise HTTPException(404, "no such plan")
@@ -516,7 +566,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         start = found["start"]
         if plan_round(start) >= MAX_ROUND:
             raise HTTPException(409, f"this plan is round {plan_round(start)}, the last round of {MAX_ROUND}")
-        feedback = _feedback(found, history)
+        feedback = _feedback(found, history, mode)
         if feedback is None:
             raise HTTPException(404, "the plan has no finished execution yet: execute it first")
         scene = SCENES.get(start.get("scene") or "")
@@ -528,7 +578,12 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         if scene is None or req is None:
             raise HTTPException(404, "the plan cannot run")
         task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
-        folder = await runner.start_plan(req, scene, task, feedback)
+        state = None
+        if mode == "continue":
+            state = found["folder"] / END_STATE
+            if problem := state_problem(state, scene, req.seed):
+                raise HTTPException(409, f"cannot continue from the last execution: {problem}. Re-plan from the start")
+        folder = await runner.start_plan(req, scene, task, feedback, state)
         return {"run_dir": str(folder), "run_id": folder.name}
 
     @app.post("/api/plan/{rest:path}")

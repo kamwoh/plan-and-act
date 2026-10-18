@@ -5,14 +5,17 @@ import asyncio
 import base64
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Protocol
 
+import mujoco
 import numpy as np
 
 from armmind.agent.rules import check_result
 from armmind.plan.formats import Keyframe
 from armmind.scenes import Scene, Task
-from armmind.sim.arm import Arm
+from armmind.sim import state as sim_state
+from armmind.sim.arm import GRIP_CLOSED, Arm
 from armmind.sim.render import Cameras, jpeg, png
 from armmind.sim.world import World
 from armmind.types import Action, ActionResult, Observation
@@ -60,21 +63,40 @@ def _r3(p) -> tuple[float, float, float]:
 
 
 class MujocoEnv:
-    """Make it and use it on one thread only (see SimThread)."""
+    """Make it and use it on one thread only (see SimThread). With `start`, a saved state file, the env starts
+    from that state in place of the reset of the seed."""
 
     def __init__(self, scene: Scene, task: Task | None, seed: int, instruction: str, show_positions: bool = False,
-                 on_frame: Callable[[str, bytes], None] | None = None):
+                 on_frame: Callable[[str, bytes], None] | None = None, start: Path | None = None):
+        self.scene, self.seed = scene, seed
         self.task, self.instruction, self.show_positions = task, instruction, show_positions
         self.scene_name, self.scene_text, self.image_text = scene.name, scene.describe(), scene.image_text
         self.has_check, self.check_name = task is not None, task.name if task else None
         self.object_labels = {o.name: o.label for o in scene.objects}
         self.world = World(scene)
+        saved = sim_state.load(start, scene, seed) if start is not None else None
         self.world.reset(scene.layout(seed), task.initial_qpos if task else None)
         self.cams = Cameras(self.world)
         self._on_frame, self._n_frames = on_frame, 0
         self.arm = Arm(self.world, on_frame=self._frame if on_frame else None)
-        self.arm.reset_ready()
-        self._seen = 0  # events before this index went out in an earlier observation
+        if saved is None:
+            self.arm.reset_ready()
+            self._seen = 0  # events before this index went out in an earlier observation
+            return
+        sim_state.apply(saved, self.world.model, self.world.data)
+        self.arm.resume(float(saved["yaw"]))
+        self.world.resume([str(e) for e in saved["events"]])
+        self._seen = len(self.world.events)  # the events of the last execution went out then
+
+    def save_state(self, path: Path) -> None:
+        """Save the full state now, for a round that continues from here. The forward pass first brings the
+        poses up to date after the last step, so that this env and an env from the file show the same frame."""
+        mujoco.mj_forward(self.world.model, self.world.data)
+        sim_state.save(path, self.scene, self.seed, self.world.data, self.arm.yaw, self.world.events)
+
+    def gripper_state(self) -> str:
+        """"closed" when the last gripper command was a close, else "open"."""
+        return "closed" if self.world.data.ctrl[7] == GRIP_CLOSED else "open"
 
     def _frame(self) -> None:
         """Send the front camera on every frame and the top camera on every third frame. No shadows, for speed."""
@@ -110,12 +132,13 @@ class MujocoEnv:
     def plan_view(self, belief, keyframes, marks: list[dict] | None = None) -> dict:
         """The PlanView of a belief and its keyframes, from the true scene now (call it before any motion)."""
         from armmind.sim.planview import build_view
-        return build_view(self.world, belief, keyframes, marks, self.cams.w, self.cams.h)
+        return build_view(self.world, belief, keyframes, marks, self.cams.w, self.cams.h, self.gripper_state(),
+                          self.arm.held())
 
     def check_plan(self, belief, keyframes) -> dict:
         """The scores of a plan against the true scene now (call it before any motion)."""
         from armmind.sim.planview import check_plan
-        return check_plan(self.world, self.arm, belief, keyframes)
+        return check_plan(self.world, self.arm, belief, keyframes, self.gripper_state())
 
     def execute_plan(self, keyframes: tuple[Keyframe, ...], should_stop: Callable[[], bool],
                      on_action: Callable[[int, int], None] | None = None) -> dict:
@@ -123,8 +146,8 @@ class MujocoEnv:
         rest. on_action(index, count) runs before each action. The auto-check runs at the end when the
         instruction is a task of the scene. "true_start" and "true_after" hold the true object poses before the
         plan and after each keyframe that ran."""
-        actions = keyframe_actions(keyframes)
-        ends = set(keyframe_ends(keyframes))
+        actions = keyframe_actions(keyframes, self.gripper_state())
+        ends = set(keyframe_ends(keyframes, self.gripper_state()))
         lines, stopped, cancelled = [], None, False
         true_start, true_after = self._true_poses(), []  # the poses after each keyframe that ran
         for i, action in enumerate(actions):

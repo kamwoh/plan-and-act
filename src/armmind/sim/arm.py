@@ -114,6 +114,16 @@ class Arm:
         self._next_frame = self.w.time
         self._run(SETTLE_S)
 
+    @property
+    def yaw(self) -> float:
+        """The commanded yaw in degrees."""
+        return self._yaw
+
+    def resume(self, yaw: float) -> None:
+        """Go on from a loaded state: the commanded yaw of that state, and the frame clock from now."""
+        self._yaw = yaw
+        self._next_frame = self.w.time
+
     def held(self) -> tuple[str, ...]:
         """The scene objects that the gripper holds now: it is closed, the width is not about 0, and a part of
         the gripper touches the object. An open gripper, or a push with the closed empty fingers, holds nothing.

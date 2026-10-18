@@ -131,10 +131,14 @@ def poses_at(track: dict, entities: list[dict], t: float,
     - carried_at(k, kf) names the entity that the agent carries after keyframe k, or gives None. A carried
       entity follows the agent. A release drops it onto the table or the highest entity below it.
     - moves_at(k, kf) gives the moves of keyframe k: [{"name", "xyz", "yaw"}]. On the segment into keyframe k,
-      each moved entity goes to its new pose with the timing of the agent. A carried entity does not move."""
+      each moved entity goes to its new pose with the timing of the agent. A carried entity does not move.
+    - carried_at(-1, track["start"]) names the entity that the agent carries at the start, or gives None."""
     poses = {e["name"]: {"xyz": list(e["xyz"]), "yaw": e.get("yaw") or 0.0} for e in entities}
     by_name = {e["name"]: e for e in entities}
     carried = None  # (name, pose in the agent frame)
+    first = carried_at(-1, track["start"]) or None
+    if first and first in poses:
+        carried = (first, to_local({"xyz": track["start"]["xyz"], "yaw": track["start"]["yaw"]}, poses[first]))
     t0 = 0.0
     for k, kf in enumerate(track["keyframes"]):
         moves = moves_at(k, kf) or []

@@ -81,7 +81,24 @@ DEMO_PLAN = {  # an invented plan for seed 0 of the cubes scene: push the green 
 DEMO_PLAN_LOW = {**DEMO_PLAN, "keyframes": [*DEMO_PLAN["keyframes"][:-1],
                                             {**DEMO_PLAN["keyframes"][-1], "xyz": [0.56, -0.11, 0.08]}],
                  "summary": "Push the green cube 5 cm to the left, then grasp the red cube and lift it 6 cm."}
-DEMO_REPLAN = {**DEMO_PLAN, "lessons": ["A lift to z 0.08 left the cube under the 10 cm goal. Lift to z 0.20."]}
+DEMO_LESSON = "A lift to z 0.08 left the cube under the 10 cm goal. Lift to z 0.20."
+DEMO_REPLAN = {**DEMO_PLAN, "lessons": [DEMO_LESSON]}
+# A re-plan that continues: the red cube is still in the hand, 6 cm up. Lift it higher.
+DEMO_CONTINUE = {
+    "objects": [{**DEMO_PLAN["objects"][0], "xyz": [0.56, -0.11, 0.07]}, DEMO_PLAN["objects"][1],
+                {**DEMO_PLAN["objects"][2], "xyz": [0.6, 0.16, 0.02]}],
+    "keyframes": [{"xyz": [0.56, -0.11, 0.2], "yaw": 0, "gripper": "closed", "holding": "red cube",
+                   "note": "lift it higher"}],
+    "summary": "The red cube is still in the hand. Lift it to z 0.20.",
+    "lessons": [DEMO_LESSON],
+}
+
+
+def demo_plan(text: str) -> dict:
+    """The demo reply to a plan message."""
+    if "This is a re-plan" not in text:
+        return DEMO_PLAN_LOW
+    return DEMO_CONTINUE if "did not reset" in text else DEMO_REPLAN
 
 
 class DemoConversation:
@@ -91,7 +108,7 @@ class DemoConversation:
     async def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]:
         await asyncio.sleep(self.backend.delay_s)
         if schema is not None and "keyframes" in schema.get("properties", {}):
-            yield Final("", DEMO_REPLAN if "This is a re-plan" in msg.text else DEMO_PLAN_LOW)
+            yield Final("", demo_plan(msg.text))
             yield Usage("demo", self.backend.delay_s, 2400, 400, 0.006, 0, 0)
             return
         step = re.search(r"Step (\d+) of", msg.text)  # the same reply for the same step in each run

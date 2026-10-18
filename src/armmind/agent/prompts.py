@@ -90,6 +90,7 @@ the keyframes once in the physics. You get no images while they run.
 A re-plan message also has your last plan, the result of its execution and two end images. \
 Compare your last plan with the end images and find what went wrong. Then give a new plan for the whole task \
 from the start. The scene is back at its start.
+A re-plan that continues has no end images: the scene did not reset, so plan only what is left, from images 1 and 2 and the gripper now.
 Write a "lessons" item only in a re-plan, and only when the last plan had a result you did not expect. \
 Write it as cause and effect, for example "A grasp 2 cm above the cube centre slipped. 1 cm held.\""""
 
@@ -245,6 +246,7 @@ class Feedback:
     end_step: int | None  # the step of the end images in the parent run
     ran: int = 0  # the actions that started before a cancel
     total: int = 0  # the actions of the whole plan
+    mode: str = "start"  # "start": the scene is back at its start. "continue": it goes on from the end state
 
 
 def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
@@ -267,7 +269,10 @@ def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
                      f"{f.stopped['reason']}.")
     else:
         lines.append("All actions ran.")
-    if len(f.images) == 2:
+    if f.mode == "continue":
+        lines.append("The scene did not reset. Images 1 and 2 show the scene now, at the end of the last "
+                     "execution. Plan from here, and do only what is left of the task.")
+    elif len(f.images) == 2:
         lines.append(f"Images 3 and 4 show the end of the last execution. The scene is now back at its start, "
                      f"as in images 1 and 2. Image 3: the {first_camera} camera at the end of the last execution. "
                      "Image 4: the top camera at the end.")
@@ -277,16 +282,21 @@ def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
 
 
 def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: str | None = None,
-                    lessons: list[str] | tuple[str, ...] = (), feedback: Feedback | None = None) -> str:
+                    lessons: list[str] | tuple[str, ...] = (), feedback: Feedback | None = None,
+                    gripper: str | None = None) -> str:
     """The plan message: the scene, the task, the gripper and the lessons, as in step 1. A re-plan adds the
-    feedback part. It never has the true positions, yaws or joints, even when the observation has them."""
+    feedback part. It never has the true positions, yaws or joints, even when the observation has them.
+    A re-plan that continues also says if the gripper is open or closed (`gripper`)."""
+    continues = feedback is not None and feedback.mode == "continue"
     lines = [
         f"Scene: {scene}",
         f"Task: {instruction}",
-        "Plan the whole task now, in one reply.",
+        "Plan what is left of the task now, in one reply." if continues else "Plan the whole task now, in one reply.",
         f"Gripper at {fmt(obs.tcp)}, yaw {round(obs.gripper_yaw)}°, width {obs.gripper_width:.3f} m.",
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
+    if continues and gripper in ("open", "closed"):
+        lines.append(f"The gripper is {gripper} now.")
     unique = list(dict.fromkeys(lessons))
     lines += ["Lessons:", *(f"- {t}" for t in unique)] if unique else ["Lessons: (none)"]
     images = image_text or IMAGE_TEXT

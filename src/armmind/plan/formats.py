@@ -74,7 +74,8 @@ def build_track(start: dict, keyframes, move_s: Callable[[Vec3, Vec3, float, flo
 
     The agent moves from the last pose to the keyframe in `move_s` seconds and arrives at `t`. It holds still
     for `settle_s`, and for `change_s` more when its state changes. `t_done` is the end of all that.
-    `start` holds the xyz, the yaw and the state before the first keyframe."""
+    `start` holds the xyz, the yaw and the state before the first keyframe, and "carrying" when the agent
+    holds an entity at the start."""
     out, t = [], 0.0
     xyz, yaw, state = tuple(start["xyz"]), float(start["yaw"]), start["state"]
     for k in keyframes:
@@ -83,9 +84,11 @@ def build_track(start: dict, keyframes, move_s: Callable[[Vec3, Vec3, float, flo
         done = t + settle_s + (change_s if changes else 0.0)
         out.append({**k.to_dict(), "gap": gap(k), "changes": changes, "t": round(t, 4), "t_done": round(done, 4)})
         xyz, yaw, state, t = k.xyz, k.yaw, k.state, done
-    begin = Keyframe(tuple(start["xyz"]), float(start["yaw"]), start["state"], None)
-    return {"start": {"xyz": list(begin.xyz), "yaw": begin.yaw, "state": begin.state, "gap": gap(begin)},
-            "keyframes": out, "duration": round(t, 4)}
+    begin = Keyframe(tuple(start["xyz"]), float(start["yaw"]), start["state"], start.get("carrying"))
+    first = {"xyz": list(begin.xyz), "yaw": begin.yaw, "state": begin.state, "gap": gap(begin)}
+    if begin.carrying is not None:  # a round that continues can start with an entity in the hand
+        first["carrying"] = begin.carrying
+    return {"start": first, "keyframes": out, "duration": round(t, 4)}
 
 
 def norm_name(name: str) -> str:

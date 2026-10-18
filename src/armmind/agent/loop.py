@@ -194,7 +194,8 @@ class Agent:
                            "system_prompt": PLAN_SYSTEM, "use_lessons": self.use_lessons,
                            "saved_lessons": list(self.saved_lessons),
                            "round": feedback.round if feedback else 1, "parent": feedback.parent if feedback else None,
-                           "end_step": feedback.end_step if feedback else None, "auto_rounds": auto_rounds})
+                           "end_step": feedback.end_step if feedback else None, "auto_rounds": auto_rounds,
+                           "round_mode": feedback.mode if feedback else None})
         status = "error"
         try:
             status = await self._plan(env, call, emit, feedback)
@@ -205,7 +206,9 @@ class Agent:
     async def _plan(self, env: Env, call: Call, emit: Emit, feedback: Feedback | None) -> str:
         obs = await call(env.observe)
         emit("observation", {"step": 1, "front_png": obs.front_png, "top_png": obs.top_png})
-        text = build_plan_text(env.scene_text, env.instruction, obs, env.image_text, self.saved_lessons, feedback)
+        gripper = await call(env.gripper_state) if hasattr(env, "gripper_state") else None
+        text = build_plan_text(env.scene_text, env.instruction, obs, env.image_text, self.saved_lessons, feedback,
+                               gripper)
         images = (obs.front_png, obs.top_png, *(feedback.images if feedback else ()))
         self._conv = await self.backend.open(PLAN_SYSTEM)
         attempts: list[dict] = []

@@ -105,7 +105,8 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
     - reach(xyz, yaw): None, or the reason why it cannot reach the pose.
     - open_state: the state that holds nothing. A change away from it grasps, a change back to it releases.
     - gap(state, held): the slide gap of the agent parts in a state, with the held true entity or None.
-    "holds" is the true object in the agent after the keyframe, or None.
+    "holds" is the true object in the agent after the keyframe, or None. start["holds"] names the true object
+    in the agent at the start, and start["carrying"] its believed name.
     The path into a keyframe may touch the objects in the moves of that keyframe. After it, each moved true
     object shifts in xy and yaw by the predicted displacement: the move against the believed pose before the
     keyframe in `belief`, as the page player has it. Without a belief, it goes to the xy and yaw of the move.
@@ -128,6 +129,9 @@ def plan_checks(start: dict, keyframes, truth: list[Entity], aliases: dict[str, 
 
     xyz, yaw, state = tuple(start["xyz"]), float(start["yaw"]), start["state"]
     held, local = None, None  # the true object in the hand, and its pose in the hand frame
+    if start.get("holds") in poses and state != open_state:  # a round that continues, with it in the hand
+        held = start["holds"]
+        local = _to_local(xyz, yaw, poses[held])
     keyframes = list(keyframes)
     believed = _believed_before(start, keyframes, belief or [])
     predicted: dict[str, str] = {}  # true name -> believed name, for objects at a predicted pose

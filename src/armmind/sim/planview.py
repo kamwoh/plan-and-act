@@ -108,9 +108,20 @@ def timed_keyframes(belief, keyframes) -> list[Keyframe]:
     return out
 
 
-def build_view(world: World, belief, keyframes, marks: list[dict] | None, width: int, height: int) -> dict:
+def _start_held(world: World, held: tuple[str, ...]) -> str | None:
+    """The one true object that the gripper holds at the start, or None."""
+    return held[0] if len(held) == 1 and held[0] in {o.name for o in world.objects} else None
+
+
+def build_view(world: World, belief, keyframes, marks: list[dict] | None, width: int, height: int,
+               state: str = "open", held: tuple[str, ...] = ()) -> dict:
+    """The view of the page. `state` and `held` give the gripper at the start: a round that continues can
+    start closed on an object. The start of the track then carries the believed match of that object."""
     believed = list(belief)
-    start = {"xyz": [round(float(v), 4) for v in world.tcp()], "yaw": round(world.gripper_yaw(), 1), "state": "open"}
+    match = match_entities([b.name for b in believed], aliases(world))
+    start = {"xyz": [round(float(v), 4) for v in world.tcp()], "yaw": round(world.gripper_yaw(), 1), "state": state}
+    if (true_held := _start_held(world, held)) is not None and true_held in match:
+        start["carrying"] = match[true_held]
     track = build_track(start, timed_keyframes(believed, keyframes),
                         move_s=lambda a, b, ya, yb: move_duration(np.asarray(a), np.asarray(b), ya, yb),
                         settle_s=SETTLE_S, change_s=GRIP_S, gap=lambda k: finger_gap(k, believed))
@@ -122,14 +133,15 @@ def build_view(world: World, belief, keyframes, marks: list[dict] | None, width:
         "agent": agent(),
         "believed": [e.to_dict() for e in believed],
         "true_start": [e.to_dict() for e in true_entities(world)],
-        "true_match": match_entities([b.name for b in believed], aliases(world)),
+        "true_match": match,
         "track": track,
         "marks": list(marks or []),
     }
 
 
-def check_plan(world: World, arm: Arm, belief, keyframes) -> dict:
-    """Score the belief against the true scene now, and check each keyframe (call it before any motion)."""
+def check_plan(world: World, arm: Arm, belief, keyframes, state: str = "open") -> dict:
+    """Score the belief against the true scene now, and check each keyframe (call it before any motion).
+    `state` is the gripper at the start. When it holds an object now, the checks start with it in the hand."""
     truth, names = true_entities(world), aliases(world)
     round_names = {o.name for o in world.objects if o.round}
     believed = list(belief)
@@ -141,8 +153,12 @@ def check_plan(world: World, arm: Arm, belief, keyframes) -> dict:
             return f"outside the workspace: the arm goes to {fmt(target)}"
         return None if arm.reachable(target, yaw) else "no joint solution for this point"
 
-    start = {"xyz": tuple(float(v) for v in world.tcp()), "yaw": world.gripper_yaw(), "state": "open"}
+    start = {"xyz": tuple(float(v) for v in world.tcp()), "yaw": world.gripper_yaw(), "state": state}
     match = match_entities([b.name for b in believed], names)
+    if state != "open" and (true_held := _start_held(world, arm.held())) is not None:
+        start["holds"] = true_held
+        if true_held in match:
+            start["carrying"] = match[true_held]
     marks = plan_checks(start, list(keyframes), truth, names, round_names, agent()["parts"], reach,
                         open_state="open", gap=true_gap, believed_to_true={b: t for t, b in match.items()},
                         belief=believed)
