@@ -21,6 +21,7 @@ let planDone = false;      // Claude's re-plan on the page says that the task is
 let planImpossible = "";  // Claude's plan on the page says that the task is not possible: the reason
 let parentCheck = null;    // the auto-check of the execution before this re-plan: true, false or null
 let execError = false;     // the last execution of the plan on the page ended with an error: it has no end state
+let execPartial = false;   // the last execution ran only its first keyframes: a re-plan always continues
 const MAX_ROUND = 30;
 let autoLoop = false;      // a live Auto loop: the page stays busy from round to round until loop_end
 // One chain of rounds is one chat. The step maps and the entries of the chat are keyed by round and step.
@@ -236,13 +237,31 @@ function setCamState(state, label = "") {
   paintBadges();
 }
 
+// The keyframe of a stop: { k, n }, or null. N is the keyframe count of the plan. A run from before v1.16 has
+// no keyframe in "stopped": its stop frame gives it. Older runs have neither.
+function stopKeyframe(ev) {
+  const s = ev.stopped;
+  if (!s) return null;
+  const frame = (Array.isArray(ev.frames) ? ev.frames : []).find((f) => f.at === "stop");
+  if (typeof s.keyframe === "number") return { k: s.keyframe, n: ev.keyframes || (frame && frame.of) || s.keyframe };
+  return frame ? { k: frame.keyframe, n: frame.of } : null;
+}
+
+// "Stopped in keyframe 6 of 7 (action 9 of 10): <reason>", or by action alone for an old run.
+function stopText(ev) {
+  const s = ev.stopped, kf = stopKeyframe(ev);
+  return kf ? `Stopped in keyframe ${kf.k} of ${kf.n} (action ${s.after} of ${s.of}): ${s.reason}`
+    : `Stopped after action ${s.after} of ${s.of}: ${s.reason}`;
+}
+
 // The outcome of an execution for the camera badge and the Execution entry: { text, cls, title, edge }.
 // cls is "bad", "ok", "muted" or "plain". edge: a red edge on both camera frames.
 function outcomeBadge(ev) {
   const s = ev.stopped;
   if (ev.status === "stopped") {
-    return { text: s ? `■ STOPPED · action ${s.after}/${s.of}` : "■ STOPPED", cls: "bad", edge: true,
-             title: s ? `Stopped after action ${s.after} of ${s.of}: ${s.reason}.` : "The plan stopped." };
+    const kf = stopKeyframe(ev);
+    const text = kf ? `■ STOPPED · keyframe ${kf.k}/${kf.n}` : s ? `■ STOPPED · action ${s.after}/${s.of}` : "■ STOPPED";
+    return { text, cls: "bad", edge: true, title: s ? `${stopText(ev)}.` : "The plan stopped." };
   }
   if (ev.status === "partial") {
     return { text: `◐ RAN ${ev.ran_keyframes}/${ev.keyframes} KEYFRAMES`, cls: "info", edge: false,
@@ -529,9 +548,10 @@ function lines(items, cls = "") {
 }
 
 function onAsk(ev) {
+  // The last message with images sets the image list of the step. A retry sends text only.
+  if (typeof ev.images === "number" && ev.images > 0) stepSent[stepKey(ev.step)] = ev.images;
   if (ev.attempt === 1) {
     stepPrompts[stepKey(ev.step)] = ev.prompt;
-    if (typeof ev.images === "number") stepSent[stepKey(ev.step)] = ev.images;
     const item = entry("sent", "→ Sent", ev.step);
     item.append(folded(ev.prompt), thumbs(stepKey(ev.step)));
     addEntry(stepLink(item, stepKey(ev.step)));
@@ -1095,6 +1115,7 @@ function onEvent(ev, replay = false) {
     planImpossible = "";
     parentCheck = typeof ev.parent_check === "boolean" ? ev.parent_check : null;
     execError = false;
+    execPartial = false;
     if (!replay) autoLoop = Boolean(ev.auto_rounds);
     runCams = ev.cameras || null;
     if (!chained) {
@@ -1179,8 +1200,9 @@ function onEvent(ev, replay = false) {
     outcome = outcomeBadge(ev);
     setCamState("ended");
     execError = ev.status === "error";
+    execPartial = ev.status === "partial";
     const endItem = onExecEnd(ev);
-    const pred = ev.prediction ? predictionEntry(ev.prediction) : null;
+    const pred = ev.prediction ? predictionEntry(ev.prediction, ev) : null;
     if (planRunId && planRound < MAX_ROUND) (pred || endItem).append(replanButton());
     if (pred) addEntry(pred);
     setStatus(execText(ev), ev.success ? "success" : ev.status === "error" ? "bad" : "");
@@ -1529,7 +1551,10 @@ function onExecStart(ev) {
 
 function execText(ev) {
   if (ev.status === "success") return "plan executed · task solved";
-  if (ev.status === "stopped" && ev.stopped) return `plan stopped at action ${ev.stopped.after} of ${ev.stopped.of}`;
+  if (ev.status === "stopped" && ev.stopped) {
+    const kf = stopKeyframe(ev);
+    return kf ? `plan stopped in keyframe ${kf.k} of ${kf.n}` : `plan stopped at action ${ev.stopped.after} of ${ev.stopped.of}`;
+  }
   if (ev.status === "failed") return "plan executed · the auto-check says not solved";
   if (ev.status === "cancelled") return "plan execution stopped";
   if (ev.status === "partial") return `ran ${ev.ran_keyframes} of ${ev.keyframes} keyframes · re-plan the rest`;
@@ -1543,7 +1568,7 @@ function onExecEnd(ev) {
   const t = el("span", tag.text, `out-tag out-${tag.cls}`);
   t.title = tag.title;
   item.querySelector(".entry-head").append(t);
-  item.append(el("div", ev.stopped ? `Stopped after action ${ev.stopped.after} of ${ev.stopped.of}: ${ev.stopped.reason}.`
+  item.append(el("div", ev.stopped ? `${stopText(ev)}.`
     : ev.success ? "The task is solved." : execText(ev)));
   const frames = (Array.isArray(ev.frames) ? ev.frames : []).map((f) => ({ ...f, src: frameSrc(f) }));
   if (planRunId) runFrames[planRunId] = frames.filter((f) => f.sent);
@@ -1621,7 +1646,8 @@ function replanButton() {
   b.title = "Claude sees this plan and its result. With Continue on, it plans the rest from where the execution " +
     "ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
   const fromStart = execError;  // the mode when the button is made: a later Execute must not change it
-  b.addEventListener("click", () => replan(fromStart));
+  const partial = execPartial;  // a re-plan after a partial run always continues
+  b.addEventListener("click", () => replan(fromStart, partial));
   if (!fromStart) return b;
   // An execution that failed with an error saved no end state, so a re-plan cannot continue from it.
   const box = el("div", "", "replan-box");
@@ -1629,9 +1655,9 @@ function replanButton() {
   return box;
 }
 
-async function replan(fromStart = false) {
+async function replan(fromStart = false, partial = false) {
   if (running || !planRunId) return;
-  const mode = fromStart ? "start" : roundMode();  // no end state after an error: see replanButton
+  const mode = fromStart ? "start" : partial ? "continue" : roundMode();  // no end state after an error: see replanButton
   setStatus(`re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
   const body = { mode, max_keyframes: mode === "continue" ? perRound() : 0 };
   if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, body)) setRunning(true);
@@ -1680,10 +1706,12 @@ function loopEndEntry(ev) {
 
 // The predicted moves of the plan against the physics. Each move starts from its own start pose, so the
 // error of the belief stays out of the displacement error.
-function predictionEntry(p) {
+function predictionEntry(p, ev = {}) {
   const item = entry("plan", "◎ Prediction");
   const s = p.summary || {};
-  if (s.partial) {
+  if (ev.status === "partial") {
+    item.append(el("div", `Run per round: keyframes 1 to ${ev.ran_keyframes} of ${ev.keyframes} ran by design. This compares them.`, "muted"));
+  } else if (s.partial) {
     item.append(el("div", s.ran ? `The execution stopped early: this compares keyframes 1 to ${s.ran} of ${s.of}.`
       : "The execution stopped before the first keyframe ended: nothing to compare.", "muted"));
   }

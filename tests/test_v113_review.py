@@ -149,10 +149,11 @@ def test_exec_start_action_data_starts_from_the_gripper_of_the_plan_view():
 def test_the_replan_button_captures_its_mode_when_it_is_made():
     js = _web("app.js")
     button = _body(js, "function replanButton")
-    assert "const fromStart = execError;" in button and "() => replan(fromStart)" in button
+    assert "const fromStart = execError;" in button and "() => replan(fromStart, partial)" in button
     body = _body(js, "async function replan")
-    assert "async function replan(fromStart = false)" in js and "fromStart ? \"start\" : roundMode()" in body
-    assert "execError" not in body
+    assert "async function replan(fromStart = false, partial = false)" in js
+    assert "fromStart ? \"start\" : partial ? \"continue\" : roundMode()" in body
+    assert "execError" not in body and "execPartial" not in body
 
 
 # 10. In continue mode, the round after an execution error starts from the start.

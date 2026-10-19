@@ -140,6 +140,7 @@ def test_the_auto_loop_runs_k_keyframes_per_round(tmp_path):
     end = loop_end(rounds)
     assert [v["round"] for v in end["verdicts"]] == [1, 2]  # the re-plan judges round 1, the verdict call round 2
     assert "Only the first 2 of your 5 keyframes ran" in backend.sent[1][0].text
+    assert "Only the first 2 of your 5 keyframes ran, by design." in backend.sent[-1][0].text  # the last verdict
 
 
 # ---- The page ----

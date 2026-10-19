@@ -282,16 +282,17 @@ class Agent:
 
     async def verdict(self, scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],
                       images: tuple[bytes, ...], image_text: str | None = None, emit: Emit | None = None,
-                      frames: tuple[Frame, ...] = ()) -> tuple[Verdict | None, dict]:
+                      frames: tuple[Frame, ...] = (), ran_keyframes: tuple[int, int] = (0, 0)
+                      ) -> tuple[Verdict | None, dict]:
         """One short call after an execution: is the task complete in the end images? It goes into the chat of
         self.chain, which has the task and the plan. A new chat gets them in the message. The frames of the run
         go before the end images. Gives the verdict, or None after an error, and the event fields: the prompt,
         the attempts, the usage, an error text and the saved chat."""
         images = (*(f.png for f in frames), *images)
-        summary = Message("user", build_verdict_text(scene, instruction, objects, keyframes, image_text, frames),
-                          images)
+        summary = Message("user", build_verdict_text(scene, instruction, objects, keyframes, image_text, frames,
+                                                     ran_keyframes), images)
         attempts: list[dict] = []
-        short = Message("user", build_chain_verdict_text(image_text, frames), images)
+        short = Message("user", build_chain_verdict_text(image_text, frames, ran_keyframes), images)
         reply, error, text = await self._chat(short, summary, attempts, lambda m, i: None,
                                               emit or (lambda k, d: None), VERDICT_SCHEMA, parse_verdict)
         detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts),

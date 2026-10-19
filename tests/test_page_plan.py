@@ -183,7 +183,7 @@ def test_exec_end_adds_the_prediction_entry_also_in_a_replay():
     app = _web("app.js")
     handler = _body(app, "function onEvent(ev, replay = false)")
     end = handler[handler.index('ev.kind === "exec_end"'):handler.index('ev.kind === "loop_end"')]
-    assert "const pred = ev.prediction ? predictionEntry(ev.prediction) : null" in end and "addEntry(pred)" in end
+    assert "const pred = ev.prediction ? predictionEntry(ev.prediction, ev) : null" in end and "addEntry(pred)" in end
     assert "replay" not in end.split("predictionEntry")[0].split("onExecEnd")[1]  # a History load shows it too
     body = _body(app, "function predictionEntry")
     for part in ("predicted move", "real move", "PRED_LIMIT_CM", "s.partial", "agree", "p.keyframes"):

@@ -321,6 +321,11 @@ class Feedback:
     ran_keyframes: tuple[int, int] = (0, 0)  # (K, N) when only the first K of N keyframes ran by design
 
 
+def partial_line(k: int, n: int) -> str:
+    """The sentence for an execution that ran only its first k keyframes ("Run per round")."""
+    return f"Only the first {k} of your {n} keyframes ran, by design. The arm is now at the end of keyframe {k}."
+
+
 def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, start_seen: bool = False) -> list[str]:
     """The result of the last execution. Without `with_plan`, the lines leave out the last plan: the chat has it.
     With `start_seen`, a re-plan from the start sends only the end images: the chat has the start images."""
@@ -339,12 +344,12 @@ def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, star
     elif f.status == "error":
         lines.append("The execution failed with an error in the simulation.")
     elif f.status == "partial":
-        k, n = f.ran_keyframes
-        lines.append(f"Only the first {k} of your {n} keyframes ran, by design. "
-                     f"The arm is now at the end of keyframe {k}.")
+        lines.append(partial_line(*f.ran_keyframes))
     elif f.stopped:
         action = f" ({f.stopped_action})" if f.stopped_action else ""
-        lines.append(f"The execution stopped at action {f.stopped['after']} of {f.stopped['of']}{action}: "
+        kf = f.stopped.get("keyframe")  # runs from before v1.16 have no keyframe
+        where = f" in keyframe {kf} of {len(f.keyframes)}," if isinstance(kf, int) else ""
+        lines.append(f"The execution stopped{where} at action {f.stopped['after']} of {f.stopped['of']}{action}: "
                      f"{f.stopped['reason']}.")
     else:
         lines.append("All actions ran.")
@@ -422,17 +427,24 @@ def _verdict_image_lines(image_text: str | None, frames: tuple[Frame, ...]) -> l
             f"Images {end} and {end + 1} show the scene after the run: the {camera} camera, then the top camera."]
 
 
-def build_chain_verdict_text(image_text: str | None = None, frames: tuple[Frame, ...] = ()) -> str:
-    """The verdict message in the chat of its chain. The chat has the task and the plan that ran."""
+def _ran_lines(ran_keyframes: tuple[int, int]) -> list[str]:
+    return [partial_line(*ran_keyframes)] if ran_keyframes[0] else []
+
+
+def build_chain_verdict_text(image_text: str | None = None, frames: tuple[Frame, ...] = (),
+                             ran_keyframes: tuple[int, int] = (0, 0)) -> str:
+    """The verdict message in the chat of its chain. The chat has the task and the plan that ran.
+    `ran_keyframes` is (K, N) after a run of only the first K of N keyframes."""
     return "\n".join(["Your last plan ran once in the physics. Give your verdict now, not a plan.",
-                      *_verdict_image_lines(image_text, frames), "Is the task complete?"])
+                      *_ran_lines(ran_keyframes), *_verdict_image_lines(image_text, frames), "Is the task complete?"])
 
 
 def build_verdict_text(scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],
-                       image_text: str | None = None, frames: tuple[Frame, ...] = ()) -> str:
+                       image_text: str | None = None, frames: tuple[Frame, ...] = (),
+                       ran_keyframes: tuple[int, int] = (0, 0)) -> str:
     """The message of the verdict call after an execution: the task, the plan that ran, the frames and the end
     images. It has only what the model wrote and the images: never the true poses, the scores or the auto-check."""
     plan = json.dumps({"objects": list(objects), "keyframes": list(keyframes)}, separators=(",", ":"),
                       ensure_ascii=False)
     return "\n".join([f"Scene: {scene}", f"Task: {instruction}", f"The plan that ran: {plan}",
-                      *_verdict_image_lines(image_text, frames), "Is the task complete?"])
+                      *_ran_lines(ran_keyframes), *_verdict_image_lines(image_text, frames), "Is the task complete?"])

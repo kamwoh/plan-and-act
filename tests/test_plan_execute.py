@@ -57,7 +57,7 @@ def test_a_close_on_nothing_stops_the_plan():
                 Keyframe((0.35, 0.0, 0.2), 0.0, "closed", "red cube")]
     out = _execute("cubes", "pick", 0, kfs)
     assert out["status"] == "stopped" and out["success"] is False
-    assert out["stopped"] == {"after": 3, "of": 4, "reason": "the gripper closed on nothing"}
+    assert out["stopped"] == {"after": 3, "of": 4, "keyframe": 2, "reason": "the gripper closed on nothing"}
     assert out["results"][-1].endswith("skipped") and len(out["results"]) == 4
 
 

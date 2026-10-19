@@ -168,7 +168,7 @@ class MujocoEnv:
                 frames.append({"keyframe": k + 1, "of": len(keyframes), "note": keyframes[k].note,
                                "at": "end" if why is None else "stop", "png": png(self.cams.with_grid("front"))})
             if why is not None:
-                stopped = {"after": i + 1, "of": len(actions), "reason": why}
+                stopped = {"after": i + 1, "of": len(actions), "keyframe": k + 1, "reason": why}
                 lines += [f"{a.describe()}: skipped" for a in actions[i + 1:]]
                 break
         success = self.has_check and not cancelled and self.success()

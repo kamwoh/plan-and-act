@@ -241,6 +241,13 @@ def _sent_frames(found: dict, history: RunStore) -> tuple[Frame, ...]:
     return tuple(out)
 
 
+def _ran_keyframes(end: dict) -> tuple[int, int]:
+    """(K, N) when an execution ran only its first K of N keyframes by design, else (0, 0)."""
+    if end.get("status") != "partial":
+        return (0, 0)
+    return int(end.get("ran_keyframes") or 0), int(end.get("keyframes") or 0)
+
+
 def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback | None:
     """The feedback of the last execution of a saved plan, or None when it has not run to its end. It reads
     only the model's own plan, the status, the stop and the end images: never the scores or the true poses.
@@ -266,13 +273,11 @@ def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback |
             images = ()
     objects, keyframes = _reply_format(found["plan"])
     total = len(actions) or len(ex["start"].get("action_data") or [])
-    ran_keyframes = (int(end.get("ran_keyframes") or 0), int(end.get("keyframes") or 0)) \
-        if end.get("status") == "partial" else (0, 0)
     return Feedback(objects, keyframes, str(end.get("status") or "error"), bool(ex["start"].get("check")),
                     bool(end.get("success")), stopped, stopped_action, images, run_id,
                     plan_round(found["start"]) + 1, end.get("step") if images else None,
                     ran=ex["actions"], total=total, mode=mode, frames=_sent_frames(found, history),
-                    ran_keyframes=ran_keyframes)
+                    ran_keyframes=_ran_keyframes(end))
 
 
 def chain_of(found: dict) -> Chain:
@@ -513,7 +518,8 @@ class Runner:
             else:
                 emit("verdict_start", {"session_id": None})  # a server that dies in the call leaves this mark
                 verdict, detail = await agent.verdict(scene.describe(), instruction, objects, keyframes, images,
-                                                      scene.image_text, emit, _sent_frames(found, self.history))
+                                                      scene.image_text, emit, _sent_frames(found, self.history),
+                                                      _ran_keyframes(end))
         except Exception as e:  # noqa: BLE001  the execution result stays, the verdict says why it is missing
             detail = {"error": f"{type(e).__name__}: {e}"}
         try:

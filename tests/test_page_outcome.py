@@ -10,7 +10,8 @@ STOPPED = {"status": "stopped", "stopped": {"after": 5, "of": 12, "reason": "the
 
 
 def badge(ev):
-    fn = _body(_web("app.js"), "function outcomeBadge(ev)") + "\n}\n"
+    js = _web("app.js")
+    fn = "".join(_body(js, f"function {name}(ev)") + "\n}\n" for name in ("stopKeyframe", "stopText", "outcomeBadge"))
     out = subprocess.run(["node", "-e", f"{fn}\nconsole.log(JSON.stringify(outcomeBadge({json.dumps(ev)})));"],
                          check=True, capture_output=True, text=True).stdout
     return json.loads(out)
