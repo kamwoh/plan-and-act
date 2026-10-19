@@ -788,48 +788,7 @@ $("lessons_clear").addEventListener("click", () => {
   if (confirm(`Delete all ${savedLessons.length} saved lessons of this scene?`)) deleteLessons(null);
 });
 
-// The plan and the to-do list of the first reply stay at the top of the To-do column, folded to 2 lines.
-function showFirstPlan(ev) {
-  const box = $("first_plan");
-  const body = el("div", "", "fp-body");
-  body.append(el("p", ev.plan || "(no plan)", "fp-text"));
-  if (ev.todo && ev.todo.length) {
-    const ol = el("ol");
-    ol.append(...ev.todo.map((t) => li(t)));
-    body.append(ol);
-  }
-  box.replaceChildren(el("span", "First plan", "fp-label"), body);
-  box.classList.remove("open");
-  box.setAttribute("aria-expanded", "false");
-  box.hidden = false;
-  markClipped();
-}
-
-// A fade shows the folded text. A new box width can change it.
-function markClipped() {
-  const box = $("first_plan");
-  const body = box.querySelector(".fp-body");
-  if (!box.hidden && body) box.classList.toggle("clipped", body.scrollHeight > body.clientHeight + 1);
-}
-
-function toggleFirstPlan() {
-  const open = $("first_plan").classList.toggle("open");
-  $("first_plan").setAttribute("aria-expanded", String(open));
-}
-
-$("first_plan").addEventListener("click", toggleFirstPlan);
-$("first_plan").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" || e.key === " ") {
-    e.preventDefault();
-    toggleFirstPlan();
-  }
-});
-
 function emptyMemo() {
-  $("first_plan").hidden = true;
-  $("first_plan").replaceChildren();
-  $("todo").replaceChildren(li("Claude writes its plan here", "empty"));
-  $("notes").replaceChildren(el("span", "Nothing yet", "empty"));
   runLessons = [];
   showLessons();
 }
@@ -1135,7 +1094,6 @@ function onEvent(ev, replay = false) {
   } else if (ev.kind === "reply") {
     setStatus(`step ${ev.step} · moving`, "moving");
     onReply(ev);
-    if ($("first_plan").hidden) showFirstPlan(ev);  // the first reply of the run
     setPath(ev.step, runCams, stepStarts[stepKey(ev.step)] || null, ev.action_data);
   } else if (ev.kind === "action") {
     onPathAction(ev);
@@ -1144,8 +1102,6 @@ function onEvent(ev, replay = false) {
     addTotals(stepUsage(ev));
     onStepResults(ev);
     onPathStep(ev);
-    $("todo").replaceChildren(...(ev.todo.length ? ev.todo.map((t) => li(t)) : [li("Claude writes its plan here", "empty")]));
-    $("notes").replaceChildren(ev.notes ? document.createTextNode(ev.notes) : el("span", "Nothing yet", "empty"));
     for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
     showLessons();
   } else if (ev.kind === "plan") {
@@ -1337,7 +1293,6 @@ if (window.ResizeObserver) {  // a new box size changes the scale of the text
     if (stepPath) drawPath();
   });
   for (const id of ["cam_front", "cam_top"]) resized.observe($(id).querySelector(".frame"));
-  new ResizeObserver(markClipped).observe($("first_plan"));
 }
 
 // ---- Plan first: the imagined video, the plan entries and Execute ----

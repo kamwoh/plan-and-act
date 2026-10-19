@@ -164,17 +164,6 @@ def test_the_overlay_clears_on_a_new_run_a_preview_and_a_reset():
     assert 'ev.kind === "action"' in handler and "setPath(" in handler and "onPathStep(ev)" in handler
 
 
-def test_the_first_plan_stays_at_the_top_of_the_todo_column():
-    html, js = (WEB / "index.html").read_text(), (WEB / "app.js").read_text()
-    col = _body(html, "<h2>To-do</h2>", "</ul>")
-    assert col.index('id="first_plan"') < col.index('id="todo"')
-    handler = _body(js, "function onEvent(ev, replay = false)")
-    reply = handler[handler.index('ev.kind === "reply"'):handler.index('ev.kind === "action"')]
-    assert "showFirstPlan(ev)" in reply and '$("first_plan").hidden' in reply  # only the first reply of a run
-    assert '$("first_plan").hidden = true;' in _body(js, "function emptyMemo()")
-    assert ".first-plan .fp-body { max-height: 2.8em;" in (WEB / "style.css").read_text()  # 2 lines, folded
-
-
 async def test_a_camera_data_error_still_gives_run_start_and_run_end(caplog):
     from tests.fakes import FakeEnv
 
@@ -212,20 +201,19 @@ def test_the_overlay_text_keeps_its_screen_size():
     assert re.search(r"font = `600 \$\{\d+ \* k\}px", overlay) and re.search(r"font = `700 \$\{\d+ \* k\}px", overlay)
 
 
-def test_the_first_plan_box_is_a_div_with_keys_and_hides_well():
-    html, js, css = (WEB / "index.html").read_text(), (WEB / "app.js").read_text(), (WEB / "style.css").read_text()
-    tag = re.search(r'<div id="first_plan"[^>]*>', html).group(0)
-    assert 'role="button"' in tag and 'tabindex="0"' in tag and 'aria-expanded="false"' in tag and " hidden" in tag
-    assert ".first-plan[hidden] { display: none; }" in css
-    assert '"Enter"' in js and '" "' in js and "toggleFirstPlan" in js
-
-
 def test_the_label_scale_has_a_cap():
     js = (WEB / "overlay.js").read_text()
     assert "const MAX_SCALE = 2;" in js and "Math.min(scale, MAX_SCALE)" in js
 
 
-def test_a_new_box_width_checks_the_fade_again():
-    js = (WEB / "app.js").read_text()
-    assert "new ResizeObserver(markClipped)" in js
-    assert "markClipped()" in _body(js, "function showFirstPlan")
+def test_the_memo_card_has_only_the_lessons():
+    html, js, css = (WEB / "index.html").read_text(), (WEB / "app.js").read_text(), (WEB / "style.css").read_text()
+    memo = _body(html, '<section class="card memo">', "</section>")
+    assert memo.count('class="memo-col"') == 1 and "<h2>Lessons</h2>" in memo
+    for gone in ('id="todo"', 'id="notes"', 'id="first_plan"', "<h2>To-do</h2>", "<h2>Notes</h2>"):
+        assert gone not in html, gone
+    for gone in ('$("todo")', '$("notes")', '$("first_plan")', "showFirstPlan", "markClipped"):
+        assert gone not in js, gone
+    assert ".first-plan" not in css and ".todo" not in css and ".notes" not in css
+    reply = _body(js, "function onReply(ev)")  # the step mode keeps its todo and notes in the chat
+    assert 'field("notes"' in reply and 'field("todo"' in reply
