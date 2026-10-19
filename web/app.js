@@ -25,6 +25,8 @@ let autoLoop = false;      // a live Auto loop: the page stays busy from round t
 // One chain of rounds is one chat. The step maps and the entries of the chat are keyed by round and step.
 let chatRound = 1;         // the round of the events that the chat gets now
 let roundFeedback = {};    // round -> the end images of the last round that its re-plan sent, as server URLs
+let runFrames = {};       // run id -> the frames of its last execution that went to Claude
+let roundFrames = {};     // round -> the frames of the last round that its re-plan sent
 let lastImages = null;     // the newest camera images of the chat, for a saved run
 let replayShowsPlan = true; // false while loadRun replays an older round of a chain: only the last video loads
 
@@ -432,6 +434,9 @@ function stepImageList(key) {
   const list = imgs ? [[runCameras.front, imgs.front], [runCameras.top, imgs.top]] : [];
   const [round, step] = key.split(":");
   const end = roundFeedback[round];
+  if (step === "1") {  // the frames go before the end images, as in the message
+    for (const f of roundFrames[round] || []) list.push([`${runCameras.front} · ${frameLabel(f)} of the last round`, f.src]);
+  }
   if (step === "1" && end) {
     list.push([`${runCameras.front} · end of the last round`, end.front],
               [`${runCameras.top} · end of the last round`, end.top]);
@@ -614,6 +619,8 @@ function resetChat() {
   stepPrompts = {};
   stepStarts = {};
   roundFeedback = {};
+  runFrames = {};
+  roundFrames = {};
   lastImages = null;
   chatRound = 1;
   $("chat").replaceChildren();
@@ -1079,6 +1086,7 @@ function onEvent(ev, replay = false) {
     if (chained) startRound(planMode);
     // A round that continues sends no end images: its own images show the end of the last round.
     roundFeedback[chatRound] = ev.parent && ev.end_step && planMode !== "continue" ? endImages(ev.parent, ev.end_step) : null;
+    roundFrames[chatRound] = (ev.parent && runFrames[ev.parent]) || null;
     emptyMemo();
     onRunStart(ev, chained);
     if (ev.mode === "plan") setStatus(`planning${roundText(planRound)} · Claude is thinking`, "thinking");
@@ -1505,8 +1513,56 @@ function onExecEnd(ev) {
   const item = entry(ev.success || ev.status === "done" ? "end ok" : "end", `■ Execution ended: ${ev.status}`);
   item.append(el("div", ev.stopped ? `Stopped after action ${ev.stopped.after} of ${ev.stopped.of}: ${ev.stopped.reason}.`
     : ev.success ? "The task is solved." : execText(ev)));
+  const frames = (Array.isArray(ev.frames) ? ev.frames : []).map((f) => ({ ...f, src: frameSrc(f) }));
+  if (planRunId) runFrames[planRunId] = frames.filter((f) => f.sent);
+  if (frames.length) item.append(frameStrip(frames));
   return addEntry(item);
 }
+
+// ---- The frames of an execution: one front camera image at the end of each keyframe that ran ----
+// A saved run gives the URL. A live event gives only the file name in the folder of the plan.
+function frameSrc(f) {
+  return f.url || `/api/runs/${encodeURIComponent(planRunId || "")}/images/${encodeURIComponent(f.file || "")}`;
+}
+
+function frameLabel(f) {  // "kf 2/5" or "stop 3/5"
+  return `${f.at === "stop" ? "stop" : "kf"} ${f.keyframe}/${f.of}`;
+}
+
+function frameTitle(f) {
+  return f.at === "stop" ? `at the stop in keyframe ${f.keyframe} of ${f.of}` : `after keyframe ${f.keyframe} of ${f.of}`;
+}
+
+// A small image for each frame, with its label. The images load only when the entry shows (a folded round hides it).
+function frameStrip(frames) {
+  const box = el("div", "", "kf-box");
+  const row = el("div", "", "kf-strip");
+  for (const f of frames) {
+    const b = el("button", "", `kf-thumb${f.sent ? " sent" : ""}`);
+    b.type = "button";
+    b.title = `${runCameras.front} ${frameTitle(f)}${f.sent ? " · sent to Claude" : ""}`;
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.src = f.src;
+    img.alt = b.title;
+    b.append(img, el("span", frameLabel(f)));
+    b.addEventListener("click", () => openFrame(f));
+    row.append(b);
+  }
+  box.append(row);
+  if (frames.some((f) => f.sent)) box.append(el("div", "A blue edge marks a frame that went to Claude.", "muted kf-note"));
+  return box;
+}
+
+function openFrame(f) {
+  $("frame_title").textContent = `${runCameras.front} camera ${frameTitle(f)}`;
+  $("frame_img").src = f.src;
+  $("frame_img").alt = $("frame_title").textContent;
+  $("frame_note").textContent = `${f.note ? `Note: ${f.note} · ` : ""}${f.sent ? "sent to Claude" : "not sent to Claude"}`;
+  $("frame_dialog").showModal();
+}
+
+$("frame_close").addEventListener("click", () => $("frame_dialog").close());
 
 // " · round 2" for a later round, "" for round 1.
 function roundText(round) {
