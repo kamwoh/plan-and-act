@@ -62,6 +62,35 @@
     return out;
   }
 
+  // ---- Groups: a plan numbers its path by keyframe, not by action ----
+  // The group of each action: a new group starts at each `point` action, so a keyframe is its move and the
+  // open or close after it. An action before the first point is in group 0.
+  function pointGroups(actions, point) {
+    let g = -1;
+    return actions.map((a) => {
+      if (a.type === point || g < 0) g += 1;
+      return g;
+    });
+  }
+
+  // The items with the index of their group: a point then shows the number of its group, and a mark takes
+  // no number of its own.
+  function grouped(list, groups) {
+    return list.map((it) => ({ ...it, index: groups[it.index] }));
+  }
+
+  // The state of each group from the states of its actions. A group is done when all its actions are done.
+  // Else a stop or the current action in it gives its state, or its first action that is not done.
+  function groupStates(actionStates, groups) {
+    const by = [];
+    groups.forEach((g, i) => (by[g] = by[g] || []).push(actionStates[i] || "later"));
+    return by.map((list) => {
+      if (list.every((s) => s === "done")) return "done";
+      for (const s of ["stopped", "current"]) if (list.includes(s)) return s;
+      return list.find((s) => s !== "done");
+    });
+  }
+
   // The sizes are in screen pixels. draw() scales them to image pixels.
   const STYLE = {
     later: { color: "#6f9bff", width: 2, dash: [6, 4], alpha: 1 },
@@ -197,7 +226,7 @@
     ctx.setLineDash([]);
   }
 
-  const api = { items, ended, states, layout, draw };
+  const api = { items, ended, states, layout, draw, pointGroups, grouped, groupStates };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.PathOverlay = api;
 })(typeof window !== "undefined" ? window : this);

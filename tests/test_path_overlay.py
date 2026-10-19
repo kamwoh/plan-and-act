@@ -188,7 +188,7 @@ def test_a_plan_from_another_tab_clears_the_old_path():
 def test_the_path_shows_only_over_an_image_of_its_run():
     js = (WEB / "app.js").read_text()
     assert "imageKey = runKey;" in _body(js, "function showImage(id, src)")
-    assert "key: runKey" in _body(js, "function setPath(step, cams, start, actions)")
+    assert "key: runKey" in _body(js, "function setPath(step, cams, start, actions, byKeyframe = false)")
     assert "imageKey === stepPath.key" in _body(js, "function drawPath()")
     assert "runKey++;" in _body(js, "async function loadPreview()")
 

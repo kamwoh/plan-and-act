@@ -1166,7 +1166,7 @@ function onEvent(ev, replay = false) {
       setViewMode("camera");  // the live frames; a saved run keeps the imagined video
     }
     onExecStart(ev);
-    if (own) setPath(ev.step, planView.cameras, planView.track && planView.track.start, ev.action_data);
+    if (own) setPath(ev.step, planView.cameras, planView.track && planView.track.start, ev.action_data, true);
   } else if (ev.kind === "exec_end") {
     if (!replay && !autoLoop && !ev.verdict_next) setRunning(false);  // a verdict call can follow
     if (!replay && $("history_dialog").open) fillHistory();
@@ -1237,7 +1237,7 @@ const PATH_KEY = "armmind.showPath";
 let runCams = null;    // the camera data of the run on the page, or null for an old run without it
 let planView = null;   // the view of the plan on the page: its cameras and start pose serve Execute
 let stepStarts = {};   // step number -> { xyz, yaw }: the gripper pose of the observation
-let stepPath = null;   // { step, cameras, path, n, progress } of the last reply, or null
+let stepPath = null;   // { step, cameras, path, n, progress, groups } of the last reply or execution, or null
 
 function readShowPath() {
   try {
@@ -1268,11 +1268,17 @@ const PATH_SPEC = { point: "move_to", marks: { open: "open", close: "closed" },
                     label: (a) => (a.expect ? expectText(a.expect) : null) };
 
 // key: the run that the path belongs to. The path shows only over an image of the same run.
-function setPath(step, cams, start, actions) {
-  stepPath = cams && actions && window.PathOverlay ? {
-    step, cameras: cams, n: actions.length, progress: {}, key: runKey,
-    path: { start, items: PathOverlay.items(actions, start, PATH_SPEC) },
-  } : null;
+// byKeyframe: a plan numbers its path by keyframe. The step mode numbers it by action.
+function setPath(step, cams, start, actions, byKeyframe = false) {
+  if (!(cams && actions && window.PathOverlay)) {
+    stepPath = null;
+    drawPath();
+    return;
+  }
+  const groups = byKeyframe ? PathOverlay.pointGroups(actions, PATH_SPEC.point) : null;
+  const list = PathOverlay.items(actions, start, PATH_SPEC);
+  stepPath = { step, cameras: cams, n: actions.length, progress: {}, key: runKey, groups,
+               path: { start, items: groups ? PathOverlay.grouped(list, groups) : list } };
   drawPath();
 }
 
@@ -1296,7 +1302,8 @@ function onPathStep(ev) {
 
 function drawPath() {
   const show = Boolean(stepPath && $("show_path").checked && viewMode === "camera" && imageKey === stepPath.key);
-  const actionStates = show ? PathOverlay.states(stepPath.n, stepPath.progress) : [];
+  let actionStates = show ? PathOverlay.states(stepPath.n, stepPath.progress) : [];
+  if (show && stepPath.groups) actionStates = PathOverlay.groupStates(actionStates, stepPath.groups);
   for (const [name, img] of [["front", "live"], ["top", "top"]]) {
     const canvas = $(`path_${name}`);
     const cam = show && stepPath.cameras.find((c) => c.name === name);
