@@ -30,15 +30,15 @@ async def ask(conv, text, schema=SCHEMA_A):
     return final.parsed if final else None, error
 
 
-async def test_a_chain_chat_keeps_its_session_in_a_fixed_folder(fake, tmp_path):
+async def test_a_chain_chat_keeps_its_session_in_the_shared_folder(fake, tmp_path):
     conv = await fake.open("sys", chain="20261018-100000")
     got, _ = await ask(conv, "one")
     assert got["seen"] == 1 and conv.session_id
     first = calls(tmp_path)[0]
-    assert first["cwd"] == str(tmp_path / "chats" / "20261018-100000")
+    assert first["cwd"] == str(tmp_path / "chats")
     assert "--no-session-persistence" not in first["args"] and "--resume" not in first["args"]
     await conv.close()
-    assert (tmp_path / "chats" / "20261018-100000").is_dir()  # close keeps the folder of the chain
+    assert (tmp_path / "chats").is_dir()  # close keeps the shared folder
 
 
 async def test_a_schema_change_resumes_the_same_session(fake, tmp_path):
@@ -95,12 +95,6 @@ async def test_without_a_chain_the_chat_is_not_saved(fake, tmp_path):
     assert not first["cwd"].startswith(str(tmp_path / "chats"))
     await conv.close()
     assert not Path(first["cwd"]).exists()  # the temp folder goes
-
-
-async def test_a_chain_name_must_be_a_plain_folder_name(fake):
-    for bad in ("../x", "a/b", "", "."):
-        with pytest.raises(ValueError):
-            await fake.open("sys", chain=bad)
 
 
 def test_the_default_sessions_folder_is_outside_the_repo():

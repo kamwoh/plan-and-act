@@ -126,7 +126,7 @@ async def test_a_lost_chat_falls_back_to_the_summary_message():
 async def test_a_replan_without_a_saved_chat_sends_the_summary_with_the_note():
     backend, rec = FakeBackend([good_plan()]), Recorder()
     await Agent(backend, run_id="r2", chain=Chain("r1", None)).plan(PlanEnv(), direct, rec, feedback=feedback())
-    assert dict(rec.events)["chat_lost"]["message"] == NOTE
+    assert dict(rec.events)["chat_lost"]["message"] == "This round starts a new chat with a summary."
     assert backend.opens == [{"system": CHAIN_SYSTEM, "chain": "r1", "resume": None}]
     assert "Your last plan:" in backend.sent[0][0].text
 

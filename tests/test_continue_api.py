@@ -105,8 +105,8 @@ def test_a_start_replan_is_as_in_v1_12(tmp_path):
     assert ENVS[-1].start is None and not (tmp_path / "runs" / second / START_STATE).exists()
     assert run_events(tmp_path, second)[0]["round_mode"] == "start"
     msg = backend.sent[-1][0]
-    assert msg.images == (b"front", b"top", b"front", b"top")
-    assert "Images 3 and 4 show the end" in msg.text and "back at its start" in msg.text
+    assert msg.images == (b"front", b"top")  # only the end images: the chat has the start images
+    assert "Image 1: the front camera at the end" in msg.text and "back at its start" in msg.text
     assert "did not reset" not in msg.text and "Plan the whole task now" in msg.text
 
 
@@ -167,7 +167,8 @@ def test_a_new_execution_removes_the_old_end_state_first(tmp_path, monkeypatch):
         monkeypatch.setattr(StateEnv, "save_state", full)
         assert c.post(f"/api/plan/{first}/execute").status_code == 200
         wait_idle(c)
-        assert [e["kind"] for e in run_events(tmp_path, first)][-2:] == ["exec_end", "verdict"]  # the result stays
+        kinds = [e["kind"] for e in run_events(tmp_path, first)]
+        assert "exec_end" in kinds and kinds[-1] == "verdict"  # the result stays
         r = c.post(f"/api/plan/{first}/replan")
         assert r.status_code == 409 and "end state" in r.json()["detail"]
 

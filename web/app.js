@@ -1151,11 +1151,11 @@ function onEvent(ev, replay = false) {
     addEntry(verdictEntry(ev));
     if (!autoLoop) setStatus(verdictText(ev), ev.done ? "success" : "");
   } else if (ev.kind === "chat_lost") {
-    endThinking();
     const item = entry("stopped", "⚠ New chat");
-    item.append(el("div", ev.message || "Claude lost the earlier chat."));
+    item.append(el("div", ev.message || "This round starts a new chat with a summary."));
     if (ev.error) item.append(el("div", ev.error, "muted"));
     addEntry(item);
+    if (thinking) addEntry(thinking.item);  // Claude still thinks: its entry moves below the note
   } else if (ev.kind === "loop_end") {
     if (!replay) {
       autoLoop = false;

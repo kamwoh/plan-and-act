@@ -71,7 +71,7 @@ def test_list_is_newest_first_with_the_summary(tmp_path):
     assert new == {"id": "20261017-142412", "started": 100.0, "scene": "kitchen", "instruction": "Put the cup down.",
                    "check": None, "steps": 2, "cost_usd": 0.75, "in_tokens": 153, "out_tokens": 30,
                    "status": "success", "active": False, "mode": "run", "exec_status": None,
-                   "round": 1, "parent": None}
+                   "round": 1, "parent": None, "chain": None}
     old = items[2]
     assert old["scene"] == "cubes" and old["check"] is None and old["status"] == "success"
     assert old["steps"] == 1 and old["cost_usd"] == 0.125 and old["in_tokens"] == 0

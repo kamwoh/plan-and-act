@@ -83,7 +83,7 @@ def test_replan_makes_a_new_round_with_the_feedback(tmp_path):
     assert listed[second]["round"] == 2 and listed[second]["parent"] == first
     assert listed[first]["round"] == 1 and listed[first]["parent"] is None
     msg = backend.sent[-1][0]
-    assert msg.images == (b"front", b"top", b"front", b"top")
+    assert msg.images == (b"front", b"top")  # the end images. The chat has the start images of round 1
     text = msg.text
     assert "Your last plan:" not in text and '"note": "up"' in backend.seen[-1][1].text  # the plan is in the chat
     assert "stopped" in text and "action 2 of 2 (close)" in text and "the gripper closed on nothing" in text
@@ -178,4 +178,4 @@ def test_replan_after_a_stopped_execution_says_the_person_stopped_it(tmp_path):
     msg = backend.sent[-1][0]
     assert "The person stopped the execution after action 3 of 7." in msg.text
     assert "automatic check" not in msg.text and "All actions ran" not in msg.text
-    assert len(msg.images) == 4  # the end images exist, so they go
+    assert len(msg.images) == 2  # the end images exist, so they go. The chat has the start images

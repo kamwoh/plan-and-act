@@ -119,7 +119,7 @@ def test_the_last_execution_without_an_auto_check_ends_on_the_verdict_call(tmp_p
     end = loop_end(rounds)
     assert (end["success"], end["judge"], end["reason"]) == (True, "claude", "Claude says the task is done")
     kinds = [e["kind"] for e in rounds[0]]
-    assert kinds[-3:] == ["exec_end", "verdict", "loop_end"]
+    assert kinds[-4:] == ["exec_end", "verdict_start", "verdict", "loop_end"]
     v = rounds[0][-2]
     assert (v["done"], v["reason"], v["check"], v["round"]) == (True, "The cube is up.", None, 1)
 
@@ -192,7 +192,7 @@ def test_a_manual_execute_ends_with_a_verdict_call_without_true_values(tmp_path)
     with TestClient(create_app(backend, true_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
         run_id = planned_and_executed(c)
     evs = run_events(tmp_path, run_id)
-    assert [e["kind"] for e in evs][-2:] == ["exec_end", "verdict"] and evs[-2]["verdict_next"] is True
+    assert [e["kind"] for e in evs][-3:] == ["exec_end", "verdict_start", "verdict"] and evs[-3]["verdict_next"] is True
     v = evs[-1]
     assert (v["done"], v["reason"], v["check"], v["round"], v["step"]) == (False, "The gripper is empty.", False, 1, 2)
     assert backend.systems[-1] == CHAIN_SYSTEM  # the verdict goes into the chat of the plan

@@ -37,7 +37,8 @@ class Usage:
 
 @dataclass(frozen=True)
 class LLMError:
-    kind: Literal["timeout", "cancelled", "backend", "auth", "limit", "schema", "resume"]  # resume: the chat is gone
+    # resume: the saved chat is gone. too_long: the chat has too many images or tokens
+    kind: Literal["timeout", "cancelled", "backend", "auth", "limit", "schema", "resume", "too_long"]
     message: str
 
 

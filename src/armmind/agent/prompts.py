@@ -276,8 +276,9 @@ class Feedback:
     mode: str = "start"  # "start": the scene is back at its start. "continue": it goes on from the end state
 
 
-def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True) -> list[str]:
-    """The result of the last execution. Without `with_plan`, the lines leave out the last plan: the chat has it."""
+def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, start_seen: bool = False) -> list[str]:
+    """The result of the last execution. Without `with_plan`, the lines leave out the last plan: the chat has it.
+    With `start_seen`, a re-plan from the start sends only the end images: the chat has the start images."""
     lines = [f"This is a re-plan, round {f.round}. Your last plan ran once in the physics."]
     if with_plan:
         last = json.dumps({"objects": list(f.objects), "keyframes": list(f.keyframes)}, separators=(",", ":"),
@@ -301,6 +302,11 @@ def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True) -> l
     if f.mode == "continue":
         lines.append("The scene did not reset. Images 1 and 2 show the scene now, at the end of the last "
                      "execution. Plan from here, and do only what is left of the task.")
+    elif start_seen:
+        lines.append("The scene is now back at its start, the same as the start images earlier in this chat.")
+        lines.append(f"Image 1: the {first_camera} camera at the end of the last execution. "
+                     "Image 2: the top camera at the end." if len(f.images) == 2
+                     else "There are no images of the end of the last execution.")
     elif len(f.images) == 2:
         lines.append(f"Images 3 and 4 show the end of the last execution. The scene is now back at its start, "
                      f"as in images 1 and 2. Image 3: the {first_camera} camera at the end of the last execution. "
@@ -341,13 +347,16 @@ def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: 
 
 
 def build_replan_text(obs: Observation, image_text: str | None, feedback: Feedback,
-                      gripper: str | None = None) -> str:
+                      gripper: str | None = None, start_seen: bool = False) -> str:
     """A re-plan message in the chat of its chain: only what is new. The chat has the scene, the task, the
     lessons and the last plan. This message has the result of the last execution, the gripper now, the mode
-    and the images. It never has the true positions, yaws or joints."""
+    and the images. It never has the true positions, yaws or joints. With `start_seen`, a re-plan from the
+    start sends only the end images, because the chat has the start images of the same seed."""
     images = image_text or IMAGE_TEXT
-    return "\n".join([*_feedback_lines(feedback, "side" if "side camera" in images else "front", with_plan=False),
-                      *_gripper_lines(obs, feedback, gripper), images])
+    seen = start_seen and feedback.mode == "start"
+    lines = _feedback_lines(feedback, "side" if "side camera" in images else "front", with_plan=False,
+                            start_seen=seen)
+    return "\n".join([*lines, *_gripper_lines(obs, feedback, gripper), *([] if seen else [images])])
 
 
 def build_chain_verdict_text(image_text: str | None = None) -> str:

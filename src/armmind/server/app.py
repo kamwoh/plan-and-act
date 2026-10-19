@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from armmind.agent.loop import Agent, AgentConfig, Chain
+from armmind.agent.loop import BRANCH_CHAT, Agent, AgentConfig, Chain
 from armmind.agent.parse import Verdict
 from armmind.agent.prompts import SYSTEM, Feedback, example_step_text
 from armmind.env import Env, SimThread, keyframe_actions
@@ -212,7 +212,16 @@ def chain_of(found: dict) -> Chain:
     chain = found["start"].get("chain")
     if not (isinstance(chain, str) and valid_run_id(chain)):
         chain = found["folder"].name
-    return Chain(chain, found.get("session"))
+    return Chain(chain, found.get("session"), found.get("chat_images", 0), found.get("chat_start", False))
+
+
+def branch_chain(found: dict, history: RunStore) -> Chain:
+    """The chat for a re-plan or a verdict of a saved plan. When the chain has a later round, the saved chat
+    also holds that round. A new chat with a summary then starts a branch."""
+    chain, round_no = chain_of(found), plan_round(found["start"])
+    if any(r["chain"] == chain.id and r["round"] > round_no for r in history.runs()):
+        return Chain(chain.id, note=BRANCH_CHAT)
+    return chain
 
 
 def start_state(found: dict) -> Path | None:
@@ -414,11 +423,12 @@ class Runner:
                 raise LookupError("the execution has no end images")
             images = tuple(p.read_bytes() for p in paths)
             objects, keyframes = _reply_format(found["plan"])
-            agent = Agent(self.backend, run_id=folder.name, chain=chain_of(found))
+            agent = Agent(self.backend, run_id=folder.name, chain=branch_chain(found, self.history))
             part[:] = [agent.stop]
             if should_stop():
                 detail = {"error": "stopped"}
             else:
+                emit("verdict_start", {"session_id": None})  # a server that dies in the call leaves this mark
                 verdict, detail = await agent.verdict(scene.describe(), instruction, objects, keyframes, images,
                                                       scene.image_text, emit)
         except Exception as e:  # noqa: BLE001  the execution result stays, the verdict says why it is missing
@@ -713,7 +723,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
             state = found["folder"] / END_STATE
             if problem := state_problem(state, scene, req.seed):
                 raise HTTPException(409, f"cannot continue from the last execution: {problem}. Re-plan from the start")
-        folder = await runner.start_plan(req, scene, task, feedback, state, chain_of(found))
+        folder = await runner.start_plan(req, scene, task, feedback, state, branch_chain(found, history))
         return {"run_dir": str(folder), "run_id": folder.name}
 
     @app.post("/api/plan/{rest:path}")

@@ -1,8 +1,8 @@
 """Claude Code CLI backend: one long-lived `claude -p` process per conversation (no API key needed).
 
 Locked down: no tools, no MCP servers, no user/project settings or hooks, empty working directory.
-A conversation of a chain is a CLI session: it runs in a fixed folder per chain, and each new process
-continues it with --resume. Any other conversation is not saved.
+A conversation of a chain is a CLI session: it runs in one shared folder, and each new process continues
+it with --resume. Any other conversation is not saved.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import base64
 import contextlib
 import json
 import os
-import re
 import shutil
 import signal
 import tempfile
@@ -24,8 +23,9 @@ from armmind.llm.protocol import Delta, Final, LLMError, LLMEvent, Message, Prog
 BASE_ARGS = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
              "--include-partial-messages", "--tools", "", "--strict-mcp-config", "--setting-sources", ""]
 NO_SESSION = ["--no-session-persistence"]  # a conversation outside a chain
-SESSIONS_DIR = Path.home() / ".cache" / "armmind" / "sessions"  # one working folder for each chain
-CHAIN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*")
+# The working folder of every chain chat. One folder keeps one entry in ~/.claude/projects/. The session ids
+# are unique, so all chains and all servers can share it.
+SESSIONS_DIR = Path.home() / ".cache" / "armmind" / "sessions"
 
 
 PROGRESS_INTERVAL_S = 0.3  # at most one "receiving" update per this many seconds
@@ -43,6 +43,8 @@ def classify(text: str) -> str:
     t = text.lower()
     if "no conversation found" in t:  # --resume of a session that is not there
         return "resume"
+    if "too many images" in t or "prompt is too long" in t or ("image" in t and "exceed" in t):
+        return "too_long"  # the chat is too long for one request
     if "limit" in t or "429" in t:
         return "limit"
     if "login" in t or "auth" in t or "401" in t or "api key" in t:
@@ -52,7 +54,7 @@ def classify(text: str) -> str:
 
 class ClaudeCLIConversation:
     def __init__(self, backend: ClaudeCLIBackend, system: str, chain: str | None = None, resume: str | None = None):
-        """With `chain`, the conversation is a saved CLI session in the folder of the chain. `resume` is the
+        """With `chain`, the conversation is a saved CLI session in the shared sessions folder. `resume` is the
         id of a session to continue. The CLI gives the id of a new session in its first output line."""
         self.b, self.system = backend, system
         self._proc: asyncio.subprocess.Process | None = None
@@ -60,9 +62,7 @@ class ClaudeCLIConversation:
         self._saved = chain is not None
         self.session_id = resume if self._saved else None
         if chain is not None:
-            if not CHAIN_NAME.fullmatch(chain):
-                raise ValueError(f"bad chain name {chain!r}")
-            folder = Path(backend.sessions_dir) / chain
+            folder = Path(backend.sessions_dir)
             folder.mkdir(parents=True, exist_ok=True)
             self._cwd = str(folder)
         else:
@@ -229,7 +229,7 @@ class ClaudeCLIConversation:
 
     async def close(self) -> None:
         await self._kill()
-        if not self._saved:  # the folder of a chain keeps the session for the next round
+        if not self._saved:  # the shared sessions folder stays
             shutil.rmtree(self._cwd, ignore_errors=True)
 
 

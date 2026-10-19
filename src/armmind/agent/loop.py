@@ -35,12 +35,21 @@ Call = Callable[..., Awaitable]
 
 @dataclass(frozen=True)
 class Chain:
-    """The chat of a chain: the run id of its round 1, and the saved chat to continue, or None."""
+    """The chat of a chain: the run id of its round 1, and the saved chat to continue, or None.
+    `images` counts the images in the saved chat. `start` is True when the chat has the start images of the
+    scene. `note` is the text for the page when a round starts a new chat for a reason the server knows."""
     id: str
     session: str | None = None
+    images: int = 0
+    start: bool = False
+    note: str | None = None
 
 
+NEW_CHAT = "This round starts a new chat with a summary."
 CHAT_LOST = "Claude lost the earlier chat. This round starts a new chat with a summary."
+BRANCH_CHAT = "This branch starts a new chat with a summary."
+CHAT_TOO_LONG = "The chat got too long. This round starts a new chat with a summary."
+MAX_CHAT_IMAGES = 90  # a chat with more images starts again: the API takes about 100 images in one request
 
 
 @dataclass(frozen=True)
@@ -87,7 +96,9 @@ class Agent:
         self.backend, self.cfg = backend, config or AgentConfig()
         self.store, self.use_lessons, self.run_id = store, use_lessons, run_id
         self.chain = chain or Chain(run_id)
-        self.session_id: str | None = None  # the saved chat of the last plan or verdict call
+        self.session_id: str | None = None  # the saved chat of the last plan or verdict call. None: do not resume it
+        self.chat_images = 0  # the images in that chat
+        self.chat_start = False  # the chat has the start images of the scene
         self.saved_lessons: tuple[str, ...] = ()  # from earlier runs of the scene, oldest first
         self.run_lessons: list[str] = []  # the new lessons of this run, oldest first, without duplicates
         self.system = system or SYSTEM
@@ -238,14 +249,19 @@ class Agent:
         images = (obs.front_png, obs.top_png, *(feedback.images if feedback else ()))
         summary = Message("user", build_plan_text(env.scene_text, env.instruction, obs, env.image_text,
                                                   self.saved_lessons, feedback, gripper), images)
-        short = Message("user", build_replan_text(obs, env.image_text, feedback, gripper), images) if feedback else None
+        short = None
+        if feedback is not None:  # a re-plan from the start leaves out the start images when the chat has them
+            seen = feedback.mode == "start" and self.chain.start
+            short = Message("user", build_replan_text(obs, env.image_text, feedback, gripper, seen),
+                            feedback.images if seen else images)
         attempts: list[dict] = []
         reply, error, text = await self._chat(
             short, summary, attempts, lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), emit,
-            PLAN_REPLY_SCHEMA, lambda obj: parse_plan(obj, replan=feedback is not None))
+            PLAN_REPLY_SCHEMA, lambda obj: parse_plan(obj, replan=feedback is not None),
+            summary_start=feedback is None or feedback.mode == "start")
         if self._stop.is_set():
             return "stopped"
-        detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts), "session_id": self.session_id}
+        detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts), **self._chat_fields()}
         if reply is None and error is not None and error.kind != "schema":
             emit("llm_error", {"step": 1, "error_kind": error.kind, "message": error.message, **detail})
             return "llm_error"
@@ -273,30 +289,47 @@ class Agent:
                                               attempts, lambda m, i: None, emit or (lambda k, d: None),
                                               VERDICT_SCHEMA, parse_verdict)
         detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts),
-                  "error": error.message if reply is None and error else None, "session_id": self.session_id}
+                  "error": error.message if reply is None and error else None, **self._chat_fields()}
         return reply, detail
 
+    def _chat_fields(self) -> dict:
+        """The chat after the last call, for the events: the run store reads it for the next round."""
+        return {"session_id": self.session_id, "chat_images": self.chat_images, "chat_start": self.chat_start}
+
     async def _chat(self, short: Message | None, summary: Message, attempts: list[dict],
-                    on_ask: Callable[[Message, int], None], emit: Emit, schema: dict, parse: Callable
-                    ) -> tuple[Reply | PlanReply | Verdict | None, LLMError | None, str]:
+                    on_ask: Callable[[Message, int], None], emit: Emit, schema: dict, parse: Callable,
+                    summary_start: bool = False) -> tuple[Reply | PlanReply | Verdict | None, LLMError | None, str]:
         """Send `short` into the saved chat of the chain. Round 1 has no `short`: `summary` starts the chat.
-        When the chain has no saved chat, or the chat is gone, `summary` starts a new chat, and a chat_lost
-        event tells the page. Gives the reply, the error and the text of the message that counts."""
-        msg, resume = (short, self.chain.session) if short is not None else (summary, None)
-        if short is not None and resume is None:
-            emit("chat_lost", {"step": 1, "message": CHAT_LOST, "error": "the chain has no saved chat"})
-            msg = summary
+        `summary` also starts a new chat when the chain has no saved chat, when the chat would get too many
+        images, or when the chat is gone or too long. A chat_lost event then tells the page.
+        `summary_start` is True when `summary` has the start images of the scene.
+        A turn that fails or stops leaves no session id: the next call does not resume that chat, because
+        a CLI that still runs can write into it. Gives the reply, the error and the text of the message."""
+        msg, resume, note = summary, None, None
+        if short is not None:
+            if self.chain.session is None:
+                note = self.chain.note or NEW_CHAT
+            elif self.chain.images + len(short.images) > MAX_CHAT_IMAGES:
+                note = CHAT_TOO_LONG
+            else:
+                msg, resume = short, self.chain.session
+        if note is not None:
+            emit("chat_lost", {"step": 1, "message": note, "error": None})
         while True:
             self._conv = await self.backend.open(CHAIN_SYSTEM, chain=self.chain.id, resume=resume)
             try:
                 reply, error, _ = await self._ask(msg, attempts, on_ask, schema, parse)
-                self.session_id = getattr(self._conv, "session_id", None)
+                kept = error is None or error.kind == "schema"  # a reply in the wrong format still ends the turn
+                self.session_id = getattr(self._conv, "session_id", None) if kept else None
             finally:
                 conv, self._conv = self._conv, None
                 await conv.close()
-            if error is None or error.kind != "resume" or msg is summary or self._stop.is_set():
+            if error is None or error.kind not in ("resume", "too_long") or msg is summary or self._stop.is_set():
+                self.chat_images = (self.chain.images if resume else 0) + len(msg.images)
+                self.chat_start = self.chain.start if resume else summary_start
                 return reply, error, msg.text
-            emit("chat_lost", {"step": 1, "message": CHAT_LOST, "error": error.message})
+            emit("chat_lost", {"step": 1, "message": CHAT_LOST if error.kind == "resume" else CHAT_TOO_LONG,
+                               "error": error.message})
             msg, resume = summary, None
 
     def _save_plan_lessons(self, scene: str, lessons: tuple[str, ...], feedback: Feedback | None) -> None:

@@ -40,7 +40,7 @@ def _num(value) -> float:
 def summarize(name: str, events: Iterator[dict]) -> dict:
     s = {"id": name, "started": None, "scene": "cubes", "instruction": "", "check": None,
          "steps": 0, "cost_usd": 0.0, "in_tokens": 0, "out_tokens": 0, "status": "unfinished",
-         "mode": "run", "exec_status": None, "round": 1, "parent": None}
+         "mode": "run", "exec_status": None, "round": 1, "parent": None, "chain": None}
     for ev in events:
         kind = ev.get("kind")
         if s["started"] is None:
@@ -53,6 +53,7 @@ def summarize(name: str, events: Iterator[dict]) -> dict:
             s["mode"] = "plan" if ev.get("mode") == "plan" else "run"
             s["round"] = ev.get("round") if isinstance(ev.get("round"), int) else 1
             s["parent"] = ev.get("parent") if isinstance(ev.get("parent"), str) else None
+            s["chain"] = ev.get("chain") if isinstance(ev.get("chain"), str) else None
         elif kind in (*STEP_KINDS, "verdict"):
             s["steps"] += kind != "verdict"  # a verdict call costs, but it is not a step
             u = ev.get("usage") if isinstance(ev.get("usage"), dict) else {}
@@ -155,17 +156,22 @@ class RunStore:
     def plan(self, run_id: str) -> dict | None:
         """The run_start and the plan event of a finished plan run, or None. "execution" holds the events of
         the last execution ({"start", "step", "end", "actions"}), or None when the plan has not run yet.
-        "session" is the last saved chat of the chain in this run: of the plan, or of a later verdict."""
+        "session" is the last saved chat of the chain in this run: of the plan, or of a later verdict. The last
+        event with a "session_id" key sets it, also to None: a verdict_start without its verdict leaves None.
+        "chat_images" and "chat_start" describe that chat."""
         folder = self.folder(run_id)
         if folder is None:
             return None
         start = plan = last = session = None
-        executions = 0
+        executions, chat_images, chat_start = 0, 0, False
         try:
             for ev in read_events(folder / "events.jsonl"):
                 kind = ev.get("kind")
-                if kind in ("run_start", "plan", "verdict") and isinstance(ev.get("session_id"), str):
-                    session = ev["session_id"]
+                if "session_id" in ev:
+                    session = ev["session_id"] if isinstance(ev["session_id"], str) else None
+                    n = ev.get("chat_images")
+                    chat_images = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
+                    chat_start = ev.get("chat_start") is True
                 if kind == "run_start":
                     start = ev
                 elif kind == "plan":
@@ -183,7 +189,7 @@ class RunStore:
                 and isinstance(plan.get("keyframes"), list)):
             return None
         return {"start": start, "plan": plan, "folder": folder, "executions": executions, "execution": last,
-                "session": session}
+                "session": session, "chat_images": chat_images, "chat_start": chat_start}
 
     def chain(self, run_id: str) -> list[str] | None:
         """The run ids of the chain of a run, from round 1 to this run, by the parent links. None for no run."""
