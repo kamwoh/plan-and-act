@@ -114,7 +114,7 @@ def test_a_second_execute_revokes_the_old_end_images():
     handler = _body(_web("app.js"), "function onEvent(ev, replay = false)")
     end = handler[handler.index('ev.kind === "exec_end"'):handler.index('ev.kind === "loop_end"')]
     assert "URL.revokeObjectURL" in end
-    assert end.index("URL.revokeObjectURL") < end.index("stepImages[ev.step] = ")
+    assert end.index("URL.revokeObjectURL") < end.index("stepImages[key] = ")
 
 
 @pytest.mark.parametrize("value, want", [("", 3), ("0", 1), ("9", 9), ("31", 30), ("2", 2), ("abc", 3), ("2.6", 3)])

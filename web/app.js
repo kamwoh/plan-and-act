@@ -22,7 +22,11 @@ let parentCheck = null;    // the auto-check of the execution before this re-pla
 let execError = false;     // the last execution of the plan on the page ended with an error: it has no end state
 const MAX_ROUND = 30;
 let autoLoop = false;      // a live Auto loop: the page stays busy from round to round until loop_end
-let feedbackImages = null; // a re-plan: the end images of the last round, as server URLs
+// One chain of rounds is one chat. The step maps and the entries of the chat are keyed by round and step.
+let chatRound = 1;         // the round of the events that the chat gets now
+let roundFeedback = {};    // round -> the end images of the last round that its re-plan sent, as server URLs
+let lastImages = null;     // the newest camera images of the chat, for a saved run
+let replayShowsPlan = true; // false while loadRun replays an older round of a chain: only the last video loads
 
 function cameraLabels(name) {
   const scene = scenes.find((s) => s.name === name);
@@ -156,7 +160,9 @@ function setRunning(value) {
   for (const c of $("scenes").children) c.disabled = value;
   $("shuffle").disabled = value;
   $("reset").disabled = value;
-  for (const b of document.querySelectorAll(".exec-btn")) b.disabled = value || !planRunId;  // an old entry stays off
+  for (const b of document.querySelectorAll(".exec-btn")) {
+    b.disabled = value || !planRunId || b.dataset.run !== planRunId;  // the buttons of an older round stay off
+  }
 }
 let previewSeq = 0;
 
@@ -273,9 +279,10 @@ function usageLine(u) {
     `out ${u.out ?? "?"} · $${(u.cost_usd ?? 0).toFixed(4)} · ${(u.latency_s ?? 0).toFixed(1)}s`;
 }
 
-function openStepDetails(ev) {
+function openStepDetails(ev, key) {
   const kindText = { step: "", plan: " · plan", bad_reply: " · bad reply" }[ev.kind] ?? " · model error";
-  $("step_title").textContent = `Step ${ev.step}${kindText}`;
+  const round = Number(key.split(":")[0]);
+  $("step_title").textContent = `${round > 1 ? `Round ${round} · step` : "Step"} ${ev.step}${kindText}`;
   const u = stepUsage(ev);
   const items = [el("h2", "Tokens (exact, from the API)")];
   if (u) {
@@ -304,7 +311,7 @@ function openStepDetails(ev) {
   const sys = el("details");
   sys.append(el("summary", "System prompt"), el("pre", runSystemPrompt));
   items.push(sys, el("h2", "User message"), el("pre", ev.prompt ?? ""));
-  const imgs = stepImageList(ev.step);
+  const imgs = stepImageList(key);
   if (imgs.length) {
     const pair = el("div", "", "pair");
     for (const [name, data] of imgs.map(([label, src], i) => [`Image ${i + 1} · ${label}`, src])) {
@@ -334,8 +341,8 @@ function openStepDetails(ev) {
 $("step_close").addEventListener("click", () => $("step_dialog").close());
 
 // ---- Chat ----
-let stepEvents = {};     // step number -> the step, bad_reply or llm_error event, for the details dialog
-let stepPrompts = {};    // step number -> the first message text, until the step event comes
+let stepEvents = {};     // step key -> the step, bad_reply or llm_error event, for the details dialog
+let stepPrompts = {};    // step key -> the first message text, until the step event comes
 let thinking = null;     // { item, timer, start } while Claude thinks
 let runLessons = [];
 let replaying = false;   // true while loadRun sends the events of a saved run
@@ -351,10 +358,16 @@ function scrollChat(force = false) {
   $("chat_latest").hidden = atBottom();
 }
 
+// The key of a step in the step maps: "round:step". Each round of a chain has its own step 1.
+function stepKey(step) {
+  return `${chatRound}:${step}`;
+}
+
 // Add an entry. Stay at the bottom when the reader is there. Otherwise do not move, and show "↓ latest".
 function addEntry(item) {
   const empty = $("chat").querySelector(".chat-empty");
   if (empty) empty.remove();
+  if (!item.classList.contains("round-div")) item.dataset.round = String(chatRound);
   if (replaying) return $("chat").appendChild(item);  // no layout read for each entry: loadRun scrolls once
   const stick = atBottom();
   $("chat").append(item);
@@ -372,22 +385,24 @@ function entry(cls, title, step = null) {
   return item;
 }
 
-function openStep(step) {
-  openStepDetails(stepEvents[step] || { kind: "step", step, prompt: stepPrompts[step] ?? "", attempts: [], usage: null });
+function openStep(key) {
+  const step = Number(key.split(":")[1]);
+  openStepDetails(stepEvents[key] || { kind: "step", step, prompt: stepPrompts[key] ?? "", attempts: [], usage: null }, key);
 }
 
-function stepLink(item, step) {
+// The entry opens the details of a step. `key` is its step key.
+function stepLink(item, key) {
   item.classList.add("link");
   item.tabIndex = 0;
   item.setAttribute("role", "button");
   item.addEventListener("click", (e) => {
     if (e.target.closest("button, summary")) return;  // "show all" and folds work on their own
-    openStep(step);
+    openStep(key);
   });
   item.addEventListener("keydown", (e) => {
     if ((e.key === "Enter" || e.key === " ") && e.target === item) {
       e.preventDefault();  // the focus moves to the dialog: the key must not press its Close button
-      openStep(step);
+      openStep(key);
     }
   });
   return item;
@@ -411,20 +426,23 @@ function folded(text) {
   return box;
 }
 
-// The images of a step message. A re-plan also sends the end images of the last round.
-function stepImageList(step) {
-  const imgs = stepImages[step];
+// The images of a step message. A re-plan from the start also sends the end images of the last round.
+function stepImageList(key) {
+  const imgs = stepImages[key];
   const list = imgs ? [[runCameras.front, imgs.front], [runCameras.top, imgs.top]] : [];
-  if (step === 1 && feedbackImages) {
-    list.push([`${runCameras.front} · end of the last round`, feedbackImages.front],
-              [`${runCameras.top} · end of the last round`, feedbackImages.top]);
+  const [round, step] = key.split(":");
+  const end = roundFeedback[round];
+  if (step === "1" && end) {
+    list.push([`${runCameras.front} · end of the last round`, end.front],
+              [`${runCameras.top} · end of the last round`, end.top]);
   }
   return list;
 }
 
-function thumbs(step) {
+function thumbs(key) {
+  const step = key.split(":")[1];
   const row = el("div", "", "thumbs");
-  for (const [label, data] of stepImageList(step)) {
+  for (const [label, data] of stepImageList(key)) {
     const img = document.createElement("img");
     img.loading = "lazy";  // a long run loads only the images on screen
     img.src = data;
@@ -474,15 +492,15 @@ function lines(items, cls = "") {
 
 function onAsk(ev) {
   if (ev.attempt === 1) {
-    stepPrompts[ev.step] = ev.prompt;
+    stepPrompts[stepKey(ev.step)] = ev.prompt;
     const item = entry("sent", "→ Sent", ev.step);
-    item.append(folded(ev.prompt), thumbs(ev.step));
-    addEntry(stepLink(item, ev.step));
+    item.append(folded(ev.prompt), thumbs(stepKey(ev.step)));
+    addEntry(stepLink(item, stepKey(ev.step)));
   } else {
     endThinking();
     const item = entry("retry", "↻ Retry: the reply was not valid", ev.step);
     item.append(folded(ev.prompt));
-    addEntry(stepLink(item, ev.step));
+    addEntry(stepLink(item, stepKey(ev.step)));
   }
   startThinking(ev.step);
 }
@@ -497,7 +515,7 @@ function onReply(ev) {
   if (ev.todo && ev.todo.length) item.append(field("todo", lines(ev.todo)));
   if (ev.lessons && ev.lessons.length) item.append(field("lessons", lines(ev.lessons, "lesson-lines")));
   if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
-  addEntry(stepLink(item, ev.step));
+  addEntry(stepLink(item, stepKey(ev.step)));
 }
 
 // "move_to(0.5, 0.1, 0.2): reached, gripper at …" -> action, status word, rest
@@ -528,7 +546,7 @@ function onStepResults(ev) {
   if (ev.success) item.append(el("span", "Task solved", "badge success"));
   else if (ev.done) item.append(el("span", "Claude says done", "badge done"));
   if (ev.truncated) item.append(el("span", "Plan cut to 8 actions", "badge warn"));
-  addEntry(stepLink(item, ev.step));
+  addEntry(stepLink(item, stepKey(ev.step)));
   if (ev.stopped) {
     const warn = entry("stopped", `⚠ Stopped after action ${ev.stopped.after} of ${ev.stopped.of}`, ev.step);
     warn.append(el("div", ev.stopped.reason));
@@ -541,22 +559,24 @@ function errorEntry(ev, title, text) {
   const item = entry("error", title, ev.step);
   item.append(el("div", text));
   if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
-  addEntry(stepLink(item, ev.step));
+  addEntry(stepLink(item, stepKey(ev.step)));
 }
 
-function onRunStart(ev) {
+// chained: a later round of the chain in the chat. It continues the chat, so it has the same system prompt.
+function onRunStart(ev, chained = false) {
   const item = entry("system", ev.mode === "plan" ? `Plan started${roundText(ev.round)}` : "Run started");
   const sys = el("details");
   sys.append(el("summary", "System prompt"), el("pre", ev.system_prompt || ""));
-  item.append(field("task", el("span", ev.instruction)));
+  if (!chained) item.append(field("task", el("span", ev.instruction)));
   if (ev.parent) {
     const how = ev.round_mode === "continue"
       ? "continue: the scene goes on from the end of that run, and Claude plans what is left"
       : "from start: the scene starts again, and Claude also sees the end images";
-    item.append(field("re-plan", el("span", `of run ${ev.parent}: Claude sees that plan and its result · ${how}`)));
+    const chat = chained ? "the same chat: Claude remembers the rounds above" : "Claude sees that plan and its result";
+    item.append(field("re-plan", el("span", `of run ${ev.parent} · ${chat} · ${how}`)));
   }
-  if (ev.auto_rounds) item.append(field("auto", el("span", `the Auto loop runs at most ${ev.auto_rounds} round${ev.auto_rounds === 1 ? "" : "s"}`)));
-  item.append(sys);
+  if (ev.auto_rounds && !chained) item.append(field("auto", el("span", `the Auto loop runs at most ${ev.auto_rounds} round${ev.auto_rounds === 1 ? "" : "s"}`)));
+  if (!chained) item.append(sys);
   const saved = ev.saved_lessons || [];
   if (ev.use_lessons === false) item.append(el("div", "Saved lessons: off for this run", "muted"));
   else if (saved.length) {
@@ -582,9 +602,46 @@ function resetChat() {
   stepEvents = {};
   stepPrompts = {};
   stepStarts = {};
-  feedbackImages = null;
+  roundFeedback = {};
+  lastImages = null;
+  chatRound = 1;
   $("chat").replaceChildren();
   $("chat_latest").hidden = true;
+}
+
+// "── Round 2 · continue ──": the first line of a round in the chat. A click folds the round to this line.
+function roundDivider(round, mode) {
+  const item = el("li", "", "round-div");
+  item.dataset.round = String(round);
+  const b = el("button", "", "round-btn");
+  b.type = "button";
+  b.setAttribute("aria-expanded", "true");
+  b.append(el("span", `── Round ${round}${modeText(mode)} ──`), el("span", "", "round-count"));
+  b.addEventListener("click", () => foldRound(round, b.getAttribute("aria-expanded") === "true"));
+  item.append(b);
+  return item;
+}
+
+function foldRound(round, fold) {
+  const items = $("chat").querySelectorAll(`.entry[data-round="${round}"]`);
+  for (const e of items) e.hidden = fold;
+  const div = $("chat").querySelector(`.round-div[data-round="${round}"]`);
+  if (!div) return;
+  div.classList.toggle("folded", fold);
+  div.querySelector("button").setAttribute("aria-expanded", String(!fold));
+  div.querySelector(".round-count").textContent = fold ? `${items.length} entr${items.length === 1 ? "y" : "ies"} · show` : "";
+}
+
+// A later round of the chain on the page: the older rounds fold to one line each, and a divider starts this one.
+function startRound(mode) {
+  const shown = new Set([...$("chat").querySelectorAll(".entry[data-round]")].map((e) => e.dataset.round));
+  for (const r of shown) {
+    if (!$("chat").querySelector(`.round-div[data-round="${r}"]`)) {  // the first round of the chat has no divider yet
+      $("chat").querySelector(`.entry[data-round="${r}"]`).before(roundDivider(Number(r), null));
+    }
+    foldRound(Number(r), true);
+  }
+  addEntry(roundDivider(chatRound, mode));
 }
 
 $("chat").addEventListener("scroll", () => {
@@ -984,6 +1041,8 @@ function stepUsage(ev) {
 // replay: true when the event comes from a saved run (see loadRun). It then changes no run state.
 function onEvent(ev, replay = false) {
   if (ev.kind === "run_start") {
+    // A re-plan of the plan on the page continues its chain: the same chat and the same totals.
+    const chained = ev.mode === "plan" && Boolean(ev.parent) && ev.parent === planRunId;
     runSystemPrompt = ev.system_prompt || "";
     runCameras = cameraLabels(ev.scene);
     if (!replay) {
@@ -1001,18 +1060,23 @@ function onEvent(ev, replay = false) {
     execError = false;
     if (!replay) autoLoop = Boolean(ev.auto_rounds);
     runCams = ev.cameras || null;
-    resetChat();
+    if (!chained) {
+      resetChat();
+      resetTotals();
+    }
+    chatRound = ev.mode === "plan" ? planRound : 1;
+    if (chained) startRound(planMode);
     // A round that continues sends no end images: its own images show the end of the last round.
-    feedbackImages = ev.parent && ev.end_step && planMode !== "continue" ? endImages(ev.parent, ev.end_step) : null;
+    roundFeedback[chatRound] = ev.parent && ev.end_step && planMode !== "continue" ? endImages(ev.parent, ev.end_step) : null;
     emptyMemo();
-    resetTotals();
-    onRunStart(ev);
+    onRunStart(ev, chained);
     if (ev.mode === "plan") setStatus(`planning${roundText(planRound)} · Claude is thinking`, "thinking");
   } else if (ev.kind === "observation") {
-    const old = stepImages[ev.step];
+    const key = stepKey(ev.step);
+    const old = stepImages[key];
     if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
-    stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };  // for the chat and the step details
-    if (Array.isArray(ev.tcp)) stepStarts[ev.step] = { xyz: ev.tcp, yaw: ev.yaw || 0 };
+    stepImages[key] = lastImages = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };  // for the chat and the step details
+    if (Array.isArray(ev.tcp)) stepStarts[key] = { xyz: ev.tcp, yaw: ev.yaw || 0 };
     setStatus(`step ${ev.step} · thinking`, "thinking");
   } else if (ev.kind === "ask") {
     onAsk(ev);
@@ -1020,11 +1084,11 @@ function onEvent(ev, replay = false) {
     setStatus(`step ${ev.step} · moving`, "moving");
     onReply(ev);
     if ($("first_plan").hidden) showFirstPlan(ev);  // the first reply of the run
-    setPath(ev.step, runCams, stepStarts[ev.step] || null, ev.action_data);
+    setPath(ev.step, runCams, stepStarts[stepKey(ev.step)] || null, ev.action_data);
   } else if (ev.kind === "action") {
     onPathAction(ev);
   } else if (ev.kind === "step") {
-    stepEvents[ev.step] = ev;
+    stepEvents[stepKey(ev.step)] = ev;
     addTotals(stepUsage(ev));
     onStepResults(ev);
     onPathStep(ev);
@@ -1033,7 +1097,7 @@ function onEvent(ev, replay = false) {
     for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
     showLessons();
   } else if (ev.kind === "plan") {
-    stepEvents[ev.step] = ev;
+    stepEvents[stepKey(ev.step)] = ev;
     addTotals(ev.usage);
     onPlan(ev);
     for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
@@ -1041,7 +1105,7 @@ function onEvent(ev, replay = false) {
     planView = ev.view || null;
     planDone = Boolean(ev.done);
     addEntry(planCheckEntry(ev.scores || {}, ev.keyframes || [], Boolean(ev.done)));
-    if (ev.view) showPlan(ev.view);
+    if (ev.view && (!replay || replayShowsPlan)) showPlan(ev.view);
   } else if (ev.kind === "exec_start") {
     const own = planView && ev.run_id === planRunId;  // the cameras and the start pose of the plan on the page
     runCameras = cameraLabels(ev.scene);
@@ -1057,6 +1121,7 @@ function onEvent(ev, replay = false) {
         planRunId = ev.run_id;
         planRound = ev.round || 1;
         planMode = ev.round_mode || null;
+        chatRound = planRound;
       }
       setStatus("running the plan", "moving");
       setViewMode("camera");  // the live frames; a saved run keeps the imagined video
@@ -1067,9 +1132,10 @@ function onEvent(ev, replay = false) {
     if (!replay && !autoLoop && !ev.verdict_next) setRunning(false);  // a verdict call can follow
     if (!replay && $("history_dialog").open) fillHistory();
     if (ev.front_png && ev.top_png) {
-      const old = stepImages[ev.step];  // a second Execute of the same plan has the same step
+      const key = stepKey(ev.step);
+      const old = stepImages[key];  // a second Execute of the same plan has the same step
       if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
-      stepImages[ev.step] = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };
+      stepImages[key] = lastImages = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };
     }
     setCamState("ended");
     execError = ev.status === "error";
@@ -1084,6 +1150,12 @@ function onEvent(ev, replay = false) {
     addTotals(ev.usage);
     addEntry(verdictEntry(ev));
     if (!autoLoop) setStatus(verdictText(ev), ev.done ? "success" : "");
+  } else if (ev.kind === "chat_lost") {
+    endThinking();
+    const item = entry("stopped", "⚠ New chat");
+    item.append(el("div", ev.message || "Claude lost the earlier chat."));
+    if (ev.error) item.append(el("div", ev.error, "muted"));
+    addEntry(item);
   } else if (ev.kind === "loop_end") {
     if (!replay) {
       autoLoop = false;
@@ -1094,11 +1166,11 @@ function onEvent(ev, replay = false) {
     const solved = ev.judge === "claude" ? `Claude says done in round ${ev.rounds_run}` : `solved in round ${ev.rounds_run}`;
     setStatus(ev.success ? `Auto loop · ${solved}` : `Auto loop ended · ${ev.reason}`, ev.success ? "success" : "");
   } else if (ev.kind === "bad_reply") {
-    stepEvents[ev.step] = ev;
+    stepEvents[stepKey(ev.step)] = ev;
     addTotals(ev.usage);
     errorEntry(ev, "✕ Bad reply: step skipped", ev.error);
   } else if (ev.kind === "llm_error") {
-    stepEvents[ev.step] = ev;
+    stepEvents[stepKey(ev.step)] = ev;
     setStatus(`model error: ${ev.message}`, "bad");
     addTotals(ev.usage);
     errorEntry(ev, `✕ Model error (${ev.error_kind})`, ev.message);
@@ -1318,7 +1390,7 @@ function onPlan(ev) {
   if (ev.warnings && ev.warnings.length) item.append(lines(ev.warnings, "mono"));
   if (ev.lessons && ev.lessons.length) item.append(field("lessons", lines(ev.lessons, "lesson-lines")));
   if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
-  addEntry(stepLink(item, ev.step));
+  addEntry(stepLink(item, stepKey(ev.step)));
 }
 
 // The predicted moves of a keyframe in short form, for example "bowl → (0.62, 0.10)".
@@ -1383,6 +1455,7 @@ function planCheckEntry(scores, keyframes = [], done = false) {
   if (!keyframes.length) return item;  // a done plan without keyframes has nothing to execute
   const exec = el("button", "▶ Execute plan", "btn exec-btn");
   exec.type = "button";
+  exec.dataset.run = planRunId || "";
   exec.disabled = running;
   exec.title = planMode === "continue"
     ? "Run the keyframes once in the physics, from where the last round ended. No model is called."
@@ -1442,6 +1515,7 @@ function endImages(runId, step) {
 function replanButton() {
   const b = el("button", "↻ Re-plan", "btn exec-btn replan-btn");
   b.type = "button";
+  b.dataset.run = planRunId || "";
   b.disabled = running || !planRunId;
   b.title = "Claude sees this plan and its result. With Continue on, it plans the rest from where the execution " +
     "ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
@@ -1614,11 +1688,15 @@ async function loadRun(run) {
   const seq = ++viewSeq;
   const when = runTime(run.started);
   setStatus(`loading run ${when}`, "thinking");
-  let events;
+  let runs;  // the event lists of the chain of the run, from round 1 to this run
   try {
-    const r = await fetch(`/api/runs/${encodeURIComponent(run.id)}`);
-    if (!r.ok) throw new Error(`error ${r.status}`);
-    events = await r.json();
+    const c = await fetch(`/api/runs/${encodeURIComponent(run.id)}/chain`);
+    const ids = c.ok ? await c.json() : [run.id];
+    runs = await Promise.all(ids.map(async (id) => {
+      const r = await fetch(`/api/runs/${encodeURIComponent(id)}`);
+      if (!r.ok) throw new Error(`error ${r.status}`);
+      return r.json();
+    }));
   } catch (err) {
     if (seq === viewSeq) setStatus(`could not load the run: ${err.message}`, "bad");
     return;
@@ -1633,23 +1711,26 @@ async function loadRun(run) {
   let skipped = 0;  // a corrupt event is left out, and the rest of the run still shows
   replaying = true;
   try {
-    for (const ev of events) {
-      try {
-        onEvent(ev, true);
-      } catch (err) {
-        skipped += 1;
+    runs.forEach((events, i) => {
+      replayShowsPlan = i === runs.length - 1;  // the imagined video of the run that was opened
+      for (const ev of events) {
+        try {
+          onEvent(ev, true);
+        } catch (err) {
+          skipped += 1;
+        }
       }
-    }
+    });
   } finally {
     replaying = false;
+    replayShowsPlan = true;
   }
   endThinking();  // an unfinished run can end on a question
   scrollChat(true);
-  const last = Math.max(...Object.keys(stepImages).map(Number));
-  if (stepImages[last]) {
+  if (lastImages) {
     clearPreviewError();
-    showImage("live", stepImages[last].front);
-    showImage("top", stepImages[last].top);
+    showImage("live", lastImages.front);
+    showImage("top", lastImages.top);
   }
   setCamState("run", `Run ${when}`);
   const ok = run.status === "success" || run.status === "done" || run.status === "planned";

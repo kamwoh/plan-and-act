@@ -741,6 +741,14 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
             raise HTTPException(404, "no such run")
         return events
 
+    @app.get("/api/runs/{run_id}/chain")
+    def run_chain(run_id: str) -> list[str]:
+        """The run ids of the chain of a run, from round 1 to this run: the page shows them in one chat."""
+        ids = history.chain(run_id)
+        if ids is None:
+            raise HTTPException(404, "no such run")
+        return ids
+
     @app.get("/api/runs/{run_id}/images/{name}")
     def run_image(run_id: str, name: str) -> FileResponse:
         path = history.image(run_id, name)

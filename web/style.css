@@ -181,6 +181,16 @@ textarea:focus, input[type="number"]:focus { border-color: var(--accent); box-sh
   border: 1px solid var(--line); border-left: 3px solid var(--line-2); border-radius: 8px; background: var(--panel-2);
   padding: 7px 10px; display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; min-width: 0;
 }
+.entry[hidden] { display: none; }
+/* The first line of a round in a chain. A click folds the entries of the round. */
+.round-div { display: flex; }
+.round-btn {
+  flex: 1; display: flex; justify-content: center; gap: 8px; background: none; border: 0; padding: 2px 0; cursor: pointer;
+  font: 11px var(--mono); color: var(--muted);
+}
+.round-btn:hover, .round-btn:focus-visible { color: var(--accent); outline: none; }
+.round-div.folded .round-btn { color: var(--faint); }
+.round-count { color: var(--faint); }
 .entry.link { cursor: pointer; transition: border-color 0.15s, background 0.15s; }
 .entry.link:hover, .entry.link:focus-visible { background: #1a202b; outline: none; border-color: #3a4558; }
 .entry-head { display: flex; align-items: center; gap: 8px; }

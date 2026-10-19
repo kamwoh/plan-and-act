@@ -413,7 +413,7 @@ def test_page_result_lines_wrap_and_open_the_step():
     assert "nowrap" not in rule and "ellipsis" not in rule
     js = _web("app.js")
     body = js[js.index("function onStepResults"):]
-    assert "stepLink(item, ev.step)" in body[:body.index("\n}\n")]
+    assert "stepLink(item, stepKey(ev.step))" in body[:body.index("\n}\n")]
 
 
 def test_only_the_status_pill_is_a_live_region():
