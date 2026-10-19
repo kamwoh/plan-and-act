@@ -562,8 +562,13 @@ function errorEntry(ev, title, text) {
   addEntry(stepLink(item, stepKey(ev.step)));
 }
 
+const SAME_CHAT = "the same chat: Claude remembers the rounds above";
+const NEW_CHAT_TEXT = "a new chat: Claude gets a summary of the last round";
+let roundChatText = null;  // the chat text of the Plan started entry of this round, while it says "the same chat"
+
 // chained: a later round of the chain in the chat. It continues the chat, so it has the same system prompt.
 function onRunStart(ev, chained = false) {
+  roundChatText = null;
   const item = entry("system", ev.mode === "plan" ? `Plan started${roundText(ev.round)}` : "Run started");
   const sys = el("details");
   sys.append(el("summary", "System prompt"), el("pre", ev.system_prompt || ""));
@@ -572,8 +577,14 @@ function onRunStart(ev, chained = false) {
     const how = ev.round_mode === "continue"
       ? "continue: the scene goes on from the end of that run, and Claude plans what is left"
       : "from start: the scene starts again, and Claude also sees the end images";
-    const chat = chained ? "the same chat: Claude remembers the rounds above" : "Claude sees that plan and its result";
-    item.append(field("re-plan", el("span", `of run ${ev.parent} · ${chat} · ${how}`)));
+    // A round without a session to resume starts a new chat. A chat_lost event can also say so later.
+    const same = chained && Boolean(ev.session_id);
+    const chat = same ? SAME_CHAT : chained ? NEW_CHAT_TEXT : "Claude sees that plan and its result";
+    const text = el("span", chat);
+    if (same) roundChatText = text;
+    const row = el("span");
+    row.append(document.createTextNode(`of run ${ev.parent} · `), text, document.createTextNode(` · ${how}`));
+    item.append(field("re-plan", row));
   }
   if (ev.auto_rounds && !chained) item.append(field("auto", el("span", `the Auto loop runs at most ${ev.auto_rounds} round${ev.auto_rounds === 1 ? "" : "s"}`)));
   if (!chained) item.append(sys);
@@ -1151,6 +1162,7 @@ function onEvent(ev, replay = false) {
     addEntry(verdictEntry(ev));
     if (!autoLoop) setStatus(verdictText(ev), ev.done ? "success" : "");
   } else if (ev.kind === "chat_lost") {
+    if (roundChatText) roundChatText.textContent = NEW_CHAT_TEXT;  // the round does not continue the chat after all
     const item = entry("stopped", "⚠ New chat");
     item.append(el("div", ev.message || "This round starts a new chat with a summary."));
     if (ev.error) item.append(el("div", ev.error, "muted"));

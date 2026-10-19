@@ -72,3 +72,24 @@ def test_the_chain_endpoint(tmp_path):
         assert c.get(f"/api/runs/{second}/chain").json() == [first, second]
         assert c.get(f"/api/runs/{first}/chain").json() == [first]
         assert c.get("/api/runs/20261018-999999/chain").status_code == 404
+
+
+def test_the_plan_started_entry_says_the_same_chat_only_when_the_round_continues_it():
+    js = _web("app.js")
+    start = _body(js, "function onRunStart(ev, chained = false)")
+    assert "const same = chained && Boolean(ev.session_id);" in start  # a branch has no session to resume
+    assert "same ? SAME_CHAT : chained ? NEW_CHAT_TEXT" in start
+    lost = handler()[handler().index('ev.kind === "chat_lost"'):handler().index('ev.kind === "loop_end"')]
+    assert "roundChatText.textContent = NEW_CHAT_TEXT" in lost  # a full or lost chat also starts a new one
+
+
+async def test_a_branch_round_starts_without_a_session_to_resume():
+    from armmind.agent.loop import BRANCH_CHAT, Agent, Chain
+    from armmind.llm.fake import FakeBackend
+    from tests.fakes import Recorder, direct
+    from tests.test_agent_plan import PlanEnv, good_plan
+    from tests.test_replan import feedback
+    rec = Recorder()
+    await Agent(FakeBackend([good_plan()]), run_id="r3", chain=Chain("r1", note=BRANCH_CHAT)).plan(
+        PlanEnv(), direct, rec, feedback=feedback())
+    assert rec.events[0][1]["session_id"] is None
