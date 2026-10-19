@@ -227,21 +227,44 @@ let camState = "preview";
 let runKey = 0;     // a new run, a replay or a preview adds 1
 let imageKey = -1;  // the runKey when the camera images last changed
 let camLabel = "";
+let outcome = null;  // the badge of the last execution, until the next Plan, Execute, Reset, scene or seed
 
 function setCamState(state, label = "") {
   camState = state;
   camLabel = label;
+  if (state === "preview" || state === "live") outcome = null;
   paintBadges();
 }
 
-// The badge says what the boxes show: the plan video, or the camera images.
+// The outcome of an execution for the camera badge and the Execution entry: { text, cls, title, edge }.
+// cls is "bad", "ok", "muted" or "plain". edge: a red edge on both camera frames.
+function outcomeBadge(ev) {
+  const s = ev.stopped;
+  if (ev.status === "stopped") {
+    return { text: s ? `■ STOPPED · action ${s.after}/${s.of}` : "■ STOPPED", cls: "bad", edge: true,
+             title: s ? `Stopped after action ${s.after} of ${s.of}: ${s.reason}.` : "The plan stopped." };
+  }
+  if (ev.status === "cancelled") return { text: "■ CANCELLED", cls: "muted", edge: false, title: "The person stopped the execution." };
+  if (ev.status === "success") return { text: "✓ SOLVED", cls: "ok", edge: false, title: "The auto-check says the task is solved." };
+  if (ev.status === "done") return { text: "DONE", cls: "plain", edge: false, title: "All actions ran. There is no auto-check." };
+  if (ev.status === "failed") return { text: "✗ NOT SOLVED", cls: "bad", edge: false, title: "All actions ran. The auto-check says not solved." };
+  return { text: "ERROR", cls: "bad", edge: false, title: ev.message || "The execution failed with an error." };
+}
+
+// The badge says what the boxes show: the plan video, or the camera images. The Camera mode shows the outcome.
 function paintBadges() {
   const plan = viewMode !== "camera";
-  const text = plan ? PLAN_BADGES[viewMode] : ({ live: "Live", ended: "Last frame", run: camLabel }[camState] || "Preview");
+  const out = !plan && outcome && (camState === "ended" || camState === "run") ? outcome : null;
+  const text = plan ? PLAN_BADGES[viewMode]
+    : out ? out.text : ({ live: "Live", ended: "Last frame", run: camLabel }[camState] || "Preview");
   for (const id of ["cam_front", "cam_top"]) {
     $(id).classList.toggle("live", !plan && camState === "live");
     $(id).classList.toggle("imagined", plan);
-    $(id).querySelector(".cam-badge").textContent = text;
+    $(id).classList.toggle("stop-edge", Boolean(out && out.edge));
+    const badge = $(id).querySelector(".cam-badge");
+    badge.textContent = text;
+    badge.className = `cam-badge${out ? ` out-${out.cls}` : ""}`;
+    badge.title = out ? out.title : "";
   }
 }
 
@@ -1067,6 +1090,7 @@ function stepUsage(ev) {
 // replay: true when the event comes from a saved run (see loadRun). It then changes no run state.
 function onEvent(ev, replay = false) {
   if (ev.kind === "run_start") {
+    outcome = null;
     // A re-plan of the plan on the page continues its chain: the same chat and the same totals.
     const chained = ev.mode === "plan" && Boolean(ev.parent) && ev.parent === planRunId;
     runSystemPrompt = ev.system_prompt || "";
@@ -1138,6 +1162,7 @@ function onEvent(ev, replay = false) {
     if (planImpossible) addEntry(impossibleEntry(planImpossible));
     if (ev.view && (!replay || replayShowsPlan)) showPlan(ev.view);
   } else if (ev.kind === "exec_start") {
+    outcome = null;
     const own = planView && ev.run_id === planRunId;  // the cameras and the start pose of the plan on the page
     runCameras = cameraLabels(ev.scene);
     if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
@@ -1168,6 +1193,7 @@ function onEvent(ev, replay = false) {
       if (old) for (const url of Object.values(old)) URL.revokeObjectURL(url);  // a server URL needs nothing
       stepImages[key] = lastImages = { front: imageSrc(ev.front_png), top: imageSrc(ev.top_png) };
     }
+    outcome = outcomeBadge(ev);
     setCamState("ended");
     execError = ev.status === "error";
     const endItem = onExecEnd(ev);
@@ -1525,6 +1551,10 @@ function execText(ev) {
 
 function onExecEnd(ev) {
   const item = entry(ev.success || ev.status === "done" ? "end ok" : "end", `■ Execution ended: ${ev.status}`);
+  const tag = outcomeBadge(ev);
+  const t = el("span", tag.text, `out-tag out-${tag.cls}`);
+  t.title = tag.title;
+  item.querySelector(".entry-head").append(t);
   item.append(el("div", ev.stopped ? `Stopped after action ${ev.stopped.after} of ${ev.stopped.of}: ${ev.stopped.reason}.`
     : ev.success ? "The task is solved." : execText(ev)));
   const frames = (Array.isArray(ev.frames) ? ev.frames : []).map((f) => ({ ...f, src: frameSrc(f) }));

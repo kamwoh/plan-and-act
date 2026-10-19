@@ -78,6 +78,13 @@ img[hidden] { display: none; }
 .cam-label { left: 10px; color: var(--fg); }
 .cam-badge { right: 10px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
 .cam.live .cam-badge { color: #ff7b7b; }
+/* The outcome of an execution on the camera badge and as a tag of the Execution entry */
+.out-bad { color: var(--bad) !important; border-color: rgba(240, 106, 106, 0.5) !important; }
+.out-ok { color: var(--ok) !important; border-color: rgba(60, 207, 134, 0.5) !important; }
+.out-muted { color: var(--muted) !important; }
+.out-plain { color: var(--fg) !important; }
+.cam.stop-edge .frame { border: 2px solid var(--bad); }
+.out-tag { margin-left: 8px; padding: 1px 6px; border-radius: 5px; border: 1px solid var(--line-2); font: 600 10px var(--mono); letter-spacing: 0.04em; }
 .cam.live .cam-badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #ff5252;
                                animation: pulse 1.2s ease-in-out infinite; }
 
