@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}(-[0-9]{1,4})?")  # the folder names that RunLog writes
-IMAGE_NAME = re.compile(r"step[0-9]{3}_(front|top)\.png")
+IMAGE_NAME = re.compile(r"step[0-9]{3}_(front|top|kf[0-9]{2}(_stop)?)\.png")  # kf: a frame of an execution
 STEP_KINDS = ("step", "bad_reply", "llm_error", "plan")  # one of these ends each step or the plan call
 MAX_RUNS = 200
 MAX_CHAIN = 30  # the rounds of a chain (MAX_ROUND of the server)
@@ -150,6 +150,9 @@ class RunStore:
             for key, value in ev.items():
                 if key.endswith("_png") and isinstance(value, str):
                     msg[key] = image_url(run_id, value) if valid_image_name(value) else None
+            if msg.get("kind") == "exec_end" and isinstance(ev.get("frames"), list):
+                msg["frames"] = [{**f, "url": image_url(run_id, f["file"]) if valid_image_name(f.get("file") or "")
+                                  else None} for f in ev["frames"] if isinstance(f, dict)]
             out.append(msg)
         return out
 

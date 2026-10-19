@@ -26,6 +26,7 @@ from armmind.agent.prompts import SYSTEM, Feedback, example_step_text
 from armmind.env import Env, SimThread, keyframe_actions
 from armmind.llm.protocol import LLMBackend
 from armmind.plan.formats import Keyframe
+from armmind.plan.frames import pick_frames
 from armmind.plan.scores import prediction
 from armmind.scenes import SCENES, Scene, Task
 from armmind.sim.assets import AssetsMissing
@@ -155,6 +156,19 @@ def _prediction(view: dict | None, out: dict) -> dict | None:
     except Exception:  # a broken view: the execution result stays, and the log has the cause
         logging.getLogger(__name__).exception("cannot score the prediction of the plan")
         return None
+
+
+def _save_frames(folder: Path, step: int, frames: list[dict], end_images: bool) -> list[dict]:
+    """Write the frames of an execution as image files of the run folder. Gives the frames for exec_end, in
+    order, with the file name in place of the image. "sent" marks the frames that go to Claude."""
+    sent = set(pick_frames(frames, end_images))
+    out = []
+    for i, f in enumerate(frames):
+        name = f"step{step:03d}_kf{int(f['keyframe']):02d}{'_stop' if f['at'] == 'stop' else ''}.png"
+        (folder / name).write_bytes(f["png"])
+        out.append({"keyframe": f["keyframe"], "of": f["of"], "note": f["note"], "at": f["at"], "file": name,
+                    "sent": i in sent})
+    return out
 
 
 def plan_round(start: dict) -> int:
@@ -365,8 +379,14 @@ class Runner:
             except Exception as e:  # noqa: BLE001  the result stays, a re-plan then has no end images
                 logging.getLogger(__name__).warning("no end images of the execution: %s: %s", type(e).__name__, e)
             judged = verdict_next and bool(images) and out["status"] not in ("cancelled", "error")
+            try:
+                frames = _save_frames(folder, step, out.get("frames") or [], bool(images))
+            except (OSError, KeyError, TypeError, ValueError) as e:  # the result stays, without the frames
+                logging.getLogger(__name__).warning("cannot save the frames: %s: %s", type(e).__name__, e)
+                frames = []
             emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"],
-                              "prediction": _prediction(view, out), "step": step, "verdict_next": judged, **images})
+                              "prediction": _prediction(view, out), "step": step, "verdict_next": judged,
+                              "frames": frames, **images})
 
         return stopper, before, body
 

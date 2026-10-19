@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import bisect
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -145,10 +146,12 @@ class MujocoEnv:
         """Run the keyframes once, with the stop rules of a step. should_stop() between actions cancels the
         rest. on_action(index, count) runs before each action. The auto-check runs at the end when the
         instruction is a task of the scene. "true_start" and "true_after" hold the true object poses before the
-        plan and after each keyframe that ran."""
+        plan and after each keyframe that ran. "frames" holds one front camera frame at the end of each keyframe
+        that ran, and one at a stop: {"keyframe" (from 1), "of", "note", "at" ("end" or "stop"), "png"}."""
         actions = keyframe_actions(keyframes, self.gripper_state())
-        ends = set(keyframe_ends(keyframes, self.gripper_state()))
-        lines, stopped, cancelled = [], None, False
+        last_actions = keyframe_ends(keyframes, self.gripper_state())
+        ends = set(last_actions)
+        lines, stopped, cancelled, frames = [], None, False, []
         true_start, true_after = self._true_poses(), []  # the poses after each keyframe that ran
         for i, action in enumerate(actions):
             if should_stop():
@@ -160,6 +163,10 @@ class MujocoEnv:
             lines.append(result.summary())
             if i in ends:
                 true_after.append(self._true_poses())
+            if i in ends or why is not None:
+                k = bisect.bisect_left(last_actions, i)  # the keyframe of action i
+                frames.append({"keyframe": k + 1, "of": len(keyframes), "note": keyframes[k].note,
+                               "at": "end" if why is None else "stop", "png": png(self.cams.with_grid("front"))})
             if why is not None:
                 stopped = {"after": i + 1, "of": len(actions), "reason": why}
                 lines += [f"{a.describe()}: skipped" for a in actions[i + 1:]]
@@ -168,7 +175,8 @@ class MujocoEnv:
         status = ("cancelled" if cancelled else "success" if success else "stopped" if stopped
                   else "failed" if self.has_check else "done")
         return {"actions": [a.describe() for a in actions], "results": lines, "stopped": stopped,
-                "success": bool(success), "status": status, "true_start": true_start, "true_after": true_after}
+                "success": bool(success), "status": status, "true_start": true_start, "true_after": true_after,
+                "frames": frames}
 
     def _true_poses(self) -> dict[str, dict]:
         """The true pose of each scene object now: {"xyz", "yaw"}."""

@@ -23,7 +23,15 @@ class ApiPlanEnv(PlanEnv):
     def execute_plan(self, keyframes, should_stop, on_action=None):
         self.executed = keyframes
         return {"actions": ["move_to(0.500, -0.100, 0.150)"], "results": ["move_to(...): reached"],
-                "stopped": None, "success": True, "status": "success"}
+                "stopped": None, "success": True, "status": "success", "frames": fake_frames(keyframes)}
+
+
+def fake_frames(keyframes, stop_in: int | None = None) -> list[dict]:
+    """One fake frame at the end of each keyframe, as MujocoEnv.execute_plan gives. With `stop_in`, the run
+    stops inside that keyframe (from 1): its frame is the stop frame, and no later keyframe has one."""
+    n = len(keyframes) if stop_in is None else stop_in
+    return [{"keyframe": k, "of": len(keyframes), "note": keyframes[k - 1].note,
+             "at": "stop" if k == stop_in else "end", "png": f"frame{k}".encode()} for k in range(1, n + 1)]
 
 
 ENVS: list = []
