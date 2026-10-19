@@ -168,3 +168,15 @@ def poses_at(track: dict, entities: list[dict], t: float,
 def poses_after(track: dict, entities: list[dict]) -> list[dict[str, Pose]]:
     """The predicted poses of the entities at the end of each keyframe."""
     return [poses_at(track, entities, kf["t_done"]) for kf in track["keyframes"]]
+
+
+def moved_after(track: dict, entities: list[dict]) -> list[dict[str, Pose]]:
+    """For each keyframe: the predicted pose at its end of each entity that the plan carries or moves up to
+    that keyframe, in the order of `entities`."""
+    names = {track["start"]["carrying"]} if track["start"].get("carrying") else set()
+    out = []
+    for kf, poses in zip(track["keyframes"], poses_after(track, entities), strict=True):
+        names |= {kf["carrying"]} if kf.get("carrying") else set()
+        names |= {m["name"] for m in kf.get("moves") or []}
+        out.append({n: p for n, p in poses.items() if n in names})
+    return out

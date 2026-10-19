@@ -17,6 +17,7 @@ from armmind.agent.prompts import (
     SYSTEM,
     VERDICT_SCHEMA,
     Feedback,
+    Frame,
     StepSummary,
     build_chain_verdict_text,
     build_plan_text,
@@ -246,14 +247,15 @@ class Agent:
         obs = await call(env.observe)
         emit("observation", {"step": 1, "front_png": obs.front_png, "top_png": obs.top_png})
         gripper = await call(env.gripper_state) if hasattr(env, "gripper_state") else None
-        images = (obs.front_png, obs.top_png, *(feedback.images if feedback else ()))
+        last = (*(f.png for f in feedback.frames), *feedback.images) if feedback else ()  # the frames, then the end
+        images = (obs.front_png, obs.top_png, *last)
         summary = Message("user", build_plan_text(env.scene_text, env.instruction, obs, env.image_text,
                                                   self.saved_lessons, feedback, gripper), images)
         short = None
         if feedback is not None:  # a re-plan from the start leaves out the start images when the chat has them
             seen = feedback.mode == "start" and self.chain.start
             short = Message("user", build_replan_text(obs, env.image_text, feedback, gripper, seen),
-                            feedback.images if seen else images)
+                            last if seen else images)
         attempts: list[dict] = []
         reply, error, text = await self._chat(
             short, summary, attempts, lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), emit,
@@ -277,17 +279,19 @@ class Agent:
         return "planned"
 
     async def verdict(self, scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],
-                      images: tuple[bytes, ...], image_text: str | None = None, emit: Emit | None = None
-                      ) -> tuple[Verdict | None, dict]:
+                      images: tuple[bytes, ...], image_text: str | None = None, emit: Emit | None = None,
+                      frames: tuple[Frame, ...] = ()) -> tuple[Verdict | None, dict]:
         """One short call after an execution: is the task complete in the end images? It goes into the chat of
-        self.chain, which has the task and the plan. A new chat gets them in the message. Gives the verdict,
-        or None after an error, and the event fields: the prompt, the attempts, the usage, an error text and
-        the saved chat."""
-        summary = Message("user", build_verdict_text(scene, instruction, objects, keyframes, image_text), images)
+        self.chain, which has the task and the plan. A new chat gets them in the message. The frames of the run
+        go before the end images. Gives the verdict, or None after an error, and the event fields: the prompt,
+        the attempts, the usage, an error text and the saved chat."""
+        images = (*(f.png for f in frames), *images)
+        summary = Message("user", build_verdict_text(scene, instruction, objects, keyframes, image_text, frames),
+                          images)
         attempts: list[dict] = []
-        reply, error, text = await self._chat(Message("user", build_chain_verdict_text(image_text), images), summary,
-                                              attempts, lambda m, i: None, emit or (lambda k, d: None),
-                                              VERDICT_SCHEMA, parse_verdict)
+        short = Message("user", build_chain_verdict_text(image_text, frames), images)
+        reply, error, text = await self._chat(short, summary, attempts, lambda m, i: None,
+                                              emit or (lambda k, d: None), VERDICT_SCHEMA, parse_verdict)
         detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts),
                   "error": error.message if reply is None and error else None, **self._chat_fields()}
         return reply, detail

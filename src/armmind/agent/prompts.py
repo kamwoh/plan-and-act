@@ -86,7 +86,8 @@ and for any other object that you expect to move. Each item is {{"object": <name
 "yaw": <degrees>}}: the pose of the object at the end of the keyframe. Do not list the held object. \
 Write a "summary" of the plan in 1 or 2 sentences.
 The code scores your belief against the true scene and checks each keyframe. It can then run \
-the keyframes once in the physics. You get no images while they run.
+the keyframes once in the physics. You get no images while they run. \
+After the run, a message can show camera frames from the run, next to the poses that you imagined.
 A re-plan message has the result of the execution of your last plan. Your last plan is earlier in this chat. \
 When a re-plan message starts a new chat, it also has your last plan. \
 Compare your last plan with the images and find what went wrong.
@@ -257,6 +258,42 @@ def example_step_text() -> str:
 
 
 @dataclass(frozen=True)
+class Frame:
+    """A front camera frame of an execution, with the poses that Claude imagined at that point of its plan.
+    `imagined` comes from Claude's own plan, never from the true scene. None: the plan has no track."""
+    keyframe: int  # from 1
+    of: int  # the keyframes of the plan
+    note: str  # the note of the keyframe in Claude's plan
+    at: str  # "end": the end of the keyframe. "stop": the execution stopped inside it
+    imagined: tuple[tuple[str, tuple[float, float, float], float | None], ...] | None  # name, xyz, yaw or None
+    png: bytes
+
+
+def frame_label(f: Frame, camera: str) -> str:
+    """For example: 'Front camera after keyframe 2 of 5. Note: "above the cube". You imagined red cube at ...'"""
+    where = (f"at the stop in keyframe {f.keyframe} of {f.of}" if f.at == "stop"
+             else f"after keyframe {f.keyframe} of {f.of}")
+    parts = [f"{camera.capitalize()} camera {where}.", f"Note: {json.dumps(f.note, ensure_ascii=False)}."]
+    if f.imagined is not None and not f.imagined:
+        parts.append("No object moves in your plan up to here.")
+    for name, xyz, yaw in f.imagined or ():
+        parts.append(f"You imagined {name} at {fmt(xyz)}" + (f", yaw {round(yaw)}°." if yaw is not None else "."))
+    return " ".join(parts)
+
+
+def _frame_lines(frames: tuple[Frame, ...], first: int, camera: str) -> list[str]:
+    """The labels of the frames of an execution. The frames are the images from number `first` on."""
+    if not frames:
+        return []
+    last = first + len(frames) - 1
+    head = f"Image {first} shows" if first == last else f"Images {first} to {last} show"
+    return [f"{head} the {camera} camera during the execution, in order. Each label has the poses that you "
+            + "imagined at that point of your plan.",
+            *(f"- Image {first + i}: {frame_label(f, camera)}" for i, f in enumerate(frames)),
+            "Compare each frame with the poses that you imagined, and name the first keyframe where they differ."]
+
+
+@dataclass(frozen=True)
 class Feedback:
     """What the last plan did in the physics, for a re-plan. It holds only what the model wrote, what the arm
     reported and the end images. It never holds the true poses or the scores of the page."""
@@ -274,6 +311,7 @@ class Feedback:
     ran: int = 0  # the actions that started before a cancel
     total: int = 0  # the actions of the whole plan
     mode: str = "start"  # "start": the scene is back at its start. "continue": it goes on from the end state
+    frames: tuple[Frame, ...] = ()  # the frames for Claude. They go after the images now and before `images`
 
 
 def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, start_seen: bool = False) -> list[str]:
@@ -299,18 +337,21 @@ def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, star
                      f"{f.stopped['reason']}.")
     else:
         lines.append("All actions ran.")
+    first = 1 if start_seen and f.mode != "continue" else 3  # the number of the first frame
+    lines += _frame_lines(f.frames, first, first_camera)
+    end = first + len(f.frames)  # the number of the first end image
     if f.mode == "continue":
         lines.append("The scene did not reset. Images 1 and 2 show the scene now, at the end of the last "
                      "execution. Plan from here, and do only what is left of the task.")
     elif start_seen:
         lines.append("The scene is now back at its start, the same as the start images earlier in this chat.")
-        lines.append(f"Image 1: the {first_camera} camera at the end of the last execution. "
-                     "Image 2: the top camera at the end." if len(f.images) == 2
+        lines.append(f"Image {end}: the {first_camera} camera at the end of the last execution. "
+                     f"Image {end + 1}: the top camera at the end." if len(f.images) == 2
                      else "There are no images of the end of the last execution.")
     elif len(f.images) == 2:
-        lines.append(f"Images 3 and 4 show the end of the last execution. The scene is now back at its start, "
-                     f"as in images 1 and 2. Image 3: the {first_camera} camera at the end of the last execution. "
-                     "Image 4: the top camera at the end.")
+        lines.append(f"Images {end} and {end + 1} show the end of the last execution. The scene is now back at its "
+                     f"start, as in images 1 and 2. Image {end}: the {first_camera} camera at the end of the last "
+                     f"execution. Image {end + 1}: the top camera at the end.")
     else:
         lines.append("There are no images of the end of the last execution.")
     return lines
@@ -359,19 +400,28 @@ def build_replan_text(obs: Observation, image_text: str | None, feedback: Feedba
     return "\n".join([*lines, *_gripper_lines(obs, feedback, gripper), *([] if seen else [images])])
 
 
-def build_chain_verdict_text(image_text: str | None = None) -> str:
+def _verdict_image_lines(image_text: str | None, frames: tuple[Frame, ...]) -> list[str]:
+    """The frames of the run, then the end images. Without frames, the end images are images 1 and 2."""
+    images = image_text or IMAGE_TEXT
+    if not frames:
+        return ["The images show the scene after the run. " + images]
+    camera = "side" if "side camera" in images else "front"
+    end = len(frames) + 1
+    return [*_frame_lines(frames, 1, camera),
+            f"Images {end} and {end + 1} show the scene after the run: the {camera} camera, then the top camera."]
+
+
+def build_chain_verdict_text(image_text: str | None = None, frames: tuple[Frame, ...] = ()) -> str:
     """The verdict message in the chat of its chain. The chat has the task and the plan that ran."""
     return "\n".join(["Your last plan ran once in the physics. Give your verdict now, not a plan.",
-                      "The images show the scene after the run. " + (image_text or IMAGE_TEXT),
-                      "Is the task complete?"])
+                      *_verdict_image_lines(image_text, frames), "Is the task complete?"])
 
 
 def build_verdict_text(scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],
-                       image_text: str | None = None) -> str:
-    """The message of the verdict call after an execution: the task, the plan that ran and the end images.
-    It has only what the model wrote and the images: never the true poses, the scores or the auto-check."""
+                       image_text: str | None = None, frames: tuple[Frame, ...] = ()) -> str:
+    """The message of the verdict call after an execution: the task, the plan that ran, the frames and the end
+    images. It has only what the model wrote and the images: never the true poses, the scores or the auto-check."""
     plan = json.dumps({"objects": list(objects), "keyframes": list(keyframes)}, separators=(",", ":"),
                       ensure_ascii=False)
     return "\n".join([f"Scene: {scene}", f"Task: {instruction}", f"The plan that ran: {plan}",
-                      "The images show the scene after the run. " + (image_text or IMAGE_TEXT),
-                      "Is the task complete?"])
+                      *_verdict_image_lines(image_text, frames), "Is the task complete?"])

@@ -22,12 +22,13 @@ from pydantic import BaseModel, Field, field_validator
 
 from armmind.agent.loop import BRANCH_CHAT, Agent, AgentConfig, Chain
 from armmind.agent.parse import Verdict
-from armmind.agent.prompts import SYSTEM, Feedback, example_step_text
+from armmind.agent.prompts import SYSTEM, Feedback, Frame, example_step_text
 from armmind.env import Env, SimThread, keyframe_actions
 from armmind.llm.protocol import LLMBackend
 from armmind.plan.formats import Keyframe
 from armmind.plan.frames import pick_frames
 from armmind.plan.scores import prediction
+from armmind.plan.track import moved_after, wrap_deg
 from armmind.scenes import SCENES, Scene, Task
 from armmind.sim.assets import AssetsMissing
 from armmind.sim.meshes import warm
@@ -190,6 +191,40 @@ def _reply_format(plan: dict) -> tuple[tuple[dict, ...], tuple[dict, ...]]:
     return objects, tuple(keyframes)
 
 
+def _imagined(view: dict | None) -> list[tuple] | None:
+    """For each keyframe of a plan view: (name, xyz, yaw) of each entity that Claude's plan carries or moves up
+    to its end, from Claude's own belief and keyframes. The yaw is None for a round entity. None: no track."""
+    try:
+        believed = list(view["believed"])
+        shapes = {e["name"]: e.get("shape") for e in believed}
+        return [tuple((n, tuple(round(float(v), 3) for v in p["xyz"]),
+                       None if shapes.get(n) in ("cylinder", "sphere") else wrap_deg(float(p["yaw"])))
+                      for n, p in poses.items()) for poses in moved_after(view["track"], believed)]
+    except (KeyError, TypeError, ValueError, AttributeError):  # a view without a track, or an old one
+        return None
+
+
+def _sent_frames(found: dict, history: RunStore) -> tuple[Frame, ...]:
+    """The frames of the last execution of a saved plan that went to Claude, in order, with the poses that
+    Claude imagined at each. A frame without its image file is left out."""
+    end = (found["execution"] or {}).get("end") or {}
+    listed = [f for f in end.get("frames") or [] if isinstance(f, dict) and f.get("sent")]
+    imagined = _imagined(found["plan"].get("view")) if listed else None
+    out = []
+    for f in listed:
+        path = history.image(found["folder"].name, f.get("file") if isinstance(f.get("file"), str) else "")
+        try:
+            k = int(f["keyframe"])
+            png = path.read_bytes() if path is not None else None
+        except (KeyError, TypeError, ValueError, OSError):
+            continue
+        if png is not None:
+            poses = imagined[k - 1] if imagined is not None and 1 <= k <= len(imagined) else None
+            out.append(Frame(k, int(f.get("of") or k), str(f.get("note") or ""), "stop" if f.get("at") == "stop"
+                             else "end", poses, png))
+    return tuple(out)
+
+
 def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback | None:
     """The feedback of the last execution of a saved plan, or None when it has not run to its end. It reads
     only the model's own plan, the status, the stop and the end images: never the scores or the true poses.
@@ -218,7 +253,7 @@ def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback |
     return Feedback(objects, keyframes, str(end.get("status") or "error"), bool(ex["start"].get("check")),
                     bool(end.get("success")), stopped, stopped_action, images, run_id,
                     plan_round(found["start"]) + 1, end.get("step") if images else None,
-                    ran=ex["actions"], total=total, mode=mode)
+                    ran=ex["actions"], total=total, mode=mode, frames=_sent_frames(found, history))
 
 
 def chain_of(found: dict) -> Chain:
@@ -450,7 +485,7 @@ class Runner:
             else:
                 emit("verdict_start", {"session_id": None})  # a server that dies in the call leaves this mark
                 verdict, detail = await agent.verdict(scene.describe(), instruction, objects, keyframes, images,
-                                                      scene.image_text, emit)
+                                                      scene.image_text, emit, _sent_frames(found, self.history))
         except Exception as e:  # noqa: BLE001  the execution result stays, the verdict says why it is missing
             detail = {"error": f"{type(e).__name__}: {e}"}
         try:
