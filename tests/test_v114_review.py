@@ -299,3 +299,16 @@ async def test_a_chain_keeps_its_temp_folder_until_its_next_chat(cli, tmp_path):
     await again.close()
     assert not first.exists() and Path(calls(tmp_path)[-1]["tmpdir"]).is_dir()
     assert Path(calls(tmp_path)[2]["tmpdir"]).is_dir()  # the other chain keeps its folder
+
+
+def test_a_branch_round_on_the_server_has_no_session_to_resume(tmp_path):
+    """The page says "the same chat" only for a run_start with a session id: a branch must not have one."""
+    backend = FakeBackend([*three_rounds(), plan_body("branch")])
+    with app(tmp_path, backend) as c:
+        ids = chain_of_3(c)
+        branch = replan(c, ids[0])
+    start = run_events(tmp_path, branch)[0]
+    assert start["parent"] == ids[0] and start["chain"] == ids[0] and start["session_id"] is None
+    assert run_events(tmp_path, ids[1])[0]["session_id"] == "fake-session-1"  # a round that continues has one
+    js = _web("app.js")
+    assert "const same = chained && Boolean(ev.session_id);" in _body(js, "function onRunStart(ev, chained = false)")
