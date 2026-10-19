@@ -85,7 +85,7 @@ def test_replan_makes_a_new_round_with_the_feedback(tmp_path):
     msg = backend.sent[-1][0]
     assert msg.images == (b"front", b"top", b"front", b"top")
     text = msg.text
-    assert "Your last plan" in text and '"note":"up"' in text
+    assert "Your last plan:" not in text and '"note": "up"' in backend.seen[-1][1].text  # the plan is in the chat
     assert "stopped" in text and "action 2 of 2 (close)" in text and "the gripper closed on nothing" in text
     for secret in ("0.587", "0.5871", "-0.123", "0.0213", "33.3", "7.31", "7.3", "0.13", "4.4", "missed by",
                    "blue_cube", "prediction", "perception", "debug"):

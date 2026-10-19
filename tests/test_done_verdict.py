@@ -186,7 +186,7 @@ def test_the_demo_free_text_loop_ends_on_claudes_done_after_2_rounds(tmp_path):
 
 # ---- The verdict call after a manual Execute ----
 def test_a_manual_execute_ends_with_a_verdict_call_without_true_values(tmp_path):
-    from armmind.agent.prompts import VERDICT_SCHEMA, VERDICT_SYSTEM
+    from armmind.agent.prompts import CHAIN_SYSTEM, VERDICT_SCHEMA, build_chain_verdict_text
     from tests.test_replan_api import planned_and_executed, run_events, true_factory
     backend = FakeBackend([good_plan(), verdict(False, "The gripper is empty.")])
     with TestClient(create_app(backend, true_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
@@ -195,10 +195,12 @@ def test_a_manual_execute_ends_with_a_verdict_call_without_true_values(tmp_path)
     assert [e["kind"] for e in evs][-2:] == ["exec_end", "verdict"] and evs[-2]["verdict_next"] is True
     v = evs[-1]
     assert (v["done"], v["reason"], v["check"], v["round"], v["step"]) == (False, "The gripper is empty.", False, 1, 2)
-    assert backend.systems[-1] == VERDICT_SYSTEM
+    assert backend.systems[-1] == CHAIN_SYSTEM  # the verdict goes into the chat of the plan
     msg, schema = backend.sent[-1]
     assert schema == VERDICT_SCHEMA and msg.images == (b"front", b"top")  # the end images
-    assert PICK in msg.text and '"note":"up"' in msg.text and v["prompt"] == msg.text
+    assert msg.text == build_chain_verdict_text() and v["prompt"] == msg.text
+    chat = "".join(m.text for m in backend.seen[-1])
+    assert PICK in chat and '"note": "up"' in chat  # the chat has the task and the plan
     for secret in ("0.587", "0.5871", "-0.123", "0.0213", "33.3", "7.31", "7.3", "0.13", "4.4", "missed by",
                    "blue_cube", "prediction", "perception", "debug", "auto-check", "stopped", "solved"):
         assert secret not in msg.text, secret
@@ -262,7 +264,7 @@ class PlanThenHang:
         from tests.fakes import HangingBackend
         self.plan, self.hang, self.calls = FakeBackend([good_plan()]), HangingBackend(), 0
 
-    async def open(self, system):
+    async def open(self, system, chain=None, resume=None):
         self.calls += 1
         return await (self.plan if self.calls == 1 else self.hang).open(system)
 

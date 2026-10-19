@@ -2,7 +2,7 @@
 import asyncio
 
 from armmind.agent.loop import Agent
-from armmind.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM
+from armmind.agent.prompts import CHAIN_SYSTEM, PLAN_REPLY_SCHEMA
 from armmind.llm.fake import FakeBackend
 from armmind.llm.protocol import Final, LLMError, Usage
 from armmind.store.lessons import LessonStore
@@ -48,9 +48,9 @@ async def test_plan_events_and_message(tmp_path):
     assert rec.kinds() == ["run_start", "observation", "ask", "plan", "run_end"]
     start, plan_ev = rec.events[0][1], dict(rec.events)["plan"]
     assert start["mode"] == "plan" and start["seed"] == 4 and start["run_id"] == "20261017-000000"
-    assert start["system_prompt"] == PLAN_SYSTEM and start["saved_lessons"] == ["Closing 2 cm up held."]
+    assert start["system_prompt"] == CHAIN_SYSTEM and start["saved_lessons"] == ["Closing 2 cm up held."]
     msg, schema = backend.sent[0]
-    assert schema == PLAN_REPLY_SCHEMA and backend.systems == [PLAN_SYSTEM]
+    assert schema == PLAN_REPLY_SCHEMA and backend.systems == [CHAIN_SYSTEM]
     assert msg.images == (b"front", b"top")
     for part in (env.scene_text, env.instruction, "Closing 2 cm up held.", "Image 1: front camera"):
         assert part in msg.text

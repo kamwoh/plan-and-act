@@ -10,6 +10,7 @@ RUN_ID = re.compile(r"[0-9]{8}-[0-9]{6}(-[0-9]{1,4})?")  # the folder names that
 IMAGE_NAME = re.compile(r"step[0-9]{3}_(front|top)\.png")
 STEP_KINDS = ("step", "bad_reply", "llm_error", "plan")  # one of these ends each step or the plan call
 MAX_RUNS = 200
+MAX_CHAIN = 30  # the rounds of a chain (MAX_ROUND of the server)
 
 
 def valid_run_id(name: str) -> bool:
@@ -153,15 +154,18 @@ class RunStore:
 
     def plan(self, run_id: str) -> dict | None:
         """The run_start and the plan event of a finished plan run, or None. "execution" holds the events of
-        the last execution ({"start", "step", "end", "actions"}), or None when the plan has not run yet."""
+        the last execution ({"start", "step", "end", "actions"}), or None when the plan has not run yet.
+        "session" is the last saved chat of the chain in this run: of the plan, or of a later verdict."""
         folder = self.folder(run_id)
         if folder is None:
             return None
-        start = plan = last = None
+        start = plan = last = session = None
         executions = 0
         try:
             for ev in read_events(folder / "events.jsonl"):
                 kind = ev.get("kind")
+                if kind in ("run_start", "plan", "verdict") and isinstance(ev.get("session_id"), str):
+                    session = ev["session_id"]
                 if kind == "run_start":
                     start = ev
                 elif kind == "plan":
@@ -178,4 +182,25 @@ class RunStore:
         if not (start and start.get("mode") == "plan" and plan and isinstance(plan.get("view"), dict)
                 and isinstance(plan.get("keyframes"), list)):
             return None
-        return {"start": start, "plan": plan, "folder": folder, "executions": executions, "execution": last}
+        return {"start": start, "plan": plan, "folder": folder, "executions": executions, "execution": last,
+                "session": session}
+
+    def chain(self, run_id: str) -> list[str] | None:
+        """The run ids of the chain of a run, from round 1 to this run, by the parent links. None for no run."""
+        if self.folder(run_id) is None:
+            return None
+        ids = [run_id]
+        while len(ids) < MAX_CHAIN:
+            try:
+                events = read_events(self.folder(ids[-1]) / "events.jsonl")
+                try:
+                    start = next(events, {})
+                finally:
+                    events.close()  # the file closes now, not at garbage collection
+            except OSError:
+                break
+            parent = start.get("parent") if start.get("kind") == "run_start" else None
+            if not isinstance(parent, str) or parent in ids or self.folder(parent) is None:
+                break
+            ids.append(parent)
+        return ids[::-1]

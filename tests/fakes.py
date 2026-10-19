@@ -78,7 +78,7 @@ class HangingConversation:
 class HangingBackend:
     name = "hanging"
 
-    async def open(self, system):
+    async def open(self, system, chain=None, resume=None):
         self.conv = HangingConversation()
         return self.conv
 
@@ -91,7 +91,7 @@ class DeafConversation(HangingConversation):
 class DeafBackend:
     name = "deaf"
 
-    async def open(self, system):
+    async def open(self, system, chain=None, resume=None):
         self.conv = DeafConversation()
         return self.conv
 

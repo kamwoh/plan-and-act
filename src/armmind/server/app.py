@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from armmind.agent.loop import Agent, AgentConfig
+from armmind.agent.loop import Agent, AgentConfig, Chain
 from armmind.agent.parse import Verdict
 from armmind.agent.prompts import SYSTEM, Feedback, example_step_text
 from armmind.env import Env, SimThread, keyframe_actions
@@ -33,7 +33,7 @@ from armmind.sim.meshes import warm
 from armmind.sim.state import END_STATE, START_STATE, state_problem
 from armmind.store.lessons import LessonChanged, LessonStore
 from armmind.store.runlog import RunLog
-from armmind.store.runs import RunStore
+from armmind.store.runs import RunStore, valid_run_id
 
 WEB_DIR = Path(__file__).resolve().parents[3] / "web"
 # (scene, task, instruction, seed, show_positions, on_frame). A round that continues adds start=<state file>.
@@ -207,6 +207,14 @@ def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback |
                     ran=ex["actions"], total=total, mode=mode)
 
 
+def chain_of(found: dict) -> Chain:
+    """The chat of the chain of a saved plan. A plan from before v1.14 has no chain: it starts one."""
+    chain = found["start"].get("chain")
+    if not (isinstance(chain, str) and valid_run_id(chain)):
+        chain = found["folder"].name
+    return Chain(chain, found.get("session"))
+
+
 def start_state(found: dict) -> Path | None:
     """The state file that a saved plan starts from: its START_STATE in a round that continues, else None."""
     return found["folder"] / START_STATE if found["start"].get("round_mode") == "continue" else None
@@ -278,14 +286,17 @@ class Runner:
                                                     agent.run))
         return log.dir
 
-    def _plan_part(self, log: RunLog, req: PlanRequest, feedback: Feedback | None, auto_rounds: int | None):
-        """The agent and the session body of one plan round."""
-        agent = Agent(self.backend, store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name)
+    def _plan_part(self, log: RunLog, req: PlanRequest, feedback: Feedback | None, auto_rounds: int | None,
+                   chain: Chain | None = None):
+        """The agent and the session body of one plan round. A re-plan continues the chat of `chain`."""
+        agent = Agent(self.backend, store=self.lessons, use_lessons=req.use_lessons, run_id=log.dir.name,
+                      chain=chain)
         return agent, lambda env, call, emit: agent.plan(env, call, emit, seed=req.seed, feedback=feedback,
                                                          auto_rounds=auto_rounds)
 
     async def start_plan(self, req: PlanRequest, scene: Scene, task: Task | None,
-                         feedback: Feedback | None = None, state: Path | None = None) -> Path:
+                         feedback: Feedback | None = None, state: Path | None = None,
+                         chain: Chain | None = None) -> Path:
         """A run of kind "plan": one model call, no motion. The env never gets the true positions.
         With feedback, it is a re-plan of the run feedback.parent. With req.auto, it starts the Auto loop.
         With `state`, the end state of the parent, the round continues: the state file goes into the new run
@@ -297,7 +308,7 @@ class Runner:
             self._start_loop(log, req, scene, task)
             return log.dir
         start = _copy_state(state, log.dir) if state is not None else None
-        agent, body = self._plan_part(log, req, feedback, None)
+        agent, body = self._plan_part(log, req, feedback, None, chain)
         self._launch(log, agent.stop, self._session(log, scene, task, req.instruction, req.seed, False, body,
                                                     start=start))
         return log.dir
@@ -380,11 +391,13 @@ class Runner:
 
     async def _judge(self, folder: Path, scene: Scene, instruction: str, part: list[Callable[[], Awaitable[None]]],
                      should_stop: Callable[[], bool]) -> Verdict | None:
-        """The verdict call after the last execution of a plan. It sends the end images, the task and the plan:
-        no true values. It always writes a verdict event to the run log, with "error" when no verdict came:
-        a stop, an execution without an end, a model error or any other error. Gives the verdict, or None.
-        part[0] becomes its stopper."""
+        """The verdict call after the last execution of a plan, in the chat of its chain. It sends the end
+        images: no true values. A new chat also gets the task and the plan. It always writes a verdict event to
+        the run log, with "error" when no verdict came: a stop, an execution without an end, a model error or
+        any other error. Gives the verdict, or None. part[0] becomes its stopper."""
         verdict, detail, fields = None, {}, {"check": None, "round": None, "step": None}
+        log = RunLog.append_to(folder)
+        emit = self._emitter(log)
         try:
             found = self.history.plan(folder.name)
             ex = found["execution"] if found else None
@@ -401,19 +414,18 @@ class Runner:
                 raise LookupError("the execution has no end images")
             images = tuple(p.read_bytes() for p in paths)
             objects, keyframes = _reply_format(found["plan"])
-            agent = Agent(self.backend, run_id=folder.name)
+            agent = Agent(self.backend, run_id=folder.name, chain=chain_of(found))
             part[:] = [agent.stop]
             if should_stop():
                 detail = {"error": "stopped"}
             else:
                 verdict, detail = await agent.verdict(scene.describe(), instruction, objects, keyframes, images,
-                                                      scene.image_text)
+                                                      scene.image_text, emit)
         except Exception as e:  # noqa: BLE001  the execution result stays, the verdict says why it is missing
             detail = {"error": f"{type(e).__name__}: {e}"}
-        log = RunLog.append_to(folder)
         try:
-            self._emitter(log)("verdict", {"done": verdict.done if verdict else None,
-                                           "reason": verdict.reason if verdict else "", **fields, **detail})
+            emit("verdict", {"done": verdict.done if verdict else None,
+                             "reason": verdict.reason if verdict else "", **fields, **detail})
         finally:
             log.close()
         return verdict
@@ -436,6 +448,7 @@ class Runner:
         async def loop() -> None:
             feedback, rounds_run, success, reason, folder = None, 0, False, "", log.dir
             start = None  # the state file of a round that continues
+            chain = None  # the chat of the loop: round 1 starts it, each later round continues it
             verdicts: list[dict] = []  # for each judged execution: {"round", "claude", "reason", "check"}
             pending: dict | None = None  # the last execution, until the next re-plan judges it
 
@@ -461,7 +474,7 @@ class Runner:
                     continues = feedback is not None and feedback.mode == "continue"
                     start = _copy_state(folder / END_STATE, plan_log.dir) if continues else None
                     folder = self.run_dir = plan_log.dir
-                    agent, body = self._plan_part(plan_log, req, feedback, req.rounds)
+                    agent, body = self._plan_part(plan_log, req, feedback, req.rounds, chain)
                     part[:] = [agent.stop]
                     status = await self._session(plan_log, scene, task, req.instruction, req.seed, False, body,
                                                  start=start)
@@ -469,6 +482,8 @@ class Runner:
                         reason = "stopped"
                         break
                     found = self.history.plan(folder.name)
+                    if found:
+                        chain = chain_of(found)
                     if pending is not None and status == "planned" and found:
                         verdicts.append({k: pending[k] for k in ("round", "check")} | {
                             "claude": bool(found["plan"].get("done")), "reason": found["plan"].get("summary") or ""})
@@ -698,7 +713,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
             state = found["folder"] / END_STATE
             if problem := state_problem(state, scene, req.seed):
                 raise HTTPException(409, f"cannot continue from the last execution: {problem}. Re-plan from the start")
-        folder = await runner.start_plan(req, scene, task, feedback, state)
+        folder = await runner.start_plan(req, scene, task, feedback, state, chain_of(found))
         return {"run_dir": str(folder), "run_id": folder.name}
 
     @app.post("/api/plan/{rest:path}")

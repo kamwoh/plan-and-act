@@ -11,15 +11,16 @@ from dataclasses import dataclass
 
 from armmind.agent.parse import PlanReply, Reply, ReplyError, Verdict, parse_plan, parse_reply, parse_verdict
 from armmind.agent.prompts import (
+    CHAIN_SYSTEM,
     PLAN_REPLY_SCHEMA,
-    PLAN_SYSTEM,
     REPLY_SCHEMA,
     SYSTEM,
     VERDICT_SCHEMA,
-    VERDICT_SYSTEM,
     Feedback,
     StepSummary,
+    build_chain_verdict_text,
     build_plan_text,
+    build_replan_text,
     build_user_text,
     build_verdict_text,
 )
@@ -30,6 +31,16 @@ from armmind.store.lessons import LessonStore
 
 Emit = Callable[[str, dict], None]
 Call = Callable[..., Awaitable]
+
+
+@dataclass(frozen=True)
+class Chain:
+    """The chat of a chain: the run id of its round 1, and the saved chat to continue, or None."""
+    id: str
+    session: str | None = None
+
+
+CHAT_LOST = "Claude lost the earlier chat. This round starts a new chat with a summary."
 
 
 @dataclass(frozen=True)
@@ -70,9 +81,13 @@ MAX_RUN_LESSONS = 30  # the newest lessons of this run that go into each step me
 
 class Agent:
     def __init__(self, backend: LLMBackend, config: AgentConfig | None = None, system: str | None = None,
-                 store: LessonStore | None = None, use_lessons: bool = True, run_id: str = ""):
+                 store: LessonStore | None = None, use_lessons: bool = True, run_id: str = "",
+                 chain: Chain | None = None):
+        """`chain` is the chat of a plan run and of a verdict. Without it, the run starts a chain of its own."""
         self.backend, self.cfg = backend, config or AgentConfig()
         self.store, self.use_lessons, self.run_id = store, use_lessons, run_id
+        self.chain = chain or Chain(run_id)
+        self.session_id: str | None = None  # the saved chat of the last plan or verdict call
         self.saved_lessons: tuple[str, ...] = ()  # from earlier runs of the scene, oldest first
         self.run_lessons: list[str] = []  # the new lessons of this run, oldest first, without duplicates
         self.system = system or SYSTEM
@@ -197,11 +212,13 @@ class Agent:
                    auto_rounds: int | None = None) -> str:
         """One model call: the belief of the scene and the keyframes of the whole task. The code then scores
         the plan and builds the view of the page. Nothing moves. With feedback, this is a re-plan: a later round
-        that sees the last plan, its result and its end images. auto_rounds is set in a round of the Auto loop."""
+        that sees the last plan, its result and its end images. auto_rounds is set in a round of the Auto loop.
+        All rounds of a chain share one chat: a re-plan continues the chat of self.chain."""
         self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
         emit("run_start", {"mode": "plan", "scene": env.scene_name, "instruction": env.instruction, "seed": seed,
                            "run_id": self.run_id, "max_steps": 1, "check": env.check_name,
-                           "system_prompt": PLAN_SYSTEM, "use_lessons": self.use_lessons,
+                           "system_prompt": CHAIN_SYSTEM, "use_lessons": self.use_lessons,
+                           "chain": self.chain.id, "session_id": self.chain.session if feedback else None,
                            "saved_lessons": list(self.saved_lessons),
                            "round": feedback.round if feedback else 1, "parent": feedback.parent if feedback else None,
                            "end_step": feedback.end_step if feedback else None, "auto_rounds": auto_rounds,
@@ -218,22 +235,17 @@ class Agent:
         obs = await call(env.observe)
         emit("observation", {"step": 1, "front_png": obs.front_png, "top_png": obs.top_png})
         gripper = await call(env.gripper_state) if hasattr(env, "gripper_state") else None
-        text = build_plan_text(env.scene_text, env.instruction, obs, env.image_text, self.saved_lessons, feedback,
-                               gripper)
         images = (obs.front_png, obs.top_png, *(feedback.images if feedback else ()))
-        self._conv = await self.backend.open(PLAN_SYSTEM)
+        summary = Message("user", build_plan_text(env.scene_text, env.instruction, obs, env.image_text,
+                                                  self.saved_lessons, feedback, gripper), images)
+        short = Message("user", build_replan_text(obs, env.image_text, feedback, gripper), images) if feedback else None
         attempts: list[dict] = []
-        try:
-            reply, error, _ = await self._ask(
-                Message("user", text, images), attempts,
-                lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), PLAN_REPLY_SCHEMA,
-                lambda obj: parse_plan(obj, replan=feedback is not None))
-        finally:
-            conv, self._conv = self._conv, None
-            await conv.close()
+        reply, error, text = await self._chat(
+            short, summary, attempts, lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), emit,
+            PLAN_REPLY_SCHEMA, lambda obj: parse_plan(obj, replan=feedback is not None))
         if self._stop.is_set():
             return "stopped"
-        detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts)}
+        detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts), "session_id": self.session_id}
         if reply is None and error is not None and error.kind != "schema":
             emit("llm_error", {"step": 1, "error_kind": error.kind, "message": error.message, **detail})
             return "llm_error"
@@ -249,21 +261,43 @@ class Agent:
         return "planned"
 
     async def verdict(self, scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],
-                      images: tuple[bytes, ...], image_text: str | None = None) -> tuple[Verdict | None, dict]:
-        """One short call after an execution: is the task complete in the end images? Gives the verdict, or
-        None after an error, and the event fields: the prompt, the attempts, the usage and an error text."""
-        text = build_verdict_text(scene, instruction, objects, keyframes, image_text)
-        self._conv = await self.backend.open(VERDICT_SYSTEM)
+                      images: tuple[bytes, ...], image_text: str | None = None, emit: Emit | None = None
+                      ) -> tuple[Verdict | None, dict]:
+        """One short call after an execution: is the task complete in the end images? It goes into the chat of
+        self.chain, which has the task and the plan. A new chat gets them in the message. Gives the verdict,
+        or None after an error, and the event fields: the prompt, the attempts, the usage, an error text and
+        the saved chat."""
+        summary = Message("user", build_verdict_text(scene, instruction, objects, keyframes, image_text), images)
         attempts: list[dict] = []
-        try:
-            reply, error, _ = await self._ask(Message("user", text, images), attempts, lambda m, i: None,
+        reply, error, text = await self._chat(Message("user", build_chain_verdict_text(image_text), images), summary,
+                                              attempts, lambda m, i: None, emit or (lambda k, d: None),
                                               VERDICT_SCHEMA, parse_verdict)
-        finally:
-            conv, self._conv = self._conv, None
-            await conv.close()
         detail = {"prompt": text, "attempts": attempts, "usage": _sum_usage(attempts),
-                  "error": error.message if reply is None and error else None}
+                  "error": error.message if reply is None and error else None, "session_id": self.session_id}
         return reply, detail
+
+    async def _chat(self, short: Message | None, summary: Message, attempts: list[dict],
+                    on_ask: Callable[[Message, int], None], emit: Emit, schema: dict, parse: Callable
+                    ) -> tuple[Reply | PlanReply | Verdict | None, LLMError | None, str]:
+        """Send `short` into the saved chat of the chain. Round 1 has no `short`: `summary` starts the chat.
+        When the chain has no saved chat, or the chat is gone, `summary` starts a new chat, and a chat_lost
+        event tells the page. Gives the reply, the error and the text of the message that counts."""
+        msg, resume = (short, self.chain.session) if short is not None else (summary, None)
+        if short is not None and resume is None:
+            emit("chat_lost", {"step": 1, "message": CHAT_LOST, "error": "the chain has no saved chat"})
+            msg = summary
+        while True:
+            self._conv = await self.backend.open(CHAIN_SYSTEM, chain=self.chain.id, resume=resume)
+            try:
+                reply, error, _ = await self._ask(msg, attempts, on_ask, schema, parse)
+                self.session_id = getattr(self._conv, "session_id", None)
+            finally:
+                conv, self._conv = self._conv, None
+                await conv.close()
+            if error is None or error.kind != "resume" or msg is summary or self._stop.is_set():
+                return reply, error, msg.text
+            emit("chat_lost", {"step": 1, "message": CHAT_LOST, "error": error.message})
+            msg, resume = summary, None
 
     def _save_plan_lessons(self, scene: str, lessons: tuple[str, ...], feedback: Feedback | None) -> None:
         """Save the lessons of a re-plan with the status of the execution that the feedback describes.

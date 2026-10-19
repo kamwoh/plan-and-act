@@ -2,22 +2,57 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from collections.abc import AsyncIterator
 
 from armmind.llm.protocol import Final, LLMError, LLMEvent, Message, Usage
 
 
+def lost_chat(session: str) -> LLMError:
+    return LLMError("resume", f"No conversation found with session ID: {session}")
+
+
+def _reply_text(ev: Final) -> str:
+    return json.dumps(ev.parsed, ensure_ascii=False) if ev.parsed is not None else ev.text
+
+
+class Chats:
+    """The saved chats of a fake or demo backend, as the CLI keeps its sessions: session id -> messages."""
+
+    def __init__(self, prefix: str):
+        self.prefix, self.chats, self.count = prefix, {}, 0
+
+    def open(self, chain: str | None, resume: str | None) -> tuple[str | None, list[Message], str | None]:
+        """The session id, the messages so far and the id of a lost session. A chat without a chain is not saved."""
+        if chain is None:
+            return None, [], None
+        if resume is not None:
+            return (resume, self.chats[resume], None) if resume in self.chats else (None, [], resume)
+        self.count += 1
+        session = f"{self.prefix}-{self.count}"
+        self.chats[session] = []
+        return session, self.chats[session], resume
+
+
 class FakeConversation:
-    def __init__(self, backend: FakeBackend):
+    def __init__(self, backend: FakeBackend, chain: str | None = None, resume: str | None = None):
         self.backend = backend
+        self.session_id, self.history, self._lost = backend.store.open(chain, resume)
 
     async def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]:
         self.backend.sent.append((msg, schema))
+        if self._lost is not None:  # the CLI fails before the model sees the message
+            yield lost_chat(self._lost)
+            return
+        self.history.append(msg)
+        self.backend.seen.append(tuple(self.history))
         if not self.backend.replies:
             yield LLMError("backend", "fake backend has no more replies")
             return
         for ev in self.backend.replies.pop(0):
+            if isinstance(ev, Final):
+                self.history.append(Message("assistant", _reply_text(ev)))
             yield ev
 
     async def cancel(self) -> None:
@@ -33,13 +68,21 @@ class FakeBackend:
     def __init__(self, replies: list[list[LLMEvent]]):
         self.replies = list(replies)
         self.sent: list[tuple[Message, dict | None]] = []
+        self.seen: list[tuple[Message, ...]] = []  # for each call that reached the model: its whole chat
         self.systems: list[str] = []
+        self.opens: list[dict] = []
+        self.store = Chats("fake-session")
         self.cancelled = 0
         self.closed = 0
 
-    async def open(self, system: str) -> FakeConversation:
+    @property
+    def chats(self) -> dict[str, list[Message]]:
+        return self.store.chats
+
+    async def open(self, system: str, chain: str | None = None, resume: str | None = None) -> FakeConversation:
         self.systems.append(system)
-        return FakeConversation(self)
+        self.opens.append({"system": system, "chain": chain, "resume": resume})
+        return FakeConversation(self, chain, resume)
 
 
 DEMO_REPLIES = [  # invented replies for a demo run of the cubes scene
@@ -108,12 +151,13 @@ def demo_plan(text: str) -> dict:
     return DEMO_CONTINUE if "did not reset" in text else DEMO_REPLAN
 
 
-def demo_verdict(text: str) -> dict:
-    """The demo reply to a verdict call: not done when the last keyframe holds an object less than 10 cm up."""
-    import json
+def demo_verdict(text: str, last_plan: dict | None = None) -> dict:
+    """The demo reply to a verdict call: not done when the last keyframe holds an object less than 10 cm up.
+    The plan is in the message of a new chat. Else it is the last plan of the chat (`last_plan`)."""
     line = next((x for x in text.splitlines() if x.startswith("The plan that ran: ")), "")
     try:
-        last = json.loads(line.removeprefix("The plan that ran: "))["keyframes"][-1]
+        plan = json.loads(line.removeprefix("The plan that ran: ")) if line else last_plan
+        last = plan["keyframes"][-1]
         low = last.get("holding", "nothing") != "nothing" and float(last["xyz"][2]) < 0.1
     except (ValueError, KeyError, IndexError, TypeError):
         low = False
@@ -123,23 +167,34 @@ def demo_verdict(text: str) -> dict:
 
 
 class DemoConversation:
-    def __init__(self, backend: DemoBackend):
+    def __init__(self, backend: DemoBackend, chain: str | None = None, resume: str | None = None):
         self.backend = backend
+        self.session_id, self.history, self._lost = backend.store.open(chain, resume)
+
+    def _last_plan(self) -> dict | None:
+        for m in reversed(self.history):
+            if m.role == "assistant" and '"keyframes"' in m.text:
+                return json.loads(m.text)
+        return None
 
     async def send(self, msg: Message, schema: dict | None = None) -> AsyncIterator[LLMEvent]:
         await asyncio.sleep(self.backend.delay_s)
+        if self._lost is not None:  # the demo keeps its chats in memory: a server restart loses them
+            yield lost_chat(self._lost)
+            return
+        self.history.append(msg)
         if schema is not None and set(schema.get("required", [])) == {"done", "reason"}:
-            yield Final("", demo_verdict(msg.text))
-            yield Usage("demo", self.backend.delay_s, 1200, 40, 0.002, 0, 0)
-            return
-        if schema is not None and "keyframes" in schema.get("properties", {}):
-            yield Final("", demo_plan(msg.text))
-            yield Usage("demo", self.backend.delay_s, 2400, 400, 0.006, 0, 0)
-            return
-        step = re.search(r"Step (\d+) of", msg.text)  # the same reply for the same step in each run
-        body = DEMO_REPLIES[(int(step.group(1)) - 1 if step else 0) % len(DEMO_REPLIES)]
-        yield Final("", body)
-        yield Usage("demo", self.backend.delay_s, 1800, 120, 0.004, 0, 0)
+            final, usage = Final("", demo_verdict(msg.text, self._last_plan())), Usage(
+                "demo", self.backend.delay_s, 1200, 40, 0.002, 0, 0)
+        elif schema is not None and "keyframes" in schema.get("properties", {}):
+            final, usage = Final("", demo_plan(msg.text)), Usage("demo", self.backend.delay_s, 2400, 400, 0.006, 0, 0)
+        else:
+            step = re.search(r"Step (\d+) of", msg.text)  # the same reply for the same step in each run
+            body = DEMO_REPLIES[(int(step.group(1)) - 1 if step else 0) % len(DEMO_REPLIES)]
+            final, usage = Final("", body), Usage("demo", self.backend.delay_s, 1800, 120, 0.004, 0, 0)
+        self.history.append(Message("assistant", _reply_text(final)))
+        yield final
+        yield usage
 
     async def cancel(self) -> None:
         pass
@@ -154,6 +209,7 @@ class DemoBackend:
 
     def __init__(self, delay_s: float = 2.0):
         self.delay_s = delay_s
+        self.store = Chats("demo-session")
 
-    async def open(self, system: str) -> DemoConversation:
-        return DemoConversation(self)
+    async def open(self, system: str, chain: str | None = None, resume: str | None = None) -> DemoConversation:
+        return DemoConversation(self, chain, resume)

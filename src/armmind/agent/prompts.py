@@ -87,7 +87,8 @@ and for any other object that you expect to move. Each item is {{"object": <name
 Write a "summary" of the plan in 1 or 2 sentences.
 The code scores your belief against the true scene and checks each keyframe. It can then run \
 the keyframes once in the physics. You get no images while they run.
-A re-plan message also has your last plan and the result of its execution. \
+A re-plan message has the result of the execution of your last plan. Your last plan is earlier in this chat. \
+When a re-plan message starts a new chat, it also has your last plan. \
 Compare your last plan with the images and find what went wrong.
 In a re-plan from the start, the scene is back at its start. The message then also has two end images. \
 Give a new plan for the whole task.
@@ -177,11 +178,20 @@ PLAN_REPLY_SCHEMA = {
 }
 
 
+# The verdict rules, shared by the verdict prompt and the prompt of a chain.
+JUDGE = """\
+Judge only from the images: the plan says what was meant to happen, not what happened.
+Set "done" to true only when the images show that the task is complete. Give the "reason" in 1 short sentence."""
+
 VERDICT_SYSTEM = """\
 You judge if a robot arm finished a task in a physics simulation. You get the task, the plan that the arm \
-ran, and two camera images of the scene after the run. Judge only from the images: the plan says what was \
-meant to happen, not what happened.
-Set "done" to true only when the images show that the task is complete. Give the "reason" in 1 short sentence."""
+ran, and two camera images of the scene after the run. """ + JUDGE
+
+# One chat for a chain: the round 1 plan, then each re-plan and each verdict as the next message.
+CHAIN_SYSTEM = PLAN_SYSTEM + """
+
+After an execution, a message can ask for your verdict instead of a plan: did the arm finish the task? \
+It has two camera images of the scene after the run. """ + JUDGE
 
 VERDICT_SCHEMA = {
     "type": "object",
@@ -266,12 +276,14 @@ class Feedback:
     mode: str = "start"  # "start": the scene is back at its start. "continue": it goes on from the end state
 
 
-def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
-    last = json.dumps({"objects": list(f.objects), "keyframes": list(f.keyframes)}, separators=(",", ":"),
-                      ensure_ascii=False)
-    lines = [f"This is a re-plan, round {f.round}. Your last plan ran once in the physics.",
-             f"Your last plan: {last}",
-             f"Execution status: {f.status}."]
+def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True) -> list[str]:
+    """The result of the last execution. Without `with_plan`, the lines leave out the last plan: the chat has it."""
+    lines = [f"This is a re-plan, round {f.round}. Your last plan ran once in the physics."]
+    if with_plan:
+        last = json.dumps({"objects": list(f.objects), "keyframes": list(f.keyframes)}, separators=(",", ":"),
+                          ensure_ascii=False)
+        lines.append(f"Your last plan: {last}")
+    lines.append(f"Execution status: {f.status}.")
     if f.status not in ("cancelled", "error"):  # the check runs only at the end of a whole execution
         lines.append(f"The automatic check says the task is {'solved' if f.success else 'not solved'}."
                      if f.check else "There is no automatic check for this task.")
@@ -298,22 +310,27 @@ def _feedback_lines(f: Feedback, first_camera: str) -> list[str]:
     return lines
 
 
-def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: str | None = None,
-                    lessons: list[str] | tuple[str, ...] = (), feedback: Feedback | None = None,
-                    gripper: str | None = None) -> str:
-    """The plan message: the scene, the task, the gripper and the lessons, as in step 1. A re-plan adds the
-    feedback part. It never has the true positions, yaws or joints, even when the observation has them.
-    A re-plan that continues also says if the gripper is open or closed (`gripper`)."""
+def _gripper_lines(obs: Observation, feedback: Feedback | None, gripper: str | None) -> list[str]:
+    """What to plan, and the gripper now. Never the true positions, yaws or joints of the observation."""
     continues = feedback is not None and feedback.mode == "continue"
     lines = [
-        f"Scene: {scene}",
-        f"Task: {instruction}",
         "Plan what is left of the task now, in one reply." if continues else "Plan the whole task now, in one reply.",
         f"Gripper at {fmt(obs.tcp)}, yaw {round(obs.gripper_yaw)}°, width {obs.gripper_width:.3f} m.",
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]
     if continues and gripper in ("open", "closed"):
         lines.append(f"The gripper is {gripper} now.")
+    return lines
+
+
+def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: str | None = None,
+                    lessons: list[str] | tuple[str, ...] = (), feedback: Feedback | None = None,
+                    gripper: str | None = None) -> str:
+    """The plan message: the scene, the task, the gripper and the lessons, as in step 1. A re-plan adds the
+    feedback part. This is the first message of a chat: round 1, or a re-plan in a new chat (the summary).
+    It never has the true positions, yaws or joints, even when the observation has them.
+    A re-plan that continues also says if the gripper is open or closed (`gripper`)."""
+    lines = [f"Scene: {scene}", f"Task: {instruction}", *_gripper_lines(obs, feedback, gripper)]
     unique = list(dict.fromkeys(lessons))
     lines += ["Lessons:", *(f"- {t}" for t in unique)] if unique else ["Lessons: (none)"]
     images = image_text or IMAGE_TEXT
@@ -321,6 +338,23 @@ def build_plan_text(scene: str, instruction: str, obs: Observation, image_text: 
     if feedback is not None:
         lines += _feedback_lines(feedback, "side" if "side camera" in images else "front")
     return "\n".join(lines)
+
+
+def build_replan_text(obs: Observation, image_text: str | None, feedback: Feedback,
+                      gripper: str | None = None) -> str:
+    """A re-plan message in the chat of its chain: only what is new. The chat has the scene, the task, the
+    lessons and the last plan. This message has the result of the last execution, the gripper now, the mode
+    and the images. It never has the true positions, yaws or joints."""
+    images = image_text or IMAGE_TEXT
+    return "\n".join([*_feedback_lines(feedback, "side" if "side camera" in images else "front", with_plan=False),
+                      *_gripper_lines(obs, feedback, gripper), images])
+
+
+def build_chain_verdict_text(image_text: str | None = None) -> str:
+    """The verdict message in the chat of its chain. The chat has the task and the plan that ran."""
+    return "\n".join(["Your last plan ran once in the physics. Give your verdict now, not a plan.",
+                      "The images show the scene after the run. " + (image_text or IMAGE_TEXT),
+                      "Is the task complete?"])
 
 
 def build_verdict_text(scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],

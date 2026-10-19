@@ -92,7 +92,7 @@ async def test_retry_uses_the_same_conversation():
     convs = []
 
     class Spy(FakeBackend):
-        async def open(self, system):
+        async def open(self, system, chain=None, resume=None):
             conv = await super().open(system)
             convs.append(conv)
             return conv
