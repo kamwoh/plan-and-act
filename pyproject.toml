@@ -1,5 +1,5 @@
 [project]
-name = "arm-mind"
+name = "plan-and-act"
 version = "0.1.0"
 description = "An LLM controls a simulated robot arm in MuJoCo"
 requires-python = ">=3.12"

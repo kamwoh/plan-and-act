@@ -1,4 +1,4 @@
-"""arm-mind: an LLM controls a simulated robot arm."""
+"""plan-and-act: an LLM controls a simulated robot arm."""
 import os
 
 # MuJoCo reads this when it is first imported. EGL renders off screen without a window.

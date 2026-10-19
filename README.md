@@ -1,4 +1,4 @@
-# arm-mind
+# plan-and-act
 
 Claude controls a simulated Franka Panda arm in MuJoCo, through the Claude Code CLI.
 
