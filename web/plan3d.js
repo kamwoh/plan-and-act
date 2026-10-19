@@ -1,4 +1,4 @@
-// A generic player for a PlanView: fixed entities, believed and true entities, an agent that follows a timed
+// A generic player for a PlanView: fixed entities, the believed entities, an agent that follows a timed
 // track, and one canvas for each camera of the environment. All names and shapes come from the view data.
 (function () {
   "use strict";
@@ -27,23 +27,17 @@
   }
 
   // An entity as a group: a unit shape scaled to the size, at the centre, turned by the yaw.
-  // style: "solid", "ghost" (see-through grey) or "outline" (edges only, in the entity colour).
+  // style: "solid", or "ghost" (see-through grey with light edges).
   function entityGroup(e, style) {
     const group = new T.Group();
     const geo = unitGeometry(e.shape);
-    if (style !== "outline") {
-      const ghost = style === "ghost";
-      const mat = new T.MeshLambertMaterial({
-        color: ghost ? BELIEF_COLOR : rgb(e.color), transparent: ghost || (e.color && e.color[3] < 1),
-        opacity: ghost ? 0.55 : (e.color ? e.color[3] : 1), depthWrite: !ghost,
-      });
-      group.add(new T.Mesh(geo, mat));
-    }
-    if (style !== "solid") {
-      const edges = new T.EdgesGeometry(geo, 30);
-      const color = style === "ghost" ? 0xdfe5ee : rgb(e.color);
-      group.add(new T.LineSegments(edges, new T.LineBasicMaterial({ color })));
-    }
+    const ghost = style === "ghost";
+    const mat = new T.MeshLambertMaterial({
+      color: ghost ? BELIEF_COLOR : rgb(e.color), transparent: ghost || (e.color && e.color[3] < 1),
+      opacity: ghost ? 0.55 : (e.color ? e.color[3] : 1), depthWrite: !ghost,
+    });
+    group.add(new T.Mesh(geo, mat));
+    if (ghost) group.add(new T.LineSegments(new T.EdgesGeometry(geo, 30), new T.LineBasicMaterial({ color: 0xdfe5ee })));
     group.scale.set(e.size[0], e.size[1], e.size[2]);
     group.position.set(e.xyz[0], e.xyz[1], e.xyz[2]);
     group.rotation.z = (e.yaw || 0) * RAD;
@@ -182,20 +176,11 @@
     return poses;
   }
 
-  // Who carries and moves what. The belief follows the track, with its predicted moves. The true entities
-  // follow the marks: a mark names the true entity that the agent holds after its keyframe, so a failed grasp
-  // moves nothing. A view without that field falls back to the name match. A mark also gives the poses of the
-  // true entities that its keyframe moves, as the checks model them.
+  // Who carries and moves what: the belief follows the track, with its predicted moves.
   function carriers(view) {
-    const back = {};
-    for (const [trueName, believed] of Object.entries(view.true_match || {})) back[believed] = trueName;
-    const marks = view.marks || [];
     return {
       believed: (k, kf) => kf.carrying,
-      truth: (k, kf) => (marks[k] && "holds" in marks[k] ? marks[k].holds : (kf.carrying && back[kf.carrying]) || null),
       believedMoves: (k, kf) => kf.moves || [],
-      // The checks shift a moved true object by the predicted displacement. The video uses the same poses.
-      trueMoves: (k) => (marks[k] && marks[k].moves) || [],
     };
   }
 
@@ -239,13 +224,7 @@
       for (const f of view.fixtures) this.scene.add(entityGroup(f, "solid"));
       if (this.cam.grid && view.grid) this.addGrid(view.grid);
       this.believed = {};
-      this.trueSolid = {};
-      this.trueOutline = {};
       for (const e of view.believed) this.scene.add(this.believed[e.name] = entityGroup(e, "ghost"));
-      for (const e of view.true_start) {
-        this.scene.add(this.trueSolid[e.name] = entityGroup(e, "solid"));
-        this.scene.add(this.trueOutline[e.name] = entityGroup(e, "outline"));
-      }
       this.addAgent(view.agent);
       this.addPath(view);
     }
@@ -294,13 +273,6 @@
       });
     }
 
-    setMode(mode) {
-      for (const g of Object.values(this.believed)) g.visible = mode !== "real";
-      for (const g of Object.values(this.trueSolid)) g.visible = mode === "real";
-      for (const g of Object.values(this.trueOutline)) g.visible = mode === "both";
-      this.dirty = true;
-    }
-
     pose(groups, poses) {
       for (const [name, p] of Object.entries(poses)) {
         const g = groups[name];
@@ -310,7 +282,7 @@
       }
     }
 
-    update(agentPose, believedPoses, truePoses) {
+    update(agentPose, believedPoses) {
       this.agent.position.set(agentPose.xyz[0], agentPose.xyz[1], agentPose.xyz[2]);
       this.agent.rotation.z = agentPose.yaw * RAD;
       const a = this.slideAxis;
@@ -320,8 +292,6 @@
         g.position.set(b[0] + a[0] * d, b[1] + a[1] * d, b[2] + a[2] * d);
       }
       this.pose(this.believed, believedPoses);
-      this.pose(this.trueSolid, truePoses);
-      this.pose(this.trueOutline, truePoses);
       this.dirty = true;
     }
 
@@ -465,7 +435,6 @@
 
     setMode(mode) {
       this.mode = mode;
-      for (const v of this.views) v.setMode(mode);
     }
 
     seek(t) {
@@ -474,8 +443,7 @@
       const track = this.view.track;
       const agent = agentAt(track, this.time);
       const believed = posesAt(track, this.view.believed, this.time, this.carry.believed, this.carry.believedMoves);
-      const truth = posesAt(track, this.view.true_start, this.time, this.carry.truth, this.carry.trueMoves);
-      for (const v of this.views) v.update(agent, believed, truth);
+      for (const v of this.views) v.update(agent, believed);
       const kf = track.keyframes[agent.index];
       for (const fn of this.listeners) fn({ time: this.time, duration: this.duration, index: agent.index, keyframe: kf, playing: this.playing });
     }

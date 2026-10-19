@@ -132,7 +132,6 @@ def build_view(world: World, belief, keyframes, marks: list[dict] | None, width:
         "fixtures": [e.to_dict() for e in fixtures(world)],
         "agent": agent(),
         "believed": [e.to_dict() for e in believed],
-        "true_start": [e.to_dict() for e in true_entities(world)],
         "true_match": match,
         "track": track,
         "marks": list(marks or []),

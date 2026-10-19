@@ -6,6 +6,7 @@ from armmind.env import MujocoEnv
 from armmind.llm.fake import DEMO_PLAN_LOW
 from armmind.plan.formats import Keyframe
 from armmind.scenes import SCENES
+from armmind.sim.planview import true_entities
 from armmind.sim.state import StateMismatch, scene_version, state_problem
 
 CUBES = SCENES["cubes"]
@@ -119,8 +120,8 @@ def test_the_plan_check_and_the_view_start_with_the_cube_in_the_hand(ended):
         assert scores["perception"][0]["xy_cm"] < 1.0  # against the cube where it is now, not at the reset
         view = env.plan_view(belief, lift, scores["marks"])
         assert view["track"]["start"]["state"] == "closed" and view["track"]["start"]["carrying"] == "red cube"
-        true_red = next(e for e in view["true_start"] if e["name"] == "red_cube")
-        assert true_red["xyz"] == pytest.approx(list(red), abs=1e-3)
+        true_red = next(e for e in true_entities(env.world) if e.name == "red_cube")
+        assert list(true_red.xyz) == pytest.approx(list(red), abs=1e-3)
         out = env.execute_plan(lift, lambda: False)
         score = prediction(view["track"], view["believed"], out["true_start"], out["true_after"], view["true_match"])
         row = score["rows"][0]

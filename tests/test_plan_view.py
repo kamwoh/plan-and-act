@@ -9,6 +9,7 @@ import pytest
 
 from armmind.plan.formats import Entity, Keyframe, build_track
 from armmind.scenes import SCENES
+from armmind.sim.planview import true_entities
 from armmind.sim.world import CAMERAS
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,17 +110,12 @@ def test_fixture_list_agrees_with_the_fixture_xml(scene):
 
 
 @pytest.mark.assets
-def test_view_has_the_table_fixtures_and_the_true_start():
+def test_view_has_the_table_fixtures_and_no_true_start():
     env = _env("tray", 1)
     try:
         belief = (Entity("red cube", "box", (0.04, 0.04, 0.04), (0.5, 0.0, 0.02), 0.0),)
         view = env.plan_view(belief, (Keyframe((0.5, 0.0, 0.2), 0.0, "open", None),))
-        true = {e["name"]: e for e in view["true_start"]}
-        assert set(true) == {"red_cube", "blue_cube", "green_cube"}
-        red = true["red_cube"]
-        assert np.allclose(red["xyz"], env.world.object_pos("red_cube"), atol=1e-6)
-        assert red["size"] == pytest.approx([0.04, 0.04, 0.04]) and red["shape"] == "box"
-        assert red["color"] == pytest.approx([0.9, 0.1, 0.1, 1.0])
+        assert "true_start" not in view  # v1.16: the page has no view of the true objects
         assert view["true_match"] == {"red_cube": "red cube"}
         fixtures = {e["name"] for e in view["fixtures"]}
         assert "table" in fixtures and "tray_floor" in fixtures
@@ -150,10 +146,9 @@ def test_round_mesh_objects_are_cylinders_in_the_true_start():
         pytest.skip("scanned objects missing")
     env = _env("kitchen", 0)
     try:
-        view = env.plan_view((), (Keyframe((0.5, 0.0, 0.2), 0.0, "open", None),))
+        shapes = {e.name: e.shape for e in true_entities(env.world)}
     finally:
         env.close()
-    shapes = {e["name"]: e["shape"] for e in view["true_start"]}
     assert shapes["bowl"] == "cylinder" and shapes["plate"] == "cylinder" and shapes["bottle"] == "box"
 
 

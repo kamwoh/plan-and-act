@@ -213,8 +213,13 @@ def test_the_demo_loop_continues_from_where_round_1_left_the_cube(tmp_path):
     with np.load(dirs[0] / END_STATE) as a, np.load(dirs[1] / START_STATE) as b:
         assert np.array_equal(a["qpos"], b["qpos"])
     view = next(e for e in rounds[1] if e["kind"] == "plan")["view"]
-    red = next(e for e in view["true_start"] if e["name"] == "red_cube")
-    assert red["xyz"][2] > 0.05  # in the hand, where round 1 left it, not back on the table
+    from armmind.env import MujocoEnv
+    from armmind.scenes import SCENES
+    env = MujocoEnv(SCENES["cubes"], SCENES["cubes"].tasks["pick"], 0, PICK, start=dirs[1] / START_STATE)
+    try:
+        assert env.world.object_pos("red_cube")[2] > 0.05  # in the hand, where round 1 left it, not on the table
+    finally:
+        env.close()
     assert view["track"]["start"]["state"] == "closed" and view["track"]["start"]["carrying"] == "red cube"
     plan = next(e for e in rounds[1] if e["kind"] == "plan")
     assert len(plan["keyframes"]) == 1 and all(m["ok"] for m in plan["scores"]["marks"])

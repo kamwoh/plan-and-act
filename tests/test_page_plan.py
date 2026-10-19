@@ -35,8 +35,9 @@ def test_camera_boxes_hold_the_plan_canvases_and_a_player_bar():
         assert f'id="plan_{cam}"' in fig and f'id="plan_{cam}_labels"' in fig
     bar = _body(html, '<div id="player"', "\n      </div>\n")
     for part in ('id="play_btn"', 'id="play_time"', 'id="play_slider"', 'id="play_kf"', 'data-mode="imagined"',
-                 'data-mode="real"', 'data-mode="both"', 'data-mode="camera"'):
+                 'data-mode="camera"'):
         assert part in bar
+    assert 'data-mode="real"' not in html and 'data-mode="both"' not in html  # v1.16: two view buttons only
 
 
 def test_plan_request_uses_the_same_fields_as_start():
@@ -89,42 +90,6 @@ def test_a_replayed_execution_keeps_the_imagined_video():
 
 
 # ---- Review follow-ups ----
-NODE_POSES = r"""
-const vm = require("vm"), fs = require("fs");
-const ctx = { window: {}, console };
-vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), ctx);
-const P = ctx.window.Plan3D;
-const kf = (xyz, carrying, t) => ({ xyz, yaw: 0, carrying, gap: 0, changes: false, t, t_done: t + 0.5 });
-const view = {
-  track: { start: { xyz: [0.3, 0, 0.4], yaw: 0, gap: 0.08 },
-           keyframes: [kf([0.5, 0, 0.02], "red cube", 1), kf([0.5, 0, 0.3], "red cube", 3)], duration: 3.5 },
-  believed: [{ name: "red cube", xyz: [0.5, 0, 0.02], yaw: 0 }],
-  true_start: [{ name: "red_cube", xyz: [0.54, 0, 0.02], yaw: 0 }],
-  true_match: { red_cube: "red cube" },
-  marks: JSON.parse(process.argv[2]),
-};
-const c = P.carriers(view);
-const b = P.posesAt(view.track, view.believed, 3.5, c.believed)["red cube"].xyz[2];
-const t = P.posesAt(view.track, view.true_start, 3.5, c.truth)["red_cube"].xyz[2];
-console.log(JSON.stringify([b, t]));
-"""
-
-
-def _poses(marks):
-    import json
-    out = subprocess.run(["node", "-e", NODE_POSES, str(WEB / "plan3d.js"), json.dumps(marks)], check=True,
-                         capture_output=True, text=True).stdout
-    return json.loads(out)
-
-
-def test_real_start_moves_a_true_object_only_when_the_marks_say_it_is_held():
-    held = [{"ok": True, "holds": "red_cube"}, {"ok": True, "holds": "red_cube"}]
-    missed = [{"ok": False, "holds": None}, {"ok": True, "holds": None}]
-    assert _poses(held) == [0.3, 0.3]
-    assert _poses(missed) == [0.3, 0.02]  # the belief moves, the true cube stays
-    assert _poses([]) == [0.3, 0.3]  # an old view without marks: the name match decides
-
 
 def test_clear_plan_forgets_the_plan_and_disables_execute():
     js = _web("app.js")
@@ -189,24 +154,19 @@ const view = {
            keyframes: [{ xyz: [0.6, 0.19, 0.02], yaw: 0, carrying: null, gap: 0, changes: false, t: 1, t_done: 1.3,
                          moves: [move] }], duration: 1.3 },
   believed: [{ name: "green cube", xyz: [0.6, 0.21, 0.02], yaw: 0 }],
-  true_start: [{ name: "green_cube", xyz: [0.603, 0.206, 0.02], yaw: 0 }],
-  true_match: { green_cube: "green cube" },
-  marks: [{ ok: true, holds: null }],
 };
 const c = P.carriers(view);
-const at = (t) => [P.posesAt(view.track, view.believed, t, c.believed, c.believedMoves)["green cube"].xyz[1],
-                   P.posesAt(view.track, view.true_start, t, c.truth, c.trueMoves)["green_cube"].xyz[1]];
+const at = (t) => [P.posesAt(view.track, view.believed, t, c.believed, c.believedMoves)["green cube"].xyz[1]];
 console.log(JSON.stringify([at(0), at(0.5), at(1.3)]));
 """
 
 
-def test_the_belief_follows_the_moves_and_the_truth_stays():
+def test_the_belief_follows_the_moves():
     import json
     out = subprocess.run(["node", "-e", NODE_MOVES, str(WEB / "plan3d.js")], check=True, capture_output=True,
                          text=True).stdout
-    (b0, t0), (b1, t1), (b2, t2) = json.loads(out)
+    (b0,), (b1,), (b2,) = json.loads(out)
     assert b0 == pytest.approx(0.21) and b1 == pytest.approx(0.185) and b2 == pytest.approx(0.16)
-    assert t0 == t1 == t2 == pytest.approx(0.206)  # "Real start" never shows a prediction
 
 
 def test_a_moves_keyframe_has_its_own_marker_and_text():
@@ -231,43 +191,11 @@ def test_exec_end_adds_the_prediction_entry_also_in_a_replay():
     assert "const PRED_LIMIT_CM = 3;" in app
 
 
-NODE_TRUE_PICK = r"""
-const vm = require("vm"), fs = require("fs");
-const ctx = { window: {}, console };
-vm.createContext(ctx);
-vm.runInContext(fs.readFileSync(process.argv[1], "utf8"), ctx);
-const P = ctx.window.Plan3D;
-const kf = (xyz, carrying, t, moves) => ({ xyz, yaw: 0, carrying, gap: 0, changes: false, t, t_done: t + 0.5, moves: moves || [] });
-const view = {
-  track: { start: { xyz: [0.6, 0.27, 0.02], yaw: 0, gap: 0 },
-           keyframes: [kf([0.6, 0.19, 0.02], null, 1, [{ name: "green cube", xyz: [0.6, 0.16, 0.02], yaw: 0 }]),
-                       kf([0.6, 0.156, 0.02], "green cube", 2), kf([0.6, 0.156, 0.2], "green cube", 3)], duration: 3.5 },
-  believed: [{ name: "green cube", shape: "box", size: [0.04, 0.04, 0.04], xyz: [0.6, 0.21, 0.02], yaw: 0 }],
-  true_start: [{ name: "green_cube", shape: "box", size: [0.04, 0.04, 0.04], xyz: [0.603, 0.206, 0.02], yaw: 0 }],
-  true_match: { green_cube: "green cube" },
-  marks: [{ ok: true, holds: null, moves: [{ name: "green_cube", xyz: [0.603, 0.156, 0.02], yaw: 0 }] },
-          { ok: true, holds: "green_cube", moves: [] }, { ok: true, holds: "green_cube", moves: [] }],
-};
-const c = P.carriers(view);
-const truth = (t) => P.posesAt(view.track, view.true_start, t, c.truth, c.trueMoves)["green_cube"].xyz;
-console.log(JSON.stringify([truth(1.0), truth(3.5)]));
-"""
-
-
-def test_real_start_picks_up_a_true_object_from_its_shifted_pose():
-    import json
-    out = subprocess.run(["node", "-e", NODE_TRUE_PICK, str(WEB / "plan3d.js")], check=True, capture_output=True,
-                         text=True).stdout
-    pushed, lifted = json.loads(out)
-    assert pushed == pytest.approx([0.603, 0.156, 0.02])  # the mark gives the true pose that the checks used
-    assert lifted == pytest.approx([0.603, 0.156, 0.2])  # carried from there: no 5 cm gap to the fingers
-
-
 def test_the_plan_check_shows_predicted_poses_and_the_prediction_shows_missed_objects():
     app = _web("app.js")
     check = _body(app, "function planCheckEntry")
     assert "at the predicted pose" in check and "kf-muted" in check
     assert "shownPredicted.has(n)" in check  # the note shows once, not on every later keyframe
-    assert "Real start uses the predicted moves after a push." in check
+    assert "Real start" not in check
     pred = _body(app, "function predictionEntry")
     assert "not in the belief: " in pred and "xy more than 2 cm" in pred

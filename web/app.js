@@ -7,11 +7,11 @@ let cameras = { ...DEFAULT_CAMERAS };  // the image labels of the chosen scene
 let runCameras = { ...DEFAULT_CAMERAS };  // the image labels of the scene of the last run, for its step details
 
 // Plan first: the camera boxes show either the camera images or the imagined video of a plan.
-const PLAN_BADGES = { imagined: "Imagined", real: "Real start", both: "Imagined + real" };
+const PLAN_BADGES = { imagined: "Imagined" };
 const XY_LIMIT_CM = 2;     // the plan check marks a larger error red
 const YAW_LIMIT_DEG = 15;
 const PRED_LIMIT_CM = 3;    // the Prediction entry marks a larger displacement error red
-let viewMode = "camera";   // "camera", or a plan mode: "imagined", "real" or "both"
+let viewMode = "camera";   // "camera", or the plan mode "imagined"
 let player = null;         // the Plan3D player, made on the first plan
 let playerFailed = false;  // no WebGL: the page says so and keeps the camera images
 let planRunId = null;      // the id of the plan run on the page, for Execute and Re-plan
@@ -1492,9 +1492,6 @@ function planCheckEntry(scores, keyframes = [], done = false) {
   const moved = keyframes.map((k, i) => [i, k.moves || []]).filter(([, m]) => m.length)
     .map(([i, m]) => `${i + 1} · moves ${movesText(m)}`);
   if (moved.length) item.append(field("moves", lines(moved, "mono")));
-  if ((scores.marks || []).some((m) => (m.moves || []).length)) {
-    item.append(el("div", "Real start uses the predicted moves after a push.", "muted"));
-  }
   if (!keyframes.length) return item;  // a done plan without keyframes has nothing to execute
   const exec = el("button", "▶ Execute plan", "btn exec-btn");
   exec.type = "button";
