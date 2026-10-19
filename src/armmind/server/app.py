@@ -44,6 +44,7 @@ Preview = Callable[[Scene, int], dict]
 
 
 MAX_ROUND = 30  # a plan and at most 29 re-plans
+MAX_RUN_KEYFRAMES = 30  # the largest "Run per round"
 RoundMode = Literal["continue", "start"]  # a re-plan goes on from the end state, or starts at the reset
 
 
@@ -78,6 +79,7 @@ class PlanRequest(BaseModel):
     auto: bool = False  # the Auto loop: plan, execute and re-plan until the auto-check passes
     rounds: int = Field(3, ge=1, le=MAX_ROUND)  # the rounds of the Auto loop
     mode: RoundMode = "continue"  # the mode of each round of the Auto loop after round 1
+    max_keyframes: int = Field(0, ge=0, le=MAX_RUN_KEYFRAMES)  # "Run per round" of the Auto loop. 0: all
 
     @field_validator("instruction")
     @classmethod
@@ -87,6 +89,19 @@ class PlanRequest(BaseModel):
 
 class ReplanRequest(BaseModel):
     mode: RoundMode = "continue"
+    max_keyframes: int = Field(0, ge=0, le=MAX_RUN_KEYFRAMES)  # the page setting: a mode "start" needs 0
+
+
+class ExecuteRequest(BaseModel):
+    max_keyframes: int = Field(0, ge=0, le=MAX_RUN_KEYFRAMES)  # run only the first K keyframes. 0: all
+
+
+START_WITH_K = "Run per round needs a re-plan that continues. Turn Continue on, or set Run per round to 0"
+
+
+def run_keyframes(keyframes: tuple, k: int) -> tuple:
+    """The keyframes that an execution runs: the first k, or all when k is 0 or not below the count."""
+    return keyframes[:k] if 0 < k < len(keyframes) else keyframes
 
 
 class Hub:
@@ -159,15 +174,16 @@ def _prediction(view: dict | None, out: dict) -> dict | None:
         return None
 
 
-def _save_frames(folder: Path, step: int, frames: list[dict], end_images: bool) -> list[dict]:
+def _save_frames(folder: Path, step: int, frames: list[dict], end_images: bool, of: int | None = None) -> list[dict]:
     """Write the frames of an execution as image files of the run folder. Gives the frames for exec_end, in
-    order, with the file name in place of the image. "sent" marks the frames that go to Claude."""
-    sent = set(pick_frames(frames, end_images))
+    order, with the file name in place of the image. "sent" marks the frames that go to Claude.
+    `of` is the keyframe count of the whole plan, when the execution ran only its first keyframes."""
+    sent = set(pick_frames(frames, end_images))  # before `of`: the end images show the last keyframe that ran
     out = []
     for i, f in enumerate(frames):
         name = f"step{step:03d}_kf{int(f['keyframe']):02d}{'_stop' if f['at'] == 'stop' else ''}.png"
         (folder / name).write_bytes(f["png"])
-        out.append({"keyframe": f["keyframe"], "of": f["of"], "note": f["note"], "at": f["at"], "file": name,
+        out.append({"keyframe": f["keyframe"], "of": of or f["of"], "note": f["note"], "at": f["at"], "file": name,
                     "sent": i in sent})
     return out
 
@@ -250,10 +266,13 @@ def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback |
             images = ()
     objects, keyframes = _reply_format(found["plan"])
     total = len(actions) or len(ex["start"].get("action_data") or [])
+    ran_keyframes = (int(end.get("ran_keyframes") or 0), int(end.get("keyframes") or 0)) \
+        if end.get("status") == "partial" else (0, 0)
     return Feedback(objects, keyframes, str(end.get("status") or "error"), bool(ex["start"].get("check")),
                     bool(end.get("success")), stopped, stopped_action, images, run_id,
                     plan_round(found["start"]) + 1, end.get("step") if images else None,
-                    ran=ex["actions"], total=total, mode=mode, frames=_sent_frames(found, history))
+                    ran=ex["actions"], total=total, mode=mode, frames=_sent_frames(found, history),
+                    ran_keyframes=ran_keyframes)
 
 
 def chain_of(found: dict) -> Chain:
@@ -373,10 +392,13 @@ class Runner:
 
     def _execute_part(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
                       keyframes: tuple[Keyframe, ...], step: int, view: dict | None, round_no: int = 1,
-                      round_mode: str | None = None, verdict_next: bool = False):
+                      round_mode: str | None = None, verdict_next: bool = False, max_keyframes: int = 0):
         """The stopper, the before hook and the session body of one execution of a saved plan. The body saves
-        the end state in END_STATE of the folder, also after a stop."""
+        the end state in END_STATE of the folder, also after a stop. With max_keyframes K, it runs only the
+        first K keyframes. A run of them without a stop and without a solved check has the status "partial"."""
         cancel = threading.Event()
+        run = run_keyframes(keyframes, max_keyframes)
+        partial = len(run) < len(keyframes)
 
         async def stopper() -> None:
             cancel.set()
@@ -384,9 +406,10 @@ class Runner:
         def before(emit) -> None:  # before the env, so that a failed start still has a pair of events
             # A file of an earlier execution must not stand for this one, also when the env fails to start.
             (folder / END_STATE).unlink(missing_ok=True)
-            actions = keyframe_actions(keyframes, _start_gripper(view))
+            actions = keyframe_actions(run, _start_gripper(view))
             emit("exec_start", {"run_id": folder.name, "scene": scene.name, "instruction": instruction, "seed": seed,
-                                "check": task.name if task else None, "keyframes": len(keyframes), "step": step,
+                                "check": task.name if task else None, "keyframes": len(run),
+                                "plan_keyframes": len(keyframes), "step": step,
                                 "round": round_no, "round_mode": round_mode,
                                 "action_data": [a.to_dict() for a in actions]})
 
@@ -397,7 +420,9 @@ class Runner:
                 loop.call_soon_threadsafe(emit, "action", {"step": step, "index": index, "of": count})
 
             end_state = folder / END_STATE
-            out = await call(env.execute_plan, keyframes, cancel.is_set, on_action)
+            out = await call(env.execute_plan, run, cancel.is_set, on_action)
+            if partial and out["status"] in ("done", "failed"):  # the first K keyframes ran by design
+                out["status"] = "partial"
             if hasattr(env, "save_state"):
                 try:
                     await call(env.save_state, end_state)
@@ -413,21 +438,23 @@ class Runner:
                 images = {"front_png": obs.front_png, "top_png": obs.top_png}
             except Exception as e:  # noqa: BLE001  the result stays, a re-plan then has no end images
                 logging.getLogger(__name__).warning("no end images of the execution: %s: %s", type(e).__name__, e)
-            judged = verdict_next and bool(images) and out["status"] not in ("cancelled", "error")
+            # After a partial run, the next re-plan judges it: no verdict call.
+            judged = verdict_next and bool(images) and out["status"] not in ("cancelled", "error", "partial")
             try:
-                frames = _save_frames(folder, step, out.get("frames") or [], bool(images))
+                frames = _save_frames(folder, step, out.get("frames") or [], bool(images), len(keyframes))
             except (OSError, KeyError, TypeError, ValueError) as e:  # the result stays, without the frames
                 logging.getLogger(__name__).warning("cannot save the frames: %s: %s", type(e).__name__, e)
                 frames = []
             emit("exec_end", {"status": out["status"], "success": out["success"], "stopped": out["stopped"],
                               "prediction": _prediction(view, out), "step": step, "verdict_next": judged,
-                              "frames": frames, **images})
+                              "frames": frames, "ran_keyframes": len(run), "keyframes": len(keyframes), **images})
 
         return stopper, before, body
 
     async def start_execute(self, folder: Path, scene: Scene, task: Task | None, instruction: str, seed: int,
                             keyframes: tuple[Keyframe, ...], step: int, view: dict | None = None,
-                            round_no: int = 1, start: Path | None = None, round_mode: str | None = None) -> None:
+                            round_no: int = 1, start: Path | None = None, round_mode: str | None = None,
+                            max_keyframes: int = 0) -> None:
         """Run the keyframes of a saved plan once, from a fresh reset of its scene and seed, or from the state
         file `start`. The events go to the end of the plan's own log. With the plan view, exec_end has the
         prediction score. Then one short verdict call asks Claude if the end images show the task complete."""
@@ -435,7 +462,8 @@ class Runner:
             raise HTTPException(409, "a run is already active")
         log = RunLog.append_to(folder)
         exec_stop, before, body = self._execute_part(folder, scene, task, instruction, seed, keyframes, step, view,
-                                                     round_no, round_mode, verdict_next=True)
+                                                     round_no, round_mode, verdict_next=True,
+                                                     max_keyframes=max_keyframes)
         part: list[Callable[[], Awaitable[None]]] = [exec_stop]
         stopped = threading.Event()
 
@@ -578,7 +606,8 @@ class Runner:
                         break
                     exec_stop, before, body = self._execute_part(folder, scene, task, req.instruction, req.seed,
                                                                  saved[4], 2, found["plan"].get("view"), rounds_run,
-                                                                 feedback.mode if feedback else None)
+                                                                 feedback.mode if feedback else None,
+                                                                 max_keyframes=req.max_keyframes)
                     part[:] = [exec_stop]
                     exec_log = RunLog.append_to(folder)
                     await self._session(exec_log, scene, task, req.instruction, req.seed, False, body,
@@ -731,13 +760,15 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.post("/api/plan", dependencies=[Depends(same_origin)])
     async def plan(req: PlanRequest) -> dict:
+        if req.auto and req.max_keyframes > 0 and req.mode == "start":
+            raise HTTPException(409, START_WITH_K)
         scene = _scene(req.scene)
         task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
         folder = await runner.start_plan(req, scene, task)
         return {"run_dir": str(folder), "run_id": folder.name}
 
     @app.post("/api/plan/{run_id}/execute", dependencies=[Depends(same_origin)])
-    async def execute(run_id: str) -> dict:
+    async def execute(run_id: str, body: ExecuteRequest | None = None) -> dict:
         found = history.plan(run_id)
         if found is None:
             raise HTTPException(404, "no such plan")
@@ -755,15 +786,20 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         await runner.start_execute(found["folder"], scene, task, instruction, seed, keyframes,
                                    step=2 + found["executions"], view=found["plan"].get("view"),
                                    round_no=plan_round(found["start"]), start=start,
-                                   round_mode=found["start"].get("round_mode"))
+                                   round_mode=found["start"].get("round_mode"),
+                                   max_keyframes=(body or ExecuteRequest()).max_keyframes)
         return {"run_id": run_id}
 
     @app.post("/api/plan/{run_id}/replan", dependencies=[Depends(same_origin)])
     async def replan(run_id: str, body: ReplanRequest | None = None) -> dict:
-        mode = (body or ReplanRequest()).mode
+        body = body or ReplanRequest()
+        if body.mode == "start" and body.max_keyframes > 0:
+            raise HTTPException(409, START_WITH_K)
         found = history.plan(run_id)
         if found is None:
             raise HTTPException(404, "no such plan")
+        last = (found["execution"] or {}).get("end") or {}
+        mode = "continue" if last.get("status") == "partial" else body.mode  # a partial run always continues
         if runner.running:
             raise HTTPException(409, "a run is already active")
         start = found["start"]

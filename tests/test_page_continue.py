@@ -26,7 +26,7 @@ def test_the_switch_sets_the_mode_of_replan_and_of_the_auto_loop():
     assert '$("continue").checked ? "continue" : "start"' in _body(js, "function roundMode")
     assert "mode: roundMode()," in _body(js, "async function startPlan")
     body = _body(js, "async function replan")
-    assert "roundMode();" in body and "/replan`, { mode })" in body
+    assert "roundMode();" in body and "/replan`, body)" in body and "{ mode, max_keyframes:" in body
 
 
 def test_a_plan_after_round_1_shows_its_mode():

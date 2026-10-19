@@ -318,6 +318,7 @@ class Feedback:
     total: int = 0  # the actions of the whole plan
     mode: str = "start"  # "start": the scene is back at its start. "continue": it goes on from the end state
     frames: tuple[Frame, ...] = ()  # the frames for Claude. They go after the images now and before `images`
+    ran_keyframes: tuple[int, int] = (0, 0)  # (K, N) when only the first K of N keyframes ran by design
 
 
 def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, start_seen: bool = False) -> list[str]:
@@ -337,6 +338,10 @@ def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, star
                      else f"The person stopped the execution before the first action of {f.total}.")
     elif f.status == "error":
         lines.append("The execution failed with an error in the simulation.")
+    elif f.status == "partial":
+        k, n = f.ran_keyframes
+        lines.append(f"Only the first {k} of your {n} keyframes ran, by design. "
+                     f"The arm is now at the end of keyframe {k}.")
     elif f.stopped:
         action = f" ({f.stopped_action})" if f.stopped_action else ""
         lines.append(f"The execution stopped at action {f.stopped['after']} of {f.stopped['of']}{action}: "

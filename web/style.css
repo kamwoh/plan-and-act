@@ -80,6 +80,7 @@ img[hidden] { display: none; }
 .cam.live .cam-badge { color: #ff7b7b; }
 /* The outcome of an execution on the camera badge and as a tag of the Execution entry */
 .out-bad { color: var(--bad) !important; border-color: rgba(240, 106, 106, 0.5) !important; }
+.out-info { color: var(--accent) !important; border-color: rgba(91, 140, 255, 0.5) !important; }
 .out-ok { color: var(--ok) !important; border-color: rgba(60, 207, 134, 0.5) !important; }
 .out-muted { color: var(--muted) !important; }
 .out-plain { color: var(--fg) !important; }

@@ -244,6 +244,10 @@ function outcomeBadge(ev) {
     return { text: s ? `■ STOPPED · action ${s.after}/${s.of}` : "■ STOPPED", cls: "bad", edge: true,
              title: s ? `Stopped after action ${s.after} of ${s.of}: ${s.reason}.` : "The plan stopped." };
   }
+  if (ev.status === "partial") {
+    return { text: `◐ RAN ${ev.ran_keyframes}/${ev.keyframes} KEYFRAMES`, cls: "info", edge: false,
+             title: `Run per round: the first ${ev.ran_keyframes} of ${ev.keyframes} keyframes ran. A re-plan continues from here.` };
+  }
   if (ev.status === "cancelled") return { text: "■ CANCELLED", cls: "muted", edge: false, title: "The person stopped the execution." };
   if (ev.status === "success") return { text: "✓ SOLVED", cls: "ok", edge: false, title: "The auto-check says the task is solved." };
   if (ev.status === "done") return { text: "DONE", cls: "plain", edge: false, title: "All actions ran. There is no auto-check." };
@@ -976,6 +980,7 @@ async function startPlan() {
     auto: $("auto").checked,
     rounds: roundsValue($("rounds").value),
     mode: roundMode(),
+    max_keyframes: perRound(),
   };
   beginRun("planning");
   if (await postJson("/api/plan", body)) setRunning(true);
@@ -1036,6 +1041,28 @@ function roundMode() {
 
 $("continue").checked = readContinue();
 $("continue").addEventListener("change", () => writeContinue($("continue").checked));
+
+// ---- Run per round: Execute runs only the first K keyframes, and each re-plan continues from there ----
+function perRound() {
+  const n = Math.round(Number($("per_round").value));
+  return Number.isFinite(n) ? Math.min(MAX_ROUND, Math.max(0, n)) : 0;
+}
+
+const CONTINUE_TITLE = document.querySelector(".continue-switch").title;
+
+// With K > 0, a re-plan must continue from where the K keyframes ended: Continue is on and locked.
+function lockContinue() {
+  const locked = perRound() > 0;
+  if (locked) $("continue").checked = true;
+  else $("continue").checked = readContinue();
+  $("continue").disabled = locked;
+  document.querySelector(".continue-switch").title = locked
+    ? "Run per round is on: each re-plan continues from where the first keyframes ended. Set Run per round to 0 to choose."
+    : CONTINUE_TITLE;
+}
+
+$("per_round").addEventListener("input", lockContinue);
+lockContinue();
 
 $("stop").addEventListener("click", () => fetch("/api/stop", { method: "POST" }));
 
@@ -1484,13 +1511,14 @@ function planCheckEntry(scores, keyframes = [], done = false) {
 async function executePlan() {
   if (running || !planRunId) return;
   setStatus("starting the plan", "moving");
-  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/execute`)) setRunning(true);
+  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/execute`, { max_keyframes: perRound() })) setRunning(true);
 }
 
 function onExecStart(ev) {
   const item = entry("system", "▶ Executing the plan");
   const from = ev.round_mode === "continue" ? "from where the last round ended" : `from a fresh start of seed ${ev.seed}`;
-  item.append(el("div", `${ev.keyframes} keyframe${ev.keyframes === 1 ? "" : "s"} ${from}. ` +
+  const part = ev.plan_keyframes && ev.plan_keyframes > ev.keyframes ? `The first ${ev.keyframes} of ${ev.plan_keyframes}` : String(ev.keyframes);
+  item.append(el("div", `${part} keyframe${ev.keyframes === 1 && part === "1" ? "" : "s"} ${from}. ` +
     (ev.check ? `Auto-check: ${ev.check}.` : "No auto-check.")));
   addEntry(item);
 }
@@ -1500,6 +1528,7 @@ function execText(ev) {
   if (ev.status === "stopped" && ev.stopped) return `plan stopped at action ${ev.stopped.after} of ${ev.stopped.of}`;
   if (ev.status === "failed") return "plan executed · the auto-check says not solved";
   if (ev.status === "cancelled") return "plan execution stopped";
+  if (ev.status === "partial") return `ran ${ev.ran_keyframes} of ${ev.keyframes} keyframes · re-plan the rest`;
   if (ev.status === "error") return `error: ${ev.message || "the execution failed"}`;
   return "plan executed";
 }
@@ -1600,7 +1629,8 @@ async function replan(fromStart = false) {
   if (running || !planRunId) return;
   const mode = fromStart ? "start" : roundMode();  // no end state after an error: see replanButton
   setStatus(`re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
-  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, { mode })) setRunning(true);
+  const body = { mode, max_keyframes: mode === "continue" ? perRound() : 0 };
+  if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, body)) setRunning(true);
 }
 
 // "Claude: done" or "Claude: not done", and the auto-check when there is one.
