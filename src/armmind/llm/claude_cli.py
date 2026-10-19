@@ -11,6 +11,7 @@ import base64
 import contextlib
 import json
 import os
+import re
 import shutil
 import signal
 import tempfile
@@ -65,8 +66,11 @@ class ClaudeCLIConversation:
             folder = Path(backend.sessions_dir)
             folder.mkdir(parents=True, exist_ok=True)
             self._cwd = str(folder)
+            self._tmp = backend.chain_temp(chain)
         else:
             self._cwd = tempfile.mkdtemp(prefix="armmind-claude-")
+            self._tmp = os.path.join(self._cwd, "tmp")  # close() deletes it with the working folder
+            os.mkdir(self._tmp)
         self._lock = asyncio.Lock()
         self._cancelled = False
         self._stderr_tail = b""
@@ -91,7 +95,8 @@ class ClaudeCLIConversation:
             args += ["--model", self.b.model]
         self._proc = await asyncio.create_subprocess_exec(
             *args, cwd=self._cwd, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, start_new_session=True, limit=16 * 1024 * 1024)
+            stderr=asyncio.subprocess.PIPE, start_new_session=True, limit=16 * 1024 * 1024,
+            env={**os.environ, "TMPDIR": self._tmp})  # the CLI keeps its temp files, such as images, in our folder
         self._schema_key = key
         self._stderr_tail = b""
         self._stderr_task = asyncio.create_task(self._drain_stderr(self._proc))
@@ -237,11 +242,22 @@ class ClaudeCLIBackend:
     name = "claude_cli"
 
     def __init__(self, command: list[str] | None = None, model: str | None = None, timeout_s: float = 90.0,
-                 sessions_dir: Path = SESSIONS_DIR):
+                 sessions_dir: Path = SESSIONS_DIR, temp_dir: Path | None = None):
         self.command = command or ["claude"]
         self.model = model
         self.timeout_s = timeout_s
         self.sessions_dir = sessions_dir
+        self.temp_dir = Path(temp_dir or tempfile.gettempdir())
+
+    def chain_temp(self, chain: str) -> str:
+        """A new temp folder for a chat of the chain. It deletes the folder of the last chat of the same chain:
+        that chat kept it until now, because a later --resume can need its files. The name holds the chain, so
+        this also works after a server restart."""
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        prefix = f"armmind-chat-{re.sub(r'[^A-Za-z0-9_-]', '_', chain)}."  # a run id never has a dot
+        for old in self.temp_dir.glob(f"{prefix}*"):
+            shutil.rmtree(old, ignore_errors=True)
+        return tempfile.mkdtemp(prefix=prefix, dir=self.temp_dir)
 
     async def open(self, system: str, chain: str | None = None, resume: str | None = None) -> ClaudeCLIConversation:
         return ClaudeCLIConversation(self, system, chain, resume)

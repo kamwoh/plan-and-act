@@ -3,7 +3,7 @@
 It reads stream-json user messages from stdin and answers each one with an init line and a result line.
 The environment variable FAKE_CLAUDE_DIR names a folder for its sessions and its log:
 - sessions/<id>: one line for each user message of the session
-- calls.jsonl: one line for each start, with the arguments and the working folder
+- calls.jsonl: one line for each start, with the arguments, the working folder and TMPDIR
 The structured answer {"seen": n, "texts": [...]} holds all user texts of the session so far.
 """
 import json
@@ -15,7 +15,7 @@ from pathlib import Path
 root = Path(os.environ["FAKE_CLAUDE_DIR"])
 args = sys.argv[1:]
 with (root / "calls.jsonl").open("a") as f:
-    f.write(json.dumps({"args": args, "cwd": os.getcwd()}) + "\n")
+    f.write(json.dumps({"args": args, "cwd": os.getcwd(), "tmpdir": os.environ.get("TMPDIR")}) + "\n")
 
 
 def opt(name: str) -> str | None:

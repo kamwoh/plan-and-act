@@ -257,3 +257,45 @@ def test_the_lost_chat_note_keeps_the_thinking_entry():
     handler = _body(_web("app.js"), "function onEvent(ev, replay = false)")
     lost = handler[handler.index('ev.kind === "chat_lost"'):handler.index('ev.kind === "loop_end"')]
     assert "endThinking()" not in lost and "thinking.item" in lost
+
+
+# ---- 9. Each CLI process has a temp folder of its own ----
+@pytest.fixture
+def cli(tmp_path, monkeypatch):
+    from armmind.llm.claude_cli import ClaudeCLIBackend
+    from tests.test_claude_cli_session import FAKE
+    monkeypatch.setenv("FAKE_CLAUDE_DIR", str(tmp_path))
+    return ClaudeCLIBackend(command=FAKE, timeout_s=20, sessions_dir=tmp_path / "chats", temp_dir=tmp_path / "tmp")
+
+
+async def test_a_step_chat_deletes_its_temp_folder_on_close(cli, tmp_path):
+    from pathlib import Path
+
+    from tests.test_claude_cli_session import ask, calls
+    conv = await cli.open("sys")
+    await ask(conv, "one")
+    tmp = Path(calls(tmp_path)[0]["tmpdir"])
+    assert tmp.is_dir() and tmp.is_relative_to(Path(calls(tmp_path)[0]["cwd"]))
+    await conv.close()
+    assert not tmp.exists()
+
+
+async def test_a_chain_keeps_its_temp_folder_until_its_next_chat(cli, tmp_path):
+    from pathlib import Path
+
+    from tests.test_claude_cli_session import SCHEMA_B, ask, calls
+    conv = await cli.open("sys", chain="20261018-100000")
+    await ask(conv, "one")
+    await ask(conv, "two", SCHEMA_B)  # a second process of the same chat
+    first, second = (Path(c["tmpdir"]) for c in calls(tmp_path))
+    assert first == second and first.is_relative_to(tmp_path / "tmp")
+    other = await cli.open("sys", chain="20261018-100000-2")  # a run id that starts with the first one
+    await ask(other, "x")
+    await other.close()
+    await conv.close()
+    assert first.is_dir()  # a later --resume can need the files
+    again = await cli.open("sys", chain="20261018-100000", resume=conv.session_id)
+    await ask(again, "three")
+    await again.close()
+    assert not first.exists() and Path(calls(tmp_path)[-1]["tmpdir"]).is_dir()
+    assert Path(calls(tmp_path)[2]["tmpdir"]).is_dir()  # the other chain keeps its folder
