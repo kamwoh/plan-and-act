@@ -270,14 +270,17 @@ class Frame:
 
 
 def frame_label(f: Frame, camera: str) -> str:
-    """For example: 'Front camera after keyframe 2 of 5. Note: "above the cube". You imagined red cube at ...'"""
-    where = (f"at the stop in keyframe {f.keyframe} of {f.of}" if f.at == "stop"
-             else f"after keyframe {f.keyframe} of {f.of}")
+    """For example: 'Front camera after keyframe 2 of 5. Note: "above the cube". You imagined red cube at ...'
+    The imagined poses are the poses at the end of the keyframe, also for a stop frame: its label says so."""
+    stop = f.at == "stop"
+    where = f"at the stop in keyframe {f.keyframe} of {f.of}" if stop else f"after keyframe {f.keyframe} of {f.of}"
     parts = [f"{camera.capitalize()} camera {where}.", f"Note: {json.dumps(f.note, ensure_ascii=False)}."]
     if f.imagined is not None and not f.imagined:
-        parts.append("No object moves in your plan up to here.")
+        parts.append(f"At the end of keyframe {f.keyframe}, no object moves in your plan." if stop
+                     else "No object moves in your plan up to here.")
+    lead = f"At the end of keyframe {f.keyframe}, you imagined" if stop else "You imagined"
     for name, xyz, yaw in f.imagined or ():
-        parts.append(f"You imagined {name} at {fmt(xyz)}" + (f", yaw {round(yaw)}°." if yaw is not None else "."))
+        parts.append(f"{lead} {name} at {fmt(xyz)}" + (f", yaw {round(yaw)}°." if yaw is not None else "."))
     return " ".join(parts)
 
 

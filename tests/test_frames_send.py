@@ -37,8 +37,10 @@ def test_a_frame_label_has_the_keyframe_the_note_and_the_imagined_poses():
     assert frame_label(FRAMES[1], "front") == ('Front camera after keyframe 3 of 5. Note: "grasp". '
                                                "You imagined red cube at (0.500, -0.100, 0.020), yaw 0°.")
     assert frame_label(FRAMES[2], "side") == (
-        'Side camera at the stop in keyframe 4 of 5. Note: "lift". You imagined red cube at (0.500, -0.100, 0.150), '
-        "yaw 0°. You imagined green can at (0.450, 0.200, 0.050).")
+        'Side camera at the stop in keyframe 4 of 5. Note: "lift". At the end of keyframe 4, you imagined red cube at '
+        "(0.500, -0.100, 0.150), yaw 0°. At the end of keyframe 4, you imagined green can at (0.450, 0.200, 0.050).")
+    empty_stop = Frame(2, 5, "down", "stop", (), b"f")
+    assert frame_label(empty_stop, "front").endswith("At the end of keyframe 2, no object moves in your plan.")
     without_track = Frame(1, 2, "up", "end", None, b"f")
     assert frame_label(without_track, "front") == 'Front camera after keyframe 1 of 2. Note: "up".'
 
@@ -98,6 +100,7 @@ async def test_the_replan_message_sends_the_frames_before_the_end_images():
     await Agent(backend, run_id="r2", chain=chain).plan(PlanEnv(), direct, rec, feedback=feedback(frames=FRAMES))
     assert backend.sent[-1][0].images == (b"frame2", b"frame3", b"frame4", b"end-front", b"end-top")
     assert dict(rec.events)["plan"]["chat_images"] == 2 + 5
+    assert dict(rec.events)["ask"]["images"] == 5  # the page then leaves out the start images
 
 
 async def test_the_verdict_sends_the_frames_before_the_end_images():
@@ -216,6 +219,8 @@ def test_a_replan_that_continues_gets_the_frames_after_the_images_now(tmp_path):
 def test_a_stopped_run_sends_the_stop_frame(tmp_path):
     _, verdict, replan = _run(tmp_path, "start", stop_in=5)
     assert verdict.images == (b"frame2", b"frame3", b"frame4", b"frame5", b"front", b"top")
-    assert ('- Image 4: Front camera at the stop in keyframe 5 of 5. Note: "carry right". You imagined red cube at '
-            "(0.500, 0.100, 0.150), yaw 30°. You imagined green can at (0.450, 0.200, 0.050).") in verdict.text
+    assert ('- Image 4: Front camera at the stop in keyframe 5 of 5. Note: "carry right". At the end of keyframe 5, '
+            "you imagined red cube at (0.500, 0.100, 0.150), yaw 30°. At the end of keyframe 5, you imagined green can "
+            "at (0.450, 0.200, 0.050).") in verdict.text
+    assert "stop in keyframe 5 of 5. Note: \"carry right\". You imagined" not in verdict.text  # the poses of the end
     assert "Image 5: the front camera at the end of the last execution." in replan.text

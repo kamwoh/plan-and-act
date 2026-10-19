@@ -289,7 +289,8 @@ function openStepDetails(ev, key) {
   const items = [el("h2", "Tokens (exact, from the API)")];
   if (u) {
     const total = (u.in || 0) + (u.cache_write || 0) + (u.cache_read || 0);
-    const imageTokens = 2 * Math.round((640 * 480) / 750);
+    const imageCount = stepImageList(key).length;
+    const imageTokens = imageCount * Math.round((640 * 480) / 750);
     const imgShare = total ? Math.min(100, (imageTokens / total) * 100) : 0;
     const bar = el("div", "", "bar");
     const bi = el("i", "", "b-img");
@@ -305,7 +306,7 @@ function openStepDetails(ev, key) {
       el("h2", "Estimated split of the input (not exact)"),
       bar,
       legend,
-      el("p", `images = 2 × round(640×480/750) = 2 × ${imageTokens / 2} = ${imageTokens}; text = total input (${total}) − images`, "muted"),
+      el("p", `images = ${imageCount} × round(640×480/750) = ${imageCount} × ${Math.round((640 * 480) / 750)} = ${imageTokens}; text = total input (${total}) − images`, "muted"),
     );
   } else {
     items.push(el("p", "no usage reported", "muted"));
@@ -344,6 +345,7 @@ $("step_close").addEventListener("click", () => $("step_dialog").close());
 
 // ---- Chat ----
 let stepEvents = {};     // step key -> the step, bad_reply or llm_error event, for the details dialog
+let stepSent = {};       // step key -> the count of images that the first message of the step sent
 let stepPrompts = {};    // step key -> the first message text, until the step event comes
 let thinking = null;     // { item, timer, start } while Claude thinks
 let runLessons = [];
@@ -441,6 +443,9 @@ function stepImageList(key) {
     list.push([`${runCameras.front} · end of the last round`, end.front],
               [`${runCameras.top} · end of the last round`, end.top]);
   }
+  // A chat that has the start images gets a re-plan without them: "Image 1" of the message is then the first image here.
+  const sent = stepSent[key];
+  if (typeof sent === "number" && sent === list.length - 2) list.splice(0, 2);
   return list;
 }
 
@@ -498,6 +503,7 @@ function lines(items, cls = "") {
 function onAsk(ev) {
   if (ev.attempt === 1) {
     stepPrompts[stepKey(ev.step)] = ev.prompt;
+    if (typeof ev.images === "number") stepSent[stepKey(ev.step)] = ev.images;
     const item = entry("sent", "→ Sent", ev.step);
     item.append(folded(ev.prompt), thumbs(stepKey(ev.step)));
     addEntry(stepLink(item, stepKey(ev.step)));
@@ -617,6 +623,7 @@ function resetChat() {
   stepImages = {};
   stepEvents = {};
   stepPrompts = {};
+  stepSent = {};
   stepStarts = {};
   roundFeedback = {};
   runFrames = {};

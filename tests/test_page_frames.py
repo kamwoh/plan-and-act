@@ -37,3 +37,27 @@ def test_the_step_details_list_the_frames_before_the_end_images():
     images = _body(js, "function stepImageList(key)")
     assert images.index("roundFrames[round]") < images.index("end of the last round")
     assert "roundFrames[chatRound] = (ev.parent && runFrames[ev.parent]) || null;" in js
+
+
+def test_the_thumbs_of_a_step_entry_scroll_inside_the_entry():
+    assert ".thumbs { display: flex; gap: 6px; overflow-x: auto;" in _web("style.css")
+
+
+def test_the_token_split_counts_the_images_of_the_step():
+    details = _body(_web("app.js"), "function openStepDetails(ev, key)")
+    assert "const imageCount = stepImageList(key).length;" in details
+    assert "imageCount * Math.round((640 * 480) / 750)" in details and "2 * Math.round" not in details
+
+
+def test_the_step_images_leave_out_the_start_images_that_the_message_did_not_send():
+    js = _web("app.js")
+    images = _body(js, "function stepImageList(key)")
+    assert "const sent = stepSent[key];" in images
+    assert "if (typeof sent === \"number\" && sent === list.length - 2) list.splice(0, 2);" in images
+    ask = _body(js, "function onAsk(ev)")
+    assert ask.index("stepSent[stepKey(ev.step)] = ev.images;") < ask.index("thumbs(stepKey(ev.step))")
+    assert "stepSent = {};" in _body(js, "function resetChat()")
+
+
+def test_a_wide_prediction_table_scrolls_inside_the_entry():
+    assert ".ptable { display: block; max-width: 100%; overflow-x: auto;" in _web("style.css")

@@ -258,7 +258,8 @@ class Agent:
                             last if seen else images)
         attempts: list[dict] = []
         reply, error, text = await self._chat(
-            short, summary, attempts, lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i}), emit,
+            short, summary, attempts, lambda m, i: emit("ask", {"step": 1, "prompt": m.text, "attempt": i,
+                                                       "images": len(m.images)}), emit,
             PLAN_REPLY_SCHEMA, lambda obj: parse_plan(obj, replan=feedback is not None),
             summary_start=feedback is None or feedback.mode == "start")
         if self._stop.is_set():

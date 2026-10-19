@@ -222,8 +222,8 @@ pre.msg { padding: 6px 8px; font-size: 11px; line-height: 1.45; max-height: none
 pre.msg.short { max-height: calc(4 * 1.45em + 8px); padding-bottom: 0; overflow: hidden; }
 .more { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--accent); font: 500 11px Inter, system-ui, sans-serif; cursor: pointer; }
 .more:hover { text-decoration: underline; }
-.thumbs { display: flex; gap: 6px; }
-.thumbs img { width: 96px; height: 72px; object-fit: cover; border-radius: 5px; border: 1px solid var(--line); background: #05070a; }
+.thumbs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.thumbs img { flex: none; width: 96px; height: 72px; object-fit: cover; border-radius: 5px; border: 1px solid var(--line); background: #05070a; }
 .kf-box { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .kf-strip { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
 .kf-thumb { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0; background: none; border: 0;
@@ -380,7 +380,7 @@ canvas[hidden] { display: none; }
 .kf-lines .mark-bad { color: var(--bad); }
 .kf-lines li.bad { color: #f3b0b0; }
 .kf-lines .kf-muted { color: var(--faint); }
-.ptable { width: 100%; border-collapse: collapse; font: 11px/1.45 var(--mono); }
+.ptable { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; font: 11px/1.45 var(--mono); }  /* a wide table scrolls inside the entry */
 .ptable th { text-align: left; color: var(--faint); font-weight: 500; padding: 1px 4px; border-bottom: 1px solid var(--line); }
 .ptable td { padding: 1px 4px; color: #c9cfda; white-space: nowrap; }
 .ptable td:first-child { white-space: normal; overflow-wrap: anywhere; }
