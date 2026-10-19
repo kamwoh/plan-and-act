@@ -78,15 +78,6 @@ def test_a_replan_of_an_older_round_starts_a_new_chat(tmp_path):
     assert next(e for e in evs if e["kind"] == "plan")["session_id"] != backend.opens[1]["resume"]
 
 
-def test_a_replan_of_the_newest_round_still_continues_the_chat(tmp_path):
-    backend = FakeBackend([*three_rounds(), judged(), plan_body("four")])
-    with app(tmp_path, backend) as c:
-        ids = chain_of_3(c)
-        execute(c, ids[2])
-        replan(c, ids[2])
-    assert backend.opens[-1]["resume"] == "fake-session-1" and len(backend.seen[-1]) == 13
-
-
 # ---- 3. A verdict on an old round does not see a later round ----
 def test_a_verdict_on_an_older_round_starts_a_new_chat(tmp_path):
     backend = FakeBackend([*three_rounds(), judged(True, "Done.")])

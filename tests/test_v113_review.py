@@ -3,7 +3,6 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from armmind.agent.prompts import PLAN_SYSTEM
 from armmind.llm.fake import FakeBackend
 from armmind.server.app import create_app
 from armmind.sim.state import END_STATE
@@ -106,11 +105,6 @@ def runner_scene():
 
 
 # 6. The plan prompt says that only a re-plan from the start resets the scene.
-def test_the_plan_prompt_resets_the_scene_only_in_a_replan_from_the_start():
-    assert "In a re-plan from the start, the scene is back at its start." in PLAN_SYSTEM
-    assert "from the start. The scene is back at its start." not in PLAN_SYSTEM
-
-
 # 8. A done re-plan shows the last auto-check result.
 def test_a_replan_run_start_has_the_parent_check(tmp_path):
     with TestClient(create_app(FakeBackend([good_plan(), judged(), good_plan(DONE)]), state_factory,
@@ -142,7 +136,6 @@ def test_exec_start_action_data_starts_from_the_gripper_of_the_plan_view():
     from armmind.env import keyframe_actions
     assert [a.type for a in keyframe_actions(lift, _start_gripper({"track": {"start": {"state": "closed"}}}))] == \
         ["move_to"]
-
 
 
 # 9. The Re-plan button keeps the mode of the moment it was made.

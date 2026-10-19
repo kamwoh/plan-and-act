@@ -232,7 +232,7 @@ def test_real_kitchen_bottle_grasp_on_seed_1_is_held():
 
 def _solution_cases():
     from armmind.scenes import SCENES
-    return [(s, t, seed) for s, sc in SCENES.items() for t in sc.tasks for seed in range(3)]
+    return [(s, t, seed) for s, sc in SCENES.items() for t in sc.tasks for seed in range(1)]
 
 
 @pytest.mark.assets

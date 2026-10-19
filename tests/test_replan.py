@@ -36,6 +36,8 @@ def test_system_is_unchanged():
 def test_plan_system_speaks_of_the_replan_and_the_lessons():
     low = PLAN_SYSTEM.lower()
     assert "re-plan" in low and "end images" in low and "from the start" in low
+    assert "In a re-plan from the start, the scene is back at its start." in PLAN_SYSTEM
+    assert "from the start. The scene is back at its start." not in PLAN_SYSTEM
     assert '"lessons"' in PLAN_SYSTEM and "cause and effect" in low
 
 

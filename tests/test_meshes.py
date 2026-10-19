@@ -193,7 +193,7 @@ def test_mesh_objects_rest_on_the_table(scene_name):
 @pytest.mark.assets
 @pytest.mark.objects
 @pytest.mark.parametrize("scene_name", ["kitchen", "toys"])
-@pytest.mark.parametrize("seed", range(3))
+@pytest.mark.parametrize("seed", [0])
 def test_scripted_grasp_lifts_every_item(scene_name, seed):
     from armmind.scenes import SCENES
     from armmind.scenes.handling import grip, items

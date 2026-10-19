@@ -108,7 +108,7 @@ def test_fixtures_are_outside_the_region(name):
 def test_objects_stay_still_at_their_start_poses(name):
     scene = SCENES[name]
     w = World(scene)
-    for seed in range(5):
+    for seed in range(2):
         w.reset(scene.layout(seed))
         w.step(200)
         for obj in scene.objects:

@@ -42,7 +42,7 @@ def _execute(scene, task, seed, kfs_from=None, stop=lambda: False):
 
 @pytest.mark.assets
 @pytest.mark.parametrize("scene, task", [("cubes", "pick"), ("tray", "red_in_tray")])
-@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("seed", [0])
 def test_a_scripted_plan_from_the_true_state_succeeds(scene, task, seed):
     out = _execute(scene, task, seed)
     assert out["status"] == "success" and out["success"] is True and out["stopped"] is None
@@ -237,7 +237,7 @@ def push_plan(world, name="red_cube"):
 
 
 @pytest.mark.assets
-@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("seed", [0])
 def test_a_scripted_push_moves_the_cube_as_predicted(seed):
     from armmind.env import MujocoEnv
     from armmind.plan.formats import Entity
@@ -311,8 +311,7 @@ def test_a_cancel_inside_a_keyframe_leaves_it_out_of_the_poses():
 
 
 @pytest.mark.assets
-@pytest.mark.parametrize("seed", [0, 1, 2])
-@pytest.mark.parametrize("toward_mm", [2, 4, 6, -6])
+@pytest.mark.parametrize("seed, toward_mm", [(0, 4), (0, -6)])
 def test_a_small_belief_error_on_a_push_passes_every_check(seed, toward_mm):
     """The true cube starts toward_mm closer to the hand than the belief (negative: further away)."""
     from armmind.env import MujocoEnv

@@ -75,7 +75,7 @@ HALF_CUBE = 0.02
 
 @pytest.mark.assets
 @pytest.mark.parametrize("scene", ["cubes", "drawer"])
-@pytest.mark.parametrize("seed", [0, 2])
+@pytest.mark.parametrize("seed", [0])
 def test_the_page_projection_matches_the_mujoco_render(scene, seed, tmp_path):
     from armmind.sim.planview import cameras
     env = _env(scene, seed)

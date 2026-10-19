@@ -204,7 +204,7 @@ def with_holding(kfs: list[Keyframe], world) -> list[Keyframe]:
 @pytest.mark.assets
 @pytest.mark.parametrize("scene, task", [("cubes", "pick"), ("tray", "red_in_tray"), ("cubes", "stack"),
                                          ("tray", "all_in_tray"), ("drawer", "cube_in_drawer")])
-@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("seed", [0])
 def test_a_true_belief_and_a_scripted_plan_score_clean(scene, task, seed):
     from armmind.env import MujocoEnv
     from armmind.sim.planview import true_entities

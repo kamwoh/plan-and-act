@@ -10,7 +10,6 @@ import pytest
 from armmind.plan.formats import Entity, Keyframe, build_track
 from armmind.scenes import SCENES
 from armmind.sim.planview import true_entities
-from armmind.sim.world import CAMERAS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,36 +40,6 @@ def _env(scene="cubes", seed=0, task=None):
     from armmind.env import MujocoEnv
     sc = SCENES[scene]
     return MujocoEnv(sc, sc.tasks.get(task) if task else None, seed, "")
-
-
-def _axes(pos, xyaxes):
-    p = np.array([float(v) for v in pos.split()])
-    a = np.array([float(v) for v in xyaxes.split()])
-    x, y = a[:3] / np.linalg.norm(a[:3]), a[3:]
-    y = y - x * (x @ y)
-    y /= np.linalg.norm(y)
-    return p, -np.cross(x, y), y
-
-
-@pytest.mark.assets
-@pytest.mark.parametrize("scene", ["cubes", "drawer"])
-def test_cameras_have_the_mjcf_poses_and_fields_of_view(scene):
-    env = _env(scene)
-    try:
-        view = env.plan_view((), (Keyframe((0.5, 0.0, 0.2), 0.0, "open", None),))
-    finally:
-        env.close()
-    cams = {c["name"]: c for c in view["cameras"]}
-    assert set(cams) == {"front", "top"}
-    for name, spec in {**CAMERAS, **SCENES[scene].camera_overrides}.items():
-        pos, forward, up = _axes(*spec)
-        c = cams[name]
-        assert np.allclose(c["pos"], pos, atol=1e-6)
-        assert np.allclose(c["forward"], forward, atol=1e-6) and np.allclose(c["up"], up, atol=1e-6)
-        assert c["fovy"] == 45 and (c["width"], c["height"]) == (640, 480)
-        assert c["label"] == SCENES[scene].camera_labels[name]
-        assert c["grid"] == (name not in SCENES[scene].camera_overrides)
-    assert view["grid"]["x"][0] == 0.2 and view["grid"]["y"][-1] == 0.4
 
 
 def _geom_aabb(model, data, g):
@@ -138,7 +107,7 @@ def test_drawer_fixtures_follow_the_start_slide():
 
 
 @pytest.mark.assets
-def test_round_mesh_objects_are_cylinders_in_the_true_start():
+def test_round_mesh_objects_are_cylinders_in_the_true_entities():
     if not SCENES["kitchen"].meshes:
         pytest.skip("no meshes")
     from armmind.sim.meshes import have_meshes

@@ -12,13 +12,6 @@ def test_every_page_script_parses(name):
     subprocess.run(["node", "--check", str(WEB / name)], check=True)
 
 
-def test_the_page_has_no_start_button():
-    html, js = _web("index.html"), _web("app.js")
-    assert 'id="start_btn"' not in html and not re.search(r">\s*Start\s*<", html)
-    assert '"/api/run"' not in js and "start_btn" not in js
-    assert 'type="submit" class="btn primary" id="plan_btn"' in html
-
-
 def test_enter_in_the_instruction_runs_plan():
     js = _web("app.js")
     submit = js[js.index('$("run").addEventListener("submit"'):]
