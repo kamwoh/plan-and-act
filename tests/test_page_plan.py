@@ -216,7 +216,7 @@ def test_a_moves_keyframe_has_its_own_marker_and_text():
     assert "moves" in _body(app, "function showPlayerTime")
     body = _body(app, "function planCheckEntry")
     assert 'field("moves"' in body and "movesText" in body
-    assert "planCheckEntry(ev.scores || {}, ev.keyframes || [], Boolean(ev.done))" in app
+    assert "planCheckEntry(ev.scores || {}, planImpossible ? [] : ev.keyframes || [], Boolean(ev.done))" in app
 
 
 def test_exec_end_adds_the_prediction_entry_also_in_a_replay():

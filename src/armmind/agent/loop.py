@@ -276,7 +276,8 @@ class Agent:
         view = await call(env.plan_view, reply.objects, reply.keyframes, scores["marks"])
         emit("plan", {"step": 1, "summary": reply.summary, "objects": [o.to_dict() for o in reply.objects],
                       "keyframes": [k.to_dict() for k in reply.keyframes], "warnings": list(reply.warnings),
-                      "lessons": list(reply.lessons), "scores": scores, "view": view, "done": reply.done, **detail})
+                      "lessons": list(reply.lessons), "scores": scores, "view": view, "done": reply.done,
+                      "impossible": reply.impossible, **detail})
         return "planned"
 
     async def verdict(self, scene: str, instruction: str, objects: tuple[dict, ...], keyframes: tuple[dict, ...],

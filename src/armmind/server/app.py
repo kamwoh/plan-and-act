@@ -516,6 +516,7 @@ class Runner:
             chain = None  # the chat of the loop: round 1 starts it, each later round continues it
             verdicts: list[dict] = []  # for each judged execution: {"round", "claude", "reason", "check"}
             pending: dict | None = None  # the last execution, until the next re-plan judges it
+            impossible: dict | None = None  # {"round", "reason"} when Claude says that the task is not possible
 
             async def judge_last(judged: Path, round_no: int, check: bool | None, why: str) -> tuple[bool, str]:
                 """The verdict call on the last execution: gives the success and the reason of the loop end.
@@ -561,6 +562,10 @@ class Runner:
                         success = task is None  # with a check, the last execution was not solved
                         reason = ("Claude says the task is done" if success
                                   else "Claude says done, the auto-check says not solved")
+                        break
+                    if status == "planned" and found and (why := found["plan"].get("impossible")):
+                        impossible = {"round": rounds_run, "reason": why}
+                        reason = f"Claude says the task is not possible: {why}"
                         break
                     saved = saved_plan(found) if found else None
                     if status != "planned" or saved is None:
@@ -611,7 +616,8 @@ class Runner:
                         "rounds_run": rounds_run, "rounds_max": req.rounds, "success": success, "reason": reason,
                         "judge": "check" if task else "claude", "verdicts": verdicts,
                         "claude": verdicts[-1] if verdicts else None,
-                        "agree": sum(v["claude"] == v["check"] for v in compared), "compared": len(compared)})
+                        "agree": sum(v["claude"] == v["check"] for v in compared), "compared": len(compared),
+                        "impossible": impossible})
                 finally:
                     end_log.close()
                     self.auto = False
@@ -735,6 +741,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         found = history.plan(run_id)
         if found is None:
             raise HTTPException(404, "no such plan")
+        if why := found["plan"].get("impossible"):
+            raise HTTPException(409, f"Claude says the task is not possible: {why}. Nothing executes")
         saved = saved_plan(found)
         if saved is None and found["plan"].get("done") and not found["plan"]["keyframes"]:
             raise HTTPException(404, "Claude says the task is done: the plan has no keyframes to execute")

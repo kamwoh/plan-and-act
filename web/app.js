@@ -18,6 +18,7 @@ let planRunId = null;      // the id of the plan run on the page, for Execute an
 let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
 let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
 let planDone = false;      // Claude's re-plan on the page says that the task is done
+let planImpossible = "";  // Claude's plan on the page says that the task is not possible: the reason
 let parentCheck = null;    // the auto-check of the execution before this re-plan: true, false or null
 let execError = false;     // the last execution of the plan on the page ended with an error: it has no end state
 const MAX_ROUND = 30;
@@ -1081,6 +1082,7 @@ function onEvent(ev, replay = false) {
     planRound = ev.round || 1;
     planMode = ev.round_mode || null;
     planDone = false;
+    planImpossible = "";
     parentCheck = typeof ev.parent_check === "boolean" ? ev.parent_check : null;
     execError = false;
     if (!replay) autoLoop = Boolean(ev.auto_rounds);
@@ -1131,7 +1133,9 @@ function onEvent(ev, replay = false) {
     showLessons();
     planView = ev.view || null;
     planDone = Boolean(ev.done);
-    addEntry(planCheckEntry(ev.scores || {}, ev.keyframes || [], Boolean(ev.done)));
+    planImpossible = ev.impossible || "";
+    addEntry(planCheckEntry(ev.scores || {}, planImpossible ? [] : ev.keyframes || [], Boolean(ev.done)));
+    if (planImpossible) addEntry(impossibleEntry(planImpossible));
     if (ev.view && (!replay || replayShowsPlan)) showPlan(ev.view);
   } else if (ev.kind === "exec_start") {
     const own = planView && ev.run_id === planRunId;  // the cameras and the start pose of the plan on the page
@@ -1192,7 +1196,8 @@ function onEvent(ev, replay = false) {
     }
     addEntry(loopEndEntry(ev));
     const solved = ev.judge === "claude" ? `Claude says done in round ${ev.rounds_run}` : `solved in round ${ev.rounds_run}`;
-    setStatus(ev.success ? `Auto loop · ${solved}` : `Auto loop ended · ${ev.reason}`, ev.success ? "success" : "");
+    if (ev.impossible) setStatus("not possible", "bad");
+    else setStatus(ev.success ? `Auto loop · ${solved}` : `Auto loop ended · ${ev.reason}`, ev.success ? "success" : "");
   } else if (ev.kind === "bad_reply") {
     stepEvents[stepKey(ev.step)] = ev;
     addTotals(ev.usage);
@@ -1208,7 +1213,8 @@ function onEvent(ev, replay = false) {
     setCamState("ended");
     onRunEnd(ev);
     loadLessons();
-    if (ev.status === "planned" && planDone) setStatus("Claude says the task is done", "success");
+    if (ev.status === "planned" && planImpossible) setStatus("not possible", "bad");
+    else if (ev.status === "planned" && planDone) setStatus("Claude says the task is done", "success");
     else if (ev.status === "planned" && autoLoop) setStatus("plan ready · the Auto loop executes it next", "success");
     else if (ev.status === "planned") setStatus("plan ready · read the plan check, then execute", "success");
     else if (ev.status === "success") setStatus("success · task solved", "success");
@@ -1414,7 +1420,8 @@ function onPlan(ev) {
     row.append(el("span", String(i + 1), "n"), document.createTextNode(`${k.note || "(no note)"} · ${xyzText(k.xyz)} yaw ${Math.round(k.yaw)}° · ${k.state}${holds}${moves}`));
     keys.append(row);
   });
-  item.append(field("keys", (ev.keyframes || []).length ? keys : el("span", "none: Claude says the task is done", "muted")));
+  const none = ev.impossible ? "none: Claude says the task is not possible" : "none: Claude says the task is done";
+  item.append(field("keys", (ev.keyframes || []).length ? keys : el("span", none, "muted")));
   if (ev.warnings && ev.warnings.length) item.append(lines(ev.warnings, "mono"));
   if (ev.lessons && ev.lessons.length) item.append(field("lessons", lines(ev.lessons, "lesson-lines")));
   if (ev.usage) item.append(el("div", usageText(ev.usage), "entry-meta"));
@@ -1630,10 +1637,20 @@ function verdictEntry(ev) {
   return item;
 }
 
+// Claude stops the task: a red entry with the reason. Nothing executes.
+function impossibleEntry(reason) {
+  const item = entry("impossible", "✕ Claude stopped: not possible");
+  item.append(el("div", reason));
+  return item;
+}
+
 function loopEndEntry(ev) {
   const solved = ev.judge === "claude" ? "■ Auto loop: Claude says done" : "■ Auto loop: task solved";
-  const item = entry(ev.success ? "end ok" : "end", ev.success ? solved : "■ Auto loop ended");
-  item.append(el("div", `${ev.rounds_run} of ${ev.rounds_max} round${ev.rounds_max === 1 ? "" : "s"} run · ${ev.reason}.`));
+  const gaveUp = ev.impossible && typeof ev.impossible === "object" ? ev.impossible : null;
+  const item = entry(gaveUp ? "impossible" : ev.success ? "end ok" : "end",
+    gaveUp ? "■ Auto loop: not possible" : ev.success ? solved : "■ Auto loop ended");
+  item.append(el("div", gaveUp ? `Claude gave up in round ${gaveUp.round}: ${gaveUp.reason}`
+    : `${ev.rounds_run} of ${ev.rounds_max} round${ev.rounds_max === 1 ? "" : "s"} run · ${ev.reason}.`));
   if (ev.judge) item.append(field("verdict", el("span", ev.judge === "claude" ? "Claude's own done verdict (no auto-check)" : "the auto-check")));
   const rounds = (ev.verdicts || []).map((v) => `round ${v.round} · Claude: ${v.claude ? "done" : "not done"}` +
     (v.check === true || v.check === false ? ` · auto-check: ${v.check ? "solved" : "not solved"}` : ""));

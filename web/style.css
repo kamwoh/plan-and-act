@@ -210,6 +210,8 @@ textarea:focus, input[type="number"]:focus { border-color: var(--accent); box-sh
 .entry.res .who { color: var(--muted); }
 .entry.stopped { border-left-color: var(--warn); background: rgba(240, 176, 74, 0.08); border-color: rgba(240, 176, 74, 0.35); }
 .entry.stopped .who { color: var(--warn); }
+.entry.impossible { border-left-color: var(--bad); background: rgba(240, 106, 106, 0.08); border-color: rgba(240, 106, 106, 0.35); }
+.entry.impossible .who { color: var(--bad); }
 .entry.error { border-left-color: var(--bad); background: rgba(240, 106, 106, 0.07); }
 .entry.error .who { color: var(--bad); }
 .entry.system .who, .entry.end .who { color: var(--muted); }

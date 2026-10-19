@@ -95,7 +95,9 @@ In a re-plan from the start, the scene is back at its start. The message then al
 Give a new plan for the whole task.
 A re-plan that continues has no end images: the scene did not reset, so plan only what is left, from images 1 and 2 and the gripper now.
 In a re-plan, set "done" to true when the images show that the task is complete. Then "keyframes" can be empty. \
-In every other case, give at least 1 keyframe.
+Set "impossible" to a short reason only when a cause makes the task impossible with this arm and scene, \
+for example an object that the scene does not have or a target out of reach. One failed attempt is not a reason. \
+Then "keyframes" can be empty. In every other case, give at least 1 keyframe.
 Write a "lessons" item only in a re-plan, and only when the last plan had a result you did not expect. \
 Write it as cause and effect, for example "A grasp 2 cm above the cube centre slipped. 1 cm held.\""""
 
@@ -175,6 +177,7 @@ PLAN_REPLY_SCHEMA = {
         "summary": {"type": "string"},
         "lessons": {"type": "array", "items": {"type": "string"}, "maxItems": 3},
         "done": {"type": "boolean"},
+        "impossible": {"type": "string"},
     },
 }
 
