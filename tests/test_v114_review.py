@@ -312,3 +312,17 @@ def test_a_branch_round_on_the_server_has_no_session_to_resume(tmp_path):
     assert run_events(tmp_path, ids[1])[0]["session_id"] == "fake-session-1"  # a round that continues has one
     js = _web("app.js")
     assert "const same = chained && Boolean(ev.session_id);" in _body(js, "function onRunStart(ev, chained = false)")
+
+
+def test_the_newest_round_of_a_branch_resumes_its_own_chat(tmp_path):
+    backend = FakeBackend([*three_rounds(), plan_body("b2"), judged(), plan_body("b3")])
+    with app(tmp_path, backend) as c:
+        ids = chain_of_3(c)
+        b2 = replan(c, ids[0])  # round 1 has a child: a branch with a new chat
+        branch_session = next(e for e in run_events(tmp_path, b2) if e["kind"] == "plan")["session_id"]
+        execute(c, b2)  # the verdict of b2: b2 has no child, so it resumes the chat of the branch
+        b3 = replan(c, b2)
+    assert [o["resume"] for o in backend.opens[-2:]] == [branch_session, branch_session]
+    assert not [e for e in run_events(tmp_path, b3) if e["kind"] == "chat_lost"]
+    verdict = next(e for e in run_events(tmp_path, b2) if e["kind"] == "verdict")
+    assert verdict["session_id"] is not None

@@ -93,3 +93,9 @@ async def test_a_branch_round_starts_without_a_session_to_resume():
     await Agent(FakeBackend([good_plan()]), run_id="r3", chain=Chain("r1", note=BRANCH_CHAT)).plan(
         PlanEnv(), direct, rec, feedback=feedback())
     assert rec.events[0][1]["session_id"] is None
+
+
+def test_a_plan_event_ends_the_chat_text_of_its_round():
+    handler = _body(_web("app.js"), "function onEvent(ev, replay = false)")
+    plan = handler[handler.index('ev.kind === "plan"'):]
+    assert plan.index("roundChatText = null") < plan.index("onPlan(ev)")

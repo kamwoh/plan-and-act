@@ -1108,6 +1108,7 @@ function onEvent(ev, replay = false) {
     for (const t of ev.lessons || []) if (!runLessons.includes(t)) runLessons.push(t);
     showLessons();
   } else if (ev.kind === "plan") {
+    roundChatText = null;  // the plan is in: a later note of a verdict does not change what the plan saw
     stepEvents[stepKey(ev.step)] = ev;
     addTotals(ev.usage);
     onPlan(ev);

@@ -216,10 +216,10 @@ def chain_of(found: dict) -> Chain:
 
 
 def branch_chain(found: dict, history: RunStore) -> Chain:
-    """The chat for a re-plan or a verdict of a saved plan. When the chain has a later round, the saved chat
-    also holds that round. A new chat with a summary then starts a branch."""
-    chain, round_no = chain_of(found), plan_round(found["start"])
-    if any(r["chain"] == chain.id and r["round"] > round_no for r in history.runs()):
+    """The chat for a re-plan or a verdict of a saved plan. When the plan already has a child round, its saved
+    chat also holds that round, even a stopped one. A new chat with a summary then starts a branch."""
+    chain, run_id = chain_of(found), found["folder"].name
+    if any(r["parent"] == run_id for r in history.runs()):
         return Chain(chain.id, note=BRANCH_CHAT)
     return chain
 
