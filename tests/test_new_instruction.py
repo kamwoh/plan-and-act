@@ -156,7 +156,7 @@ def test_an_auto_replan_with_a_new_instruction_starts_the_loop(tmp_path):
     execs = [next(e for e in run_events(tmp_path, r) if e["kind"] == "exec_start") for r in runs[1:]]
     assert [(e["round"], e["check"]) for e in execs] == [(2, "stack"), (3, "stack")]
     end = run_events(tmp_path, runs[2])[-1]
-    assert end["kind"] == "loop_end" and end["rounds_run"] == 2 and end["rounds_max"] == 2
+    assert end["kind"] == "loop_end" and end["rounds_run"] == 2 and end["rounds_max"] == 2 and end["round"] == 3
     assert [v["round"] for v in end["verdicts"]] == [2, 3]
 
 
@@ -216,7 +216,7 @@ def auto_done(tmp_path, monkeypatch, success):
 
 def test_an_auto_loop_done_before_any_execution_checks_the_scene_now(tmp_path, monkeypatch):
     end = auto_done(tmp_path, monkeypatch, lambda self: True)
-    assert end["kind"] == "loop_end" and end["success"] is True and end["rounds_run"] == 1
+    assert end["kind"] == "loop_end" and end["success"] is True and end["rounds_run"] == 1 and end["round"] == 2
     assert end["reason"] == "Claude says done, and the auto-check of the scene now says solved"
 
 

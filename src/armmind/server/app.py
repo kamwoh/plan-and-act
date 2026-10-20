@@ -702,6 +702,7 @@ class Runner:
                     compared = [v for v in verdicts if v["check"] is not None]
                     self._emitter(end_log)("loop_end", {
                         "rounds_run": rounds_run, "rounds_max": req.rounds, "success": success, "reason": reason,
+                        "round": base + rounds_run,  # the absolute round of the last round, as in its divider
                         "judge": "check" if task else "claude", "verdicts": verdicts,
                         "claude": verdicts[-1] if verdicts else None,
                         "agree": sum(v["claude"] == v["check"] for v in compared), "compared": len(compared),

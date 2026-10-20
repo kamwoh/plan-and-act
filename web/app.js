@@ -1247,7 +1247,8 @@ function onEvent(ev, replay = false) {
       if ($("history_dialog").open) fillHistory();
     }
     addEntry(loopEndEntry(ev));
-    const solved = ev.judge === "claude" ? `Claude says done in round ${ev.rounds_run}` : `solved in round ${ev.rounds_run}`;
+    const last = ev.round ?? ev.rounds_run;  // the absolute round. A loop_end before v1.17 has only rounds_run
+    const solved = ev.judge === "claude" ? `Claude says done in round ${last}` : `solved in round ${last}`;
     if (ev.impossible) setStatus("not possible", "bad");
     else setStatus(ev.success ? `Auto loop · ${solved}` : `Auto loop ended · ${ev.reason}`, ev.success ? "success" : "");
   } else if (ev.kind === "bad_reply") {

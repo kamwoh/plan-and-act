@@ -73,3 +73,9 @@ def test_a_run_of_another_tab_or_of_history_puts_its_instruction_in_the_box():
 def test_clear_plan_resets_the_replan_labels():
     body = _body(_web("app.js"), "function clearPlan")
     assert body.rstrip().endswith("showReplanLabels();")
+
+
+def test_the_loop_end_text_uses_the_absolute_round():
+    handler = _body(_web("app.js"), "function onEvent(ev, replay = false)")
+    assert "const last = ev.round ?? ev.rounds_run;" in handler
+    assert "`Claude says done in round ${last}`" in handler and "`solved in round ${last}`" in handler
