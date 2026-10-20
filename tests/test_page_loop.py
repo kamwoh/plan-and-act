@@ -23,7 +23,7 @@ def test_rounds_replaces_max_steps():
     html = _web("index.html")
     assert 'id="max_steps"' not in html
     assert re.search(r'<input id="rounds" type="number" value="3" min="1" max="30">', html)
-    body = _body(_web("app.js"), "async function startPlan")
+    body = _body(_web("app.js"), "function planState()")
     assert 'auto: $("auto").checked' in body and 'rounds: roundsValue($("rounds").value)' in body
 
 
@@ -116,4 +116,4 @@ def test_rounds_value_falls_back_and_clamps(value, want):
     script = f"const MAX_ROUND = 30;\n{body}\n}}\nconsole.log(roundsValue({value!r}));"
     out = subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True).stdout
     assert int(out) == want
-    assert 'rounds: roundsValue($("rounds").value)' in _body(_web("app.js"), "async function startPlan")
+    assert 'rounds: roundsValue($("rounds").value)' in _body(_web("app.js"), "function planState()")

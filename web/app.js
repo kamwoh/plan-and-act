@@ -19,7 +19,6 @@ let planRound = 1;         // the round of the plan on the page: Re-plan works u
 let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
 let planInstruction = "";  // the newest instruction of the chain on the page: another one in the box is new
 let ownStart = false;      // this tab posted a plan or a re-plan: its run_start keeps the instruction box
-let planExecuted = false;  // the plan on the page has an execution: its Plan from here is after the execution
 let planDone = false;      // Claude's re-plan on the page says that the task is done
 let planImpossible = "";  // Claude's plan on the page says that the task is not possible: the reason
 let parentCheck = null;    // the auto-check of the execution before this re-plan: true, false or null
@@ -72,7 +71,7 @@ function showMode() {
   $("mode").textContent = t ? `Auto-check: ${t.name}` : "No auto-check: Claude says when it is done";
   $("mode").classList.toggle("check", Boolean(t));
   for (const chip of $("examples").children) chip.classList.toggle("active", t ? chip.dataset.name === t.name : chip.dataset.name === "");
-  showReplanLabels();
+  labelPlanButton();
 }
 
 function chip(label, name, instruction) {
@@ -936,7 +935,7 @@ $("shuffle").addEventListener("click", () => {
   loadPreview();
 });
 
-// Reset: show the start layout of this scene and seed again, and clear the last run from the page.
+// Reset: start over. Show the start layout of this scene and seed again, and clear the chain from the page.
 // Saved runs and saved lessons stay.
 $("reset").addEventListener("click", () => {
   if (running) return;
@@ -949,6 +948,7 @@ $("reset").addEventListener("click", () => {
 });
 
 $("seed").addEventListener("input", () => {
+  clearPlan();  // the chain ends at once: Plan must not go on with the old seed
   clearTimeout(previewTimer);
   previewTimer = setTimeout(loadPreview, 300);
 });
@@ -992,28 +992,63 @@ $("run").addEventListener("submit", (e) => {
   startPlan();
 });
 
-// Plan: the instruction, scene, seed and lessons switch. With Auto, the server loops over the rounds.
-// A plan never gets the true positions.
+// Plan goes on, Reset starts over. Without a chain on the page, Plan starts a new chain from the fresh scene.
+// With a chain, Plan re-plans its newest round: with a new instruction from the box ("Plan from here"), or
+// with the same one ("Re-plan"). With Auto, the server loops over the rounds. A plan never gets the true positions.
 async function startPlan() {
   if (running) {
     setStatus("a run is already active", "bad");
     return;
   }
   if (!$("run").reportValidity()) return;
-  const body = {
-    scene: sceneName,
-    instruction: $("instruction").value.trim(),
-    seed: Number($("seed").value),
-    use_lessons: $("use_lessons").checked,
-    auto: $("auto").checked,
-    rounds: roundsValue($("rounds").value),
-    mode: roundMode(),
-    max_keyframes: perRound(),
-  };
-  beginRun("planning");
+  const req = planRequest(planState());
+  if (req.url === "/api/plan") beginRun("planning");
+  else if (req.body.instruction) setStatus("planning from here · new instruction", "thinking");
+  else setStatus(`re-planning · ${req.body.mode === "continue" ? "continue" : "from start"}`, "thinking");
   ownStart = true;
-  if (await postJson("/api/plan", body)) setRunning(true);
+  if (await postJson(req.url, req.body)) setRunning(true);
   else ownStart = false;
+}
+
+// What the Plan button needs to know: the chain on the page, its last execution and the form.
+function planState() {
+  return {
+    runId: planRunId, round: planRound, newest: planInstruction, instruction: $("instruction").value.trim(),
+    scene: sceneName, seed: Number($("seed").value), useLessons: $("use_lessons").checked,
+    auto: $("auto").checked, rounds: roundsValue($("rounds").value), mode: roundMode(), perRound: perRound(),
+    execError, execPartial,
+  };
+}
+
+// The label, title, endpoint and body of the Plan button for a state of the page (see planState).
+// The newest round of the chain is the plan on the page. The server goes on from its end state, or from its
+// start when it has no execution. The last round (MAX_ROUND) cannot re-plan, so Plan then starts a new chain.
+function planRequest(s) {
+  if (!s.runId || s.round >= MAX_ROUND) {
+    return {
+      label: "▶ Plan", title: PLAN_TITLE, url: "/api/plan",
+      body: { scene: s.scene, instruction: s.instruction, seed: s.seed, use_lessons: s.useLessons, auto: s.auto,
+        rounds: s.rounds, mode: s.mode, max_keyframes: s.perRound },
+    };
+  }
+  const url = `/api/plan/${encodeURIComponent(s.runId)}/replan`;
+  const loop = { auto: s.auto, rounds: s.rounds };
+  if (s.instruction && s.instruction !== s.newest) {  // a new instruction always continues (v1.17)
+    return { label: "▶ Plan from here", title: FROM_HERE_TITLE, url,
+      body: { mode: "continue", max_keyframes: s.perRound, instruction: s.instruction, ...loop } };
+  }
+  // No end state after an error: start. A partial run always continues.
+  const mode = s.execError ? "start" : s.execPartial ? "continue" : s.mode;
+  return { label: "↻ Re-plan", title: `${REPLAN_TITLE} Press Reset to start over.`, url,
+    body: { mode, max_keyframes: mode === "continue" ? s.perRound : 0, ...loop } };
+}
+
+function labelPlanButton() {
+  const { label, title } = planRequest(planState());
+  const [icon, ...text] = label.split(" ");
+  $("plan_btn").replaceChildren(el("span", icon), ` ${text.join(" ")}`);
+  $("plan_btn").firstChild.setAttribute("aria-hidden", "true");
+  $("plan_btn").title = title;
 }
 
 // The Rounds field as a whole number from 1 to 30 (MAX_ROUND). An empty or bad field gives 3.
@@ -1126,7 +1161,6 @@ function onEvent(ev, replay = false) {
     planMode = ev.round_mode || null;
     planInstruction = ev.instruction || "";
     if (!own) showInstruction();
-    planExecuted = false;
     planDone = false;
     planImpossible = "";
     parentCheck = typeof ev.parent_check === "boolean" ? ev.parent_check : null;
@@ -1145,7 +1179,7 @@ function onEvent(ev, replay = false) {
     roundFrames[chatRound] = (ev.parent && runFrames[ev.parent]) || null;
     emptyMemo();
     onRunStart(ev, chained);
-    showReplanLabels();
+    labelPlanButton();
     if (ev.mode === "plan") setStatus(`planning${roundText(planRound)} · Claude is thinking`, "thinking");
   } else if (ev.kind === "observation") {
     const key = stepKey(ev.step);
@@ -1205,8 +1239,7 @@ function onEvent(ev, replay = false) {
       setStatus("running the plan", "moving");
       setViewMode("camera");  // the live frames; a saved run keeps the imagined video
     }
-    if (ev.run_id === planRunId) planExecuted = true;
-    showReplanLabels();
+    labelPlanButton();
     onExecStart(ev);
     if (own) setPath(ev.step, planView.cameras, planView.track && planView.track.start, ev.action_data, true);
   } else if (ev.kind === "exec_end") {
@@ -1222,6 +1255,7 @@ function onEvent(ev, replay = false) {
     setCamState("ended");
     execError = ev.status === "error";
     execPartial = ev.status === "partial";
+    labelPlanButton();
     const endItem = onExecEnd(ev);
     const pred = ev.prediction ? predictionEntry(ev.prediction, ev) : null;
     if (planRunId && planRound < MAX_ROUND) (pred || endItem).append(replanButton());
@@ -1416,7 +1450,7 @@ function clearPlan() {
   for (const b of document.querySelectorAll(".exec-btn")) b.disabled = true;
   $("player").hidden = true;
   setViewMode("camera");
-  showReplanLabels();
+  labelPlanButton();
 }
 
 function setViewMode(mode) {
@@ -1544,8 +1578,6 @@ function planCheckEntry(scores, keyframes = [], done = false) {
   const moved = keyframes.map((k, i) => [i, k.moves || []]).filter(([, m]) => m.length)
     .map(([i, m]) => `${i + 1} · moves ${movesText(m)}`);
   if (moved.length) item.append(field("moves", lines(moved, "mono")));
-  const fromHere = planRunId && planRound < MAX_ROUND ? replanButton(true) : null;
-  if (fromHere && !keyframes.length) item.append(fromHere);
   if (!keyframes.length) return item;  // a done plan without keyframes has nothing to execute
   const exec = el("button", "▶ Execute plan", "btn exec-btn");
   exec.type = "button";
@@ -1556,7 +1588,6 @@ function planCheckEntry(scores, keyframes = [], done = false) {
     : "Run the keyframes once in the physics, from a fresh start of the same scene and seed. No model is called.";
   exec.addEventListener("click", executePlan);
   item.append(exec);
-  if (fromHere) item.append(fromHere);
   return item;
 }
 
@@ -1666,22 +1697,9 @@ function endImages(runId, step) {
 // Re-plan: the same rules as Execute disable it (see clearPlan and setRunning).
 const REPLAN_TITLE = "Claude sees this plan and its result. With Continue on, it plans the rest from where the " +
   "execution ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
-const FROM_HERE_TITLE = "Claude gets the new instruction in the same chat, and the arm goes on from where it is now";
-
-// The text of the instruction box when it differs from the newest instruction of the chain on the page, else "".
-function newInstruction() {
-  const text = $("instruction").value.trim();
-  return planRunId && text && text !== planInstruction ? text : "";
-}
-
-// "↻ Re-plan", or "▶ Plan from here" when the box has a new instruction. Only the buttons of the plan on the page.
-// The button of a plan check (onlyNew) shows only for a new instruction, while the plan has no execution.
-function replanLabel(b) {
-  const fromHere = b.dataset.run === planRunId && Boolean(newInstruction());
-  b.textContent = fromHere ? "▶ Plan from here" : "↻ Re-plan";
-  b.title = fromHere ? FROM_HERE_TITLE : REPLAN_TITLE;
-  if (b.dataset.onlyNew) b.hidden = !fromHere || planExecuted;
-}
+const FROM_HERE_TITLE = "Claude gets the new instruction in the same chat, and the arm goes on from where it is now. " +
+  "Press Reset to start over";
+const PLAN_TITLE = "Claude writes its belief of the scene and the whole plan in one reply. Nothing moves until you execute it.";
 
 // The instruction of the run on the page into the box: a History load or a run of another tab.
 function showInstruction() {
@@ -1689,23 +1707,13 @@ function showInstruction() {
   showMode();
 }
 
-function showReplanLabels() {
-  for (const b of document.querySelectorAll(".replan-btn")) replanLabel(b);
-}
-
-// onlyNew: the button of a plan check, for a new instruction before an execution (see replanLabel).
-function replanButton(onlyNew = false) {
+// The Re-plan button of an execution: always the newest instruction of the chain, never the text in the box.
+function replanButton() {
   const b = el("button", "↻ Re-plan", "btn exec-btn replan-btn");
   b.type = "button";
+  b.title = REPLAN_TITLE;
   b.dataset.run = planRunId || "";
   b.disabled = running || !planRunId;
-  if (onlyNew) {
-    b.dataset.onlyNew = "true";
-    b.addEventListener("click", () => replan());
-    replanLabel(b);
-    return b;
-  }
-  replanLabel(b);
   const fromStart = execError;  // the mode when the button is made: a later Execute must not change it
   const partial = execPartial;  // a re-plan after a partial run always continues
   b.addEventListener("click", () => replan(fromStart, partial));
@@ -1716,15 +1724,11 @@ function replanButton(onlyNew = false) {
   return box;
 }
 
-// Plan from here: a new instruction in the box always continues, and with Auto on it starts the Auto loop.
 async function replan(fromStart = false, partial = false) {
   if (running || !planRunId) return;
-  const text = newInstruction();
-  // No end state after an error: see replanButton. The server then refuses a new instruction.
-  const mode = text ? "continue" : fromStart ? "start" : partial ? "continue" : roundMode();
-  setStatus(text ? "planning from here · new instruction" : `re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
+  const mode = fromStart ? "start" : partial ? "continue" : roundMode();
+  setStatus(`re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
   const body = { mode, max_keyframes: mode === "continue" ? perRound() : 0 };
-  if (text) Object.assign(body, { instruction: text, auto: $("auto").checked, rounds: roundsValue($("rounds").value) });
   ownStart = true;
   if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, body)) setRunning(true);
   else ownStart = false;

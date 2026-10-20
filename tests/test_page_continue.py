@@ -24,7 +24,7 @@ def test_the_continue_storage_uses_try_catch_and_defaults_to_on():
 def test_the_switch_sets_the_mode_of_replan_and_of_the_auto_loop():
     js = _web("app.js")
     assert '$("continue").checked ? "continue" : "start"' in _body(js, "function roundMode")
-    assert "mode: roundMode()," in _body(js, "async function startPlan")
+    assert "mode: roundMode()," in _body(js, "function planState()")
     body = _body(js, "async function replan")
     assert "roundMode();" in body and "/replan`, body)" in body and "{ mode, max_keyframes:" in body
 
@@ -69,7 +69,7 @@ def test_the_page_shows_claudes_verdict_next_to_the_auto_check():
 
 def test_a_replan_after_an_execution_error_falls_back_to_from_start():
     js = _web("app.js")
-    assert 'const mode = text ? "continue" : fromStart ? "start" : partial ? "continue" : roundMode();' in _body(js, "async function replan")
+    assert 'const mode = fromStart ? "start" : partial ? "continue" : roundMode();' in _body(js, "async function replan")
     button = _body(js, "function replanButton")
     assert "if (!fromStart) return b;" in button and "starts from the start, also with Continue on" in button
     handler = _body(js, "function onEvent(ev, replay = false)")

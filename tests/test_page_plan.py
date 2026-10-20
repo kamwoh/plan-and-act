@@ -42,10 +42,11 @@ def test_camera_boxes_hold_the_plan_canvases_and_a_player_bar():
 
 def test_plan_request_uses_the_same_fields_as_start():
     js = _web("app.js")
-    body = _body(js, "async function startPlan")
-    assert 'postJson("/api/plan", body)' in body
-    for field in ("scene: sceneName", "instruction:", "seed:", "use_lessons:"):
+    body = _body(js, "function planRequest(s)")
+    assert 'url: "/api/plan"' in body
+    for field in ("scene: s.scene", "instruction: s.instruction", "seed: s.seed", "use_lessons: s.useLessons"):
         assert field in body
+    assert "scene: sceneName" in _body(js, "function planState()")
     assert "show_positions" not in body  # a plan never gets the true positions
 
 

@@ -394,6 +394,5 @@ canvas[hidden] { display: none; }
 .done-note { color: var(--ok); font-weight: 600; }
 .btn.replan-btn { background: transparent; color: var(--accent); }
 .btn.replan-btn:hover { background: rgba(91, 140, 255, 0.12); }
-.btn.replan-btn[hidden] { display: none; }
 .run-round { background: rgba(91, 140, 255, 0.16); color: var(--accent); }
 .run-parent { color: var(--muted); font-size: 11px; }

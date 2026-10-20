@@ -14,7 +14,7 @@ Needs Python 3.12, `uv` and a logged-in Claude Code CLI.
 
     uv run armmind serve          # http://127.0.0.1:8780
 
-Pick a scene, type an instruction, and press Plan to see Claude's plan as a 3D video. Then press Execute and Re-plan, or set the Auto switch to repeat plan, execute and re-plan until the auto-check passes or Claude says done. With Continue on, a re-plan starts where the last execution ended. To give Claude a new task from where the arm is now, type a new instruction and press Plan from here. Claude gets it in the same chat. All rounds of one plan share one chat with Claude. The CLI keeps these chats under ~/.claude/projects/, and its own cleanup removes old ones. After that, a re-plan starts a new chat with a summary.
+Pick a scene, type an instruction, and press Plan to see Claude's plan as a 3D video. Then press Execute and Re-plan, or set the Auto switch to repeat plan, execute and re-plan until the auto-check passes or Claude says done. With Continue on, a re-plan starts where the last execution ended. Plan goes on, Reset starts over. After the first round, the Plan button goes on from the newest round on the page. With the same instruction, it re-plans (↻ Re-plan). With a new instruction in the box, it says Plan from here: Claude gets the new task in the same chat. The arm goes on from where it is now. Press Reset, or change the scene or the seed, to start a new chain and a new chat from the fresh scene. All rounds of one plan share one chat with Claude. The CLI keeps these chats under ~/.claude/projects/, and its own cleanup removes old ones. After that, a re-plan starts a new chat with a summary.
 
 Run a task with a scripted solution, with no model:
 

@@ -36,7 +36,7 @@ def test_the_buttons_of_an_older_round_stay_off():
     js = _web("app.js")
     assert "b.dataset.run !== planRunId" in _body(js, "function setRunning(value)")
     assert 'exec.dataset.run = planRunId || "";' in _body(js, "function planCheckEntry")
-    assert 'b.dataset.run = planRunId || "";' in _body(js, "function replanButton(onlyNew = false)")
+    assert 'b.dataset.run = planRunId || "";' in _body(js, "function replanButton()")
 
 
 def test_a_lost_chat_shows_a_note():
