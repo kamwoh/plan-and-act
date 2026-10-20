@@ -92,14 +92,10 @@ def test_replan_makes_a_new_round_with_the_feedback(tmp_path):
         assert secret not in text, secret
 
 
-def test_replan_of_an_unknown_run_or_a_plan_without_an_execution_is_404(tmp_path):
+def test_replan_of_an_unknown_run_is_404(tmp_path):  # v1.18: a plan without an execution can re-plan
     with client(tmp_path, FakeBackend([good_plan()])) as c:
         for run_id in ("20261017-000000", "nope", "%2E%2E"):
             assert c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"}).status_code == 404
-        run_id = c.post("/api/plan", json={"instruction": PICK}).json()["run_id"]
-        wait_idle(c)
-        r = c.post(f"/api/plan/{run_id}/replan", json={"mode": "start"})
-        assert r.status_code == 404 and "execut" in r.json()["detail"]
 
 
 def test_replan_during_a_run_is_409_and_needs_same_origin(tmp_path):

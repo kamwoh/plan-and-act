@@ -126,6 +126,22 @@ def test_the_same_instruction_is_a_plain_replan(tmp_path):
     assert start["instruction"] == PICK and start["new_instruction"] is False
 
 
+@pytest.mark.parametrize("mode", ["start", "continue"])
+def test_a_plain_replan_without_an_execution_starts_from_the_start_of_that_round(tmp_path, mode):
+    backend = FakeBackend([good_plan(), good_plan()])  # v1.18: the Plan button re-plans the newest round
+    with app(tmp_path, backend) as c:
+        first = c.post("/api/plan", json={"instruction": PICK, "seed": 5}).json()["run_id"]
+        wait_idle(c)
+        second = replan(c, first, mode=mode)
+    assert ENVS[-1].start is None  # round 1 started at the fresh scene: so does this round
+    start = run_events(tmp_path, second)[0]
+    assert (start["round"], start["round_mode"], start["new_instruction"], start["end_step"]) == (2, "start", False, None)
+    assert start["instruction"] == PICK and start["session_id"] == "fake-session-1"
+    msg = backend.sent[-1][0]
+    assert msg.text.startswith("This is a re-plan, round 2.\n") and "Execution status" not in msg.text
+    assert "New instruction" not in msg.text and msg.images == ()
+
+
 def test_later_rounds_keep_the_newest_instruction(tmp_path):
     backend = FakeBackend([good_plan(), judged(), good_plan(), judged(), good_plan()])
     with app(tmp_path, backend) as c:

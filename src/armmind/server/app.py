@@ -870,11 +870,9 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         if new is not None and body.mode == "start":
             raise HTTPException(409, NEW_FROM_START)
         feedback = _feedback(found, history, mode)
-        if new is not None and (feedback is None or feedback.status == "error"):
+        if feedback is None or (new is not None and feedback.status == "error"):
             # No end state: the round starts where that plan started
             feedback = _no_run_feedback(found, feedback.status if feedback else "not run")
-        if feedback is None:
-            raise HTTPException(404, "the plan has no finished execution yet: execute it first")
         if new is not None:
             feedback = dataclasses.replace(feedback, instruction=new)
         scene = SCENES.get(start.get("scene") or "")
