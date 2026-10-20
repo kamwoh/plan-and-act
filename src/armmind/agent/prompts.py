@@ -344,7 +344,7 @@ def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, star
     lines.append(f"Execution status: {f.status}.")
     if f.status not in ("cancelled", "error"):  # the check runs only at the end of a whole execution
         lines.append(f"The automatic check says {task} is {'solved' if f.success else 'not solved'}."
-                     if f.check else "There is no automatic check for this task.")
+                     if f.check else f"There is no automatic check for {'the earlier task' if f.instruction else 'this task'}.")
     if f.status == "cancelled":
         lines.append(f"The person stopped the execution after action {f.ran} of {f.total}." if f.ran
                      else f"The person stopped the execution before the first action of {f.total}.")

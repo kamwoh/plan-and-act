@@ -4,9 +4,9 @@ import pytest
 from armmind.agent.prompts import build_plan_text, build_replan_text
 from armmind.llm.fake import FakeBackend
 from armmind.scenes import SCENES
-from armmind.sim.state import START_STATE
+from armmind.sim.state import END_STATE, START_STATE
 from tests.fakes import judged
-from tests.test_agent_plan import good_plan
+from tests.test_agent_plan import PLAN, good_plan
 from tests.test_auto_loop import folders
 from tests.test_chain import SECRETS, app
 from tests.test_continue_api import ENVS, StateEnv, plan_and_execute
@@ -187,3 +187,56 @@ def test_a_new_instruction_after_an_execution_error_starts_from_the_start_of_tha
     msg = backend.sent[-1][0].text
     assert msg.startswith(SAME_START + "\n")
     assert "The last execution failed with an error in the simulation." in msg and "Execution status" not in msg
+
+
+def test_the_check_line_of_a_new_instruction_names_the_earlier_task():
+    text = build_replan_text(OBS, None, feedback(mode="continue", instruction="Wave.", check=False, status="done",
+                                                 stopped=None, stopped_action=None))
+    assert "There is no automatic check for the earlier task." in text and "for this task" not in text
+
+
+def test_a_blocked_continue_with_a_new_instruction_points_to_plan(tmp_path):
+    with app(tmp_path, FakeBackend([good_plan(), judged()])) as c:
+        first = plan_and_execute(c)
+        (tmp_path / "runs" / first / END_STATE).unlink()
+        r = c.post(f"/api/plan/{first}/replan", json={"instruction": STACK})
+    assert r.status_code == 409 and "Use Plan for a fresh start" in r.json()["detail"]
+
+
+DONE_REPLAN = {**PLAN, "keyframes": [], "done": True, "summary": "The images show the task is complete."}
+
+
+def auto_done(tmp_path, monkeypatch, success):
+    monkeypatch.setattr(StateEnv, "success", success)
+    with app(tmp_path, FakeBackend([good_plan(), judged(), good_plan(DONE_REPLAN)])) as c:
+        first = plan_and_execute(c)
+        second = replan(c, first, instruction=STACK, auto=True, rounds=2)
+    return run_events(tmp_path, second)[-1]
+
+
+def test_an_auto_loop_done_before_any_execution_checks_the_scene_now(tmp_path, monkeypatch):
+    end = auto_done(tmp_path, monkeypatch, lambda self: True)
+    assert end["kind"] == "loop_end" and end["success"] is True and end["rounds_run"] == 1
+    assert end["reason"] == "Claude says done, and the auto-check of the scene now says solved"
+
+
+def test_an_auto_loop_done_before_any_execution_without_a_check_result(tmp_path, monkeypatch):
+    def broken(self):
+        raise RuntimeError("no check")
+
+    end = auto_done(tmp_path, monkeypatch, broken)
+    assert end["success"] is False and end["reason"] == "Claude says done before any execution of this task"
+
+
+def test_an_auto_replan_without_a_new_instruction_starts_the_loop(tmp_path):
+    backend = FakeBackend([good_plan(), judged(), good_plan(), good_plan(), judged()])
+    with app(tmp_path, backend) as c:
+        first = plan_and_execute(c)
+        second = replan(c, first, auto=True, rounds=2)
+    runs = [p.name for p in folders(tmp_path)]
+    assert runs[:2] == [first, second] and len(runs) == 3
+    starts = [run_events(tmp_path, r)[0] for r in runs[1:]]
+    assert [(s["instruction"], s["round"], s["new_instruction"]) for s in starts] == [(PICK, 2, False), (PICK, 3, False)]
+    assert [s["round_mode"] for s in starts] == ["continue", "continue"] and ENVS[2].start_marker == 1.0
+    end = run_events(tmp_path, runs[2])[-1]
+    assert end["kind"] == "loop_end" and end["rounds_run"] == 2 and [v["round"] for v in end["verdicts"]] == [2, 3]

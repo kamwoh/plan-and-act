@@ -55,3 +55,21 @@ def test_a_plan_without_an_execution_has_a_plan_from_here_button():
 def test_plan_from_here_after_an_execution_error_sends_continue():
     body = _body(_web("app.js"), "async function replan")
     assert 'const mode = text ? "continue" : fromStart' in body  # the server starts it where the round started
+
+
+def test_a_run_of_another_tab_or_of_history_puts_its_instruction_in_the_box():
+    js = _web("app.js")
+    show = _body(js, "function showInstruction")
+    assert '$("instruction").value = planInstruction;' in show and "showMode();" in show
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    assert "const own = !replay && (ownStart || (autoLoop && chained));" in handler
+    assert "ownStart = false;" in handler and "if (!own) showInstruction();" in handler
+    assert handler.count("showInstruction();") == 2  # run_start, and exec_start of another tab
+    for name in ("async function startPlan", "async function replan"):
+        body = _body(js, name)
+        assert "ownStart = true;" in body and "else ownStart = false;" in body
+
+
+def test_clear_plan_resets_the_replan_labels():
+    body = _body(_web("app.js"), "function clearPlan")
+    assert body.rstrip().endswith("showReplanLabels();")

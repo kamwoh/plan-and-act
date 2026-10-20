@@ -18,6 +18,7 @@ let planRunId = null;      // the id of the plan run on the page, for Execute an
 let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
 let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
 let planInstruction = "";  // the newest instruction of the chain on the page: another one in the box is new
+let ownStart = false;      // this tab posted a plan or a re-plan: its run_start keeps the instruction box
 let planExecuted = false;  // the plan on the page has an execution: its Plan from here is after the execution
 let planDone = false;      // Claude's re-plan on the page says that the task is done
 let planImpossible = "";  // Claude's plan on the page says that the task is not possible: the reason
@@ -1010,7 +1011,9 @@ async function startPlan() {
     max_keyframes: perRound(),
   };
   beginRun("planning");
+  ownStart = true;
   if (await postJson("/api/plan", body)) setRunning(true);
+  else ownStart = false;
 }
 
 // The Rounds field as a whole number from 1 to 30 (MAX_ROUND). An empty or bad field gives 3.
@@ -1106,6 +1109,9 @@ function onEvent(ev, replay = false) {
     outcome = null;
     // A re-plan of the plan on the page continues its chain: the same chat and the same totals.
     const chained = ev.mode === "plan" && Boolean(ev.parent) && ev.parent === planRunId;
+    // A run of this tab, or a later round of its Auto loop, keeps the box. Any other run shows its instruction.
+    const own = !replay && (ownStart || (autoLoop && chained));
+    if (!replay) ownStart = false;
     runSystemPrompt = ev.system_prompt || "";
     runCameras = cameraLabels(ev.scene);
     if (!replay) {
@@ -1119,6 +1125,7 @@ function onEvent(ev, replay = false) {
     planRound = ev.round || 1;
     planMode = ev.round_mode || null;
     planInstruction = ev.instruction || "";
+    if (!own) showInstruction();
     planExecuted = false;
     planDone = false;
     planImpossible = "";
@@ -1192,6 +1199,7 @@ function onEvent(ev, replay = false) {
         planRound = ev.round || 1;
         planMode = ev.round_mode || null;
         planInstruction = ev.instruction || "";
+        showInstruction();
         chatRound = planRound;
       }
       setStatus("running the plan", "moving");
@@ -1407,6 +1415,7 @@ function clearPlan() {
   for (const b of document.querySelectorAll(".exec-btn")) b.disabled = true;
   $("player").hidden = true;
   setViewMode("camera");
+  showReplanLabels();
 }
 
 function setViewMode(mode) {
@@ -1673,6 +1682,12 @@ function replanLabel(b) {
   if (b.dataset.onlyNew) b.hidden = !fromHere || planExecuted;
 }
 
+// The instruction of the run on the page into the box: a History load or a run of another tab.
+function showInstruction() {
+  $("instruction").value = planInstruction;
+  showMode();
+}
+
 function showReplanLabels() {
   for (const b of document.querySelectorAll(".replan-btn")) replanLabel(b);
 }
@@ -1709,7 +1724,9 @@ async function replan(fromStart = false, partial = false) {
   setStatus(text ? "planning from here · new instruction" : `re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
   const body = { mode, max_keyframes: mode === "continue" ? perRound() : 0 };
   if (text) Object.assign(body, { instruction: text, auto: $("auto").checked, rounds: roundsValue($("rounds").value) });
+  ownStart = true;
   if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, body)) setRunning(true);
+  else ownStart = false;
 }
 
 // "Claude: done" or "Claude: not done", and the auto-check when there is one.

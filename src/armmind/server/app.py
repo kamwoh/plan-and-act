@@ -347,6 +347,20 @@ def _copy_state(state: Path, folder: Path) -> Path:
 AUTO_VIEW_S = 20.0  # the Auto loop waits for the imagined video of a plan, at most this long, before Execute
 
 
+def _with_check(body: Callable, out: list[bool]) -> Callable:
+    """The plan body, then the auto-check of the scene now into `out`. A plan moves nothing, so this is the check
+    of the state that the round starts from. A failed check leaves `out` empty."""
+    async def run(env, call, emit):
+        status = await body(env, call, emit)
+        if status == "planned":
+            try:
+                out.append(bool(await call(env.success)))
+            except Exception as e:  # noqa: BLE001  the loop then says that no check ran
+                logging.getLogger(__name__).warning("no auto-check of the scene now: %s: %s", type(e).__name__, e)
+        return status
+    return run
+
+
 def _start_gripper(view: dict | None) -> str:
     """The gripper at the start of a plan, from its view: "closed" in a round that continues closed."""
     try:
@@ -603,6 +617,9 @@ class Runner:
                         start = _copy_state(folder / END_STATE, plan_log.dir) if continues else None
                     folder = self.run_dir = plan_log.dir
                     agent, body = self._plan_part(plan_log, req, feedback, req.rounds, chain)
+                    now: list[bool] = []  # the auto-check of the scene now, before any execution of this loop
+                    if task is not None and rounds_run == 1:
+                        body = _with_check(body, now)
                     part[:] = [agent.stop]
                     status = await self._session(plan_log, scene, task, req.instruction, req.seed, False, body,
                                                  start=start)
@@ -621,9 +638,16 @@ class Runner:
                         break
                     pending = None
                     if status == "planned" and found and found["plan"].get("done"):
-                        success = task is None  # with a check, the last execution was not solved
-                        reason = ("Claude says the task is done" if success
-                                  else "Claude says done, the auto-check says not solved")
+                        if task is None:
+                            success, reason = True, "Claude says the task is done"
+                        elif rounds_run > 1:  # the last execution of this loop was not solved
+                            reason = "Claude says done, the auto-check says not solved"
+                        elif now:  # no execution of this task yet: the check of the scene now decides
+                            success = now[0]
+                            reason = ("Claude says done, and the auto-check of the scene now says "
+                                      f"{'solved' if success else 'not solved'}")
+                        else:
+                            reason = "Claude says done before any execution of this task"
                         break
                     if status == "planned" and found and (why := found["plan"].get("impossible")):
                         impossible = {"round": base + rounds_run, "reason": why}
@@ -871,7 +895,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         elif feedback.mode == "continue":
             state = found["folder"] / END_STATE
             if problem := state_problem(state, scene, req.seed):
-                raise HTTPException(409, f"cannot continue from the last execution: {problem}. Re-plan from the start")
+                fix = "Use Plan for a fresh start" if new is not None else "Re-plan from the start"
+                raise HTTPException(409, f"cannot continue from the last execution: {problem}. {fix}")
         folder = await runner.start_plan(req, scene, task, feedback, state, branch_chain(found, history))
         return {"run_dir": str(folder), "run_id": folder.name}
 
