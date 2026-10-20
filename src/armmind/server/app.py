@@ -870,8 +870,8 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         if new is not None and body.mode == "start":
             raise HTTPException(409, NEW_FROM_START)
         feedback = _feedback(found, history, mode)
-        if feedback is None or (new is not None and feedback.status == "error"):
-            # No end state: the round starts where that plan started
+        if feedback is None or (feedback.status == "error" and (new is not None or mode == "continue")):
+            # No end state: the round starts where that plan started. A later round of the loop keeps the mode
             feedback = _no_run_feedback(found, feedback.status if feedback else "not run")
         if new is not None:
             feedback = dataclasses.replace(feedback, instruction=new)

@@ -25,7 +25,7 @@ def test_app_js_parses():
 def test_plan_button_comes_first_with_the_auto_and_continue_switches():
     buttons = _body(_web("index.html"), '<div class="buttons">', "</form>")
     ids = re.findall(r'<(?:button|input)[^>]*id="([a-z_]+)"', buttons)
-    assert ids == ["plan_btn", "auto", "continue", "stop", "lessons_btn", "history_btn", "prompt_btn"]
+    assert ids == ["plan_btn", "auto", "continue", "stop", "lessons_btn", "history_btn"]
 
 
 def test_camera_boxes_hold_the_plan_canvases_and_a_player_bar():

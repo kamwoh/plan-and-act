@@ -205,6 +205,30 @@ def test_a_new_instruction_after_an_execution_error_starts_from_the_start_of_tha
     assert "The last execution failed with an error in the simulation." in msg and "Execution status" not in msg
 
 
+def test_an_auto_continue_after_an_execution_error_keeps_continue_for_the_loop(tmp_path, monkeypatch):
+    real, calls = StateEnv.execute_plan, []
+
+    def broken_once(self, *args, **kwargs):
+        calls.append(1)
+        if len(calls) == 1:
+            raise RuntimeError("the simulation broke")
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(StateEnv, "execute_plan", broken_once)
+    backend = FakeBackend([good_plan(), good_plan(), good_plan(), judged()])
+    with app(tmp_path, backend) as c:
+        first = c.post("/api/plan", json={"instruction": PICK, "seed": 5}).json()["run_id"]
+        wait_idle(c)
+        assert c.post(f"/api/plan/{first}/execute").status_code == 200
+        wait_idle(c)
+        replan(c, first, mode="continue", auto=True, rounds=2)  # v1.18: the Plan button sends the Continue switch
+    runs = [p.name for p in folders(tmp_path)]
+    starts = [run_events(tmp_path, r)[0] for r in runs[1:]]
+    assert [(s["round"], s["round_mode"]) for s in starts] == [(2, "start"), (3, "continue")]
+    assert ENVS[1].start is None  # no end state: round 2 starts where round 1 started
+    assert "The last execution failed with an error in the simulation." in backend.sent[1][0].text
+
+
 def test_the_check_line_of_a_new_instruction_names_the_earlier_task():
     text = build_replan_text(OBS, None, feedback(mode="continue", instruction="Wave.", check=False, status="done",
                                                  stopped=None, stopped_action=None))

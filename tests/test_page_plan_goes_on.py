@@ -15,11 +15,11 @@ def plan_request(**state):
     """Run planRequest of the page in node with this state of the page."""
     js = _web("app.js")
     consts = "".join(_body(js, f"const {name} =", ";\n") + ";\n"
-                     for name in ("MAX_ROUND", "PLAN_TITLE", "REPLAN_TITLE", "FROM_HERE_TITLE"))
+                     for name in ("MAX_ROUND", "LAST_ROUND_TITLE", "PLAN_TITLE", "REPLAN_TITLE", "FROM_HERE_TITLE"))
     fn = _body(js, "function planRequest(s)") + "\n}\n"
     s = {"runId": None, "round": 1, "newest": "", "instruction": TEXT, "scene": "cubes", "seed": 7,
          "useLessons": True, "auto": False, "rounds": 3, "mode": "continue", "perRound": 2,
-         "execError": False, "execPartial": False, **state}
+         "execError": False, "execPartial": False, **state}  # the last execution: planRequest ignores it
     out = subprocess.run(["node", "-e", f"{consts}{fn}console.log(JSON.stringify(planRequest({json.dumps(s)})));"],
                          check=True, capture_output=True, text=True).stdout
     return json.loads(out)
@@ -45,9 +45,9 @@ def test_a_new_instruction_goes_on_from_the_newest_round():
     assert r["body"] == {"mode": "continue", "max_keyframes": 2, "instruction": TEXT, "auto": False, "rounds": 3}
 
 
-def test_a_new_instruction_after_an_execution_error_still_sends_continue():
-    r = plan_request(runId="r2", newest="Stack the cubes", execError=True, mode="start")
-    assert r["body"]["mode"] == "continue"  # the server starts it where the round started
+def test_a_new_instruction_always_sends_continue():
+    r = plan_request(runId="r2", newest="Stack the cubes", mode="start")
+    assert r["body"]["mode"] == "continue"  # after an error, the server starts it where the round started
 
 
 @pytest.mark.parametrize("case", ["live chain", "after a History load"])
@@ -58,13 +58,16 @@ def test_the_same_instruction_re_plans_the_newest_round(case):
                                                               "auto": False, "rounds": 3})
 
 
+# The Auto loop keeps the mode for each later round. After an error or a partial run, the server starts the
+# next round where it must (see test_an_auto_continue_after_an_execution_error_keeps_continue_for_the_loop).
 @pytest.mark.parametrize("state, mode, k", [
     ({"mode": "start"}, "start", 0),
-    ({"mode": "start", "execPartial": True}, "continue", 2),  # a partial run always continues
-    ({"mode": "continue", "execError": True}, "start", 0),  # no end state after an error
+    ({"mode": "continue"}, "continue", 2),
+    ({"mode": "start", "execPartial": True}, "start", 0),
+    ({"mode": "continue", "execError": True}, "continue", 2),
 ])
-def test_the_re_plan_mode_follows_the_continue_switch_and_the_last_execution(state, mode, k):
-    body = plan_request(runId="r1", newest=TEXT, **state)["body"]
+def test_the_re_plan_mode_is_the_continue_switch(state, mode, k):
+    body = plan_request(runId="r1", newest=TEXT, auto=True, **state)["body"]
     assert (body["mode"], body["max_keyframes"]) == (mode, k)
 
 
@@ -78,6 +81,23 @@ def test_auto_starts_the_loop_with_the_rounds_field():
 def test_the_last_round_starts_a_new_chain():
     r = plan_request(runId="r30", round=30, newest=TEXT)
     assert (r["label"], r["url"]) == ("▶ Plan", "/api/plan")
+    assert r["title"] == "Round 30 is the last round. Plan starts a new chain from the fresh scene"
+    assert plan_request(runId=None, round=30)["title"].startswith("Claude writes its belief")
+
+
+def test_the_plan_button_keeps_its_width_and_the_row_does_not_wrap():
+    css = _web("style.css")
+    rule = css[css.index("#plan_btn {"):]
+    rule = rule[:rule.index("}")]
+    assert "min-width:" in rule and "justify-content: center;" in rule
+    assert ".controls .buttons { gap: 2px; flex-wrap: nowrap; }" in css
+
+
+def test_the_page_has_no_prompt_editor():
+    html, js, css = _web("index.html"), _web("app.js"), _web("style.css")
+    for part in ("prompt_btn", "prompt_dialog", "prompt_tag"):
+        assert part not in html and part not in js and part not in css
+    assert "loadPrompt" not in js and "PROMPT_KEY" not in js and ".tag.edited" not in css
 
 
 def test_the_plan_button_uses_the_request():
@@ -88,7 +108,7 @@ def test_the_plan_button_uses_the_request():
     assert "postJson(req.url, req.body)" in start and "ownStart = true;" in start
     state = _body(js, "function planState()")
     for part in ("runId: planRunId", "round: planRound", "newest: planInstruction",
-                 '$("instruction").value.trim()', "execError", "execPartial", "roundsValue(", "roundMode()",
+                 '$("instruction").value.trim()', "roundsValue(", "roundMode()",
                  "perRound()"):
         assert part in state
     label = _body(js, "function labelPlanButton()")

@@ -45,7 +45,7 @@ def test_a_failed_env_start_leaves_no_old_end_state(tmp_path):
             raise RuntimeError("no EGL")
         return state_factory(*args, **kw)
 
-    with TestClient(create_app(FakeBackend([good_plan(), judged()]), factory, tmp_path / "runs",
+    with TestClient(create_app(FakeBackend([good_plan(), judged(), good_plan()]), factory, tmp_path / "runs",
                                lessons_dir=tmp_path / "lessons")) as c:
         first = plan_and_execute(c)
         assert (tmp_path / "runs" / first / END_STATE).exists()
@@ -54,8 +54,12 @@ def test_a_failed_env_start_leaves_no_old_end_state(tmp_path):
         wait_idle(c)
         assert run_events(tmp_path, first)[-1]["status"] == "error"
         assert not (tmp_path / "runs" / first / END_STATE).exists()
-        r = c.post(f"/api/plan/{first}/replan")
-        assert r.status_code == 409 and "end state" in r.json()["detail"]
+        fail["on"] = False
+        r = c.post(f"/api/plan/{first}/replan")  # v1.18: a continue without an end state starts where round 1 did
+        assert r.status_code == 200
+        wait_idle(c)
+    start = run_events(tmp_path, r.json()["run_id"])[0]
+    assert (start["round"], start["round_mode"]) == (2, "start")
 
 
 # 4 and 5. The verdict call checks Stop first, and it always ends with a verdict event.

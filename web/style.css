@@ -95,7 +95,7 @@ img[hidden] { display: none; }
 .hint { color: var(--faint); font-size: 11px; }
 .controls { overflow: auto; padding: 12px; }
 /* The Plan button, the Auto and Continue switches and four buttons share one row at 1366 px wide: small gaps and paddings. */
-.controls .buttons { gap: 2px; }
+.controls .buttons { gap: 2px; flex-wrap: nowrap; }
 .controls .tag { padding: 1px 4px; letter-spacing: 0.02em; }
 .controls .buttons .btn { padding: 8px 5px; gap: 5px; font-size: 12.5px; white-space: nowrap; }
 
@@ -145,11 +145,10 @@ textarea:focus, input[type="number"]:focus { border-color: var(--accent); box-sh
 .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; padding: 8px 18px; }
 .btn.primary:hover { background: var(--accent-2); }
+#plan_btn { min-width: 116px; justify-content: center; }  /* the width of "▶ Plan from here": the row stays still */
 .btn.ghost { background: transparent; }
-#prompt_btn { margin-left: auto; }
 .tag { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; padding: 1px 6px;
        border-radius: 4px; background: var(--line); color: var(--muted); }
-.tag.edited { background: rgba(240, 176, 74, 0.16); color: var(--warn); }
 
 /* ---- Memo: the lessons of the run ---- */
 /* contain: size keeps long lessons from growing the row and pushing the cameras smaller. Each column scrolls. */

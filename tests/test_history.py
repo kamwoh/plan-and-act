@@ -250,7 +250,6 @@ def test_history_loader_uses_the_live_event_handler():
 def test_replayed_events_change_no_run_state_or_saved_scene():
     js = _web("app.js")
     handler = _body(js, "function onEvent(ev, replay = false)")
-    import re
     assert re.search(r"if \(!replay\) \{[^}]*setRunning\(true\)", handler)
     assert "if (!replay && !autoLoop) setRunning(false)" in handler  # an Auto loop stays busy until loop_end
     assert "chooseScene(ev.scene, true, !replay)" in handler
@@ -342,9 +341,8 @@ def test_open_history_list_refreshes_when_a_run_ends():
     assert "fillHistory()" in _body(js, "async function openHistory")
 
 
-def test_history_and_prompt_buttons_have_short_text_labels():
+def test_the_history_button_has_a_short_text_label():
     html = _web("index.html")
-    assert re.search(r'id="prompt_btn"[^>]*>Prompt <small', html)
     history = html[html.index('id="history_btn"'):]
     assert "</svg>History</button>" in history[:history.index("</button>") + 9]
 

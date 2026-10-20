@@ -824,67 +824,6 @@ function emptyMemo() {
   showLessons();
 }
 
-// ---- Prompt editor ----
-const PROMPT_KEY = "armmind.systemPrompt";
-let defaultPrompt = "";
-let savedPrompt = null;   // an edited prompt, or null for the default
-
-function readSaved() {
-  try {
-    return localStorage.getItem(PROMPT_KEY);
-  } catch (err) {
-    return null;
-  }
-}
-
-function writeSaved(text) {
-  try {
-    if (text === null) localStorage.removeItem(PROMPT_KEY);
-    else localStorage.setItem(PROMPT_KEY, text);
-  } catch (err) {
-    // storage is blocked: the edit lasts until the page closes
-  }
-}
-
-function showPromptTag() {
-  $("prompt_tag").textContent = savedPrompt === null ? "default" : "edited";
-  $("prompt_tag").classList.toggle("edited", savedPrompt !== null);
-}
-
-async function loadPrompt() {
-  savedPrompt = readSaved();
-  showPromptTag();
-  try {
-    const p = await (await fetch("/api/prompt")).json();
-    defaultPrompt = p.system;
-    $("prompt_example").textContent = p.step_example;
-  } catch (err) {
-    $("prompt_msg").textContent = "could not load the default prompt";
-  }
-  $("prompt_text").value = savedPrompt ?? defaultPrompt;
-}
-
-$("prompt_btn").addEventListener("click", () => {
-  $("prompt_text").value = savedPrompt ?? defaultPrompt;
-  $("prompt_msg").textContent = "";
-  $("prompt_dialog").showModal();
-});
-$("prompt_close").addEventListener("click", () => $("prompt_dialog").close());
-$("prompt_save").addEventListener("click", () => {
-  const text = $("prompt_text").value;
-  savedPrompt = text.trim() === "" || text === defaultPrompt ? null : text;
-  writeSaved(savedPrompt);
-  showPromptTag();
-  $("prompt_msg").textContent = savedPrompt === null ? "Saved: using the default" : "Saved: only a step-by-step run of the API uses this prompt";
-});
-$("prompt_reset").addEventListener("click", () => {
-  savedPrompt = null;
-  writeSaved(null);
-  $("prompt_text").value = defaultPrompt;
-  showPromptTag();
-  $("prompt_msg").textContent = "Reset to default";
-});
-
 // ---- Scene preview: the starting scene of the seed, unless a run is active ----
 function setLoading(on) {
   for (const id of ["cam_front", "cam_top"]) $(id).classList.toggle("loading", on);
@@ -1016,17 +955,16 @@ function planState() {
     runId: planRunId, round: planRound, newest: planInstruction, instruction: $("instruction").value.trim(),
     scene: sceneName, seed: Number($("seed").value), useLessons: $("use_lessons").checked,
     auto: $("auto").checked, rounds: roundsValue($("rounds").value), mode: roundMode(), perRound: perRound(),
-    execError, execPartial,
   };
 }
 
 // The label, title, endpoint and body of the Plan button for a state of the page (see planState).
 // The newest round of the chain is the plan on the page. The server goes on from its end state, or from its
-// start when it has no execution. The last round (MAX_ROUND) cannot re-plan, so Plan then starts a new chain.
+// start when it has no end state. The last round (MAX_ROUND) cannot re-plan, so Plan then starts a new chain.
 function planRequest(s) {
   if (!s.runId || s.round >= MAX_ROUND) {
     return {
-      label: "▶ Plan", title: PLAN_TITLE, url: "/api/plan",
+      label: "▶ Plan", title: s.runId ? LAST_ROUND_TITLE : PLAN_TITLE, url: "/api/plan",
       body: { scene: s.scene, instruction: s.instruction, seed: s.seed, use_lessons: s.useLessons, auto: s.auto,
         rounds: s.rounds, mode: s.mode, max_keyframes: s.perRound },
     };
@@ -1037,8 +975,9 @@ function planRequest(s) {
     return { label: "▶ Plan from here", title: FROM_HERE_TITLE, url,
       body: { mode: "continue", max_keyframes: s.perRound, instruction: s.instruction, ...loop } };
   }
-  // No end state after an error: start. A partial run always continues.
-  const mode = s.execError ? "start" : s.execPartial ? "continue" : s.mode;
+  // The Continue switch, also after an error or a partial run: the Auto loop keeps this mode for each later
+  // round. The server starts this round where it must (no end state: where the failed round started).
+  const mode = s.mode;
   return { label: "↻ Re-plan", title: `${REPLAN_TITLE} Press Reset to start over.`, url,
     body: { mode, max_keyframes: mode === "continue" ? s.perRound : 0, ...loop } };
 }
@@ -1699,6 +1638,7 @@ const REPLAN_TITLE = "Claude sees this plan and its result. With Continue on, it
   "execution ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
 const FROM_HERE_TITLE = "Claude gets the new instruction in the same chat, and the arm goes on from where it is now. " +
   "Press Reset to start over";
+const LAST_ROUND_TITLE = `Round ${MAX_ROUND} is the last round. Plan starts a new chain from the fresh scene`;
 const PLAN_TITLE = "Claude writes its belief of the scene and the whole plan in one reply. Nothing moves until you execute it.";
 
 // The instruction of the run on the page into the box: a History load or a run of another tab.
@@ -1979,5 +1919,4 @@ function connect() {
 }
 
 loadScenes().finally(loadPreview);  // the preview needs the chosen scene
-loadPrompt();
 connect();

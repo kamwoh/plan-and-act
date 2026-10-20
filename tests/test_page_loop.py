@@ -93,16 +93,6 @@ def test_exec_start_sets_the_round_of_the_plan():
     assert "planRound = ev.round || 1" in start
 
 
-def test_prompt_button_says_it_edits_the_step_prompt():
-    html = _web("index.html")
-    button = re.search(r'<button[^>]*id="prompt_btn"[^>]*>', html).group(0)
-    assert "step-by-step" in button and "/api/run" in button and "Plan uses its own prompt" in button
-    head = re.search(r'<h2 id="prompt_title">([^<]*)</h2>', html).group(1)
-    assert "step-by-step" in head.lower()
-    dialog = _body(html, '<dialog id="prompt_dialog"', "</dialog>")
-    assert "Plan uses its own prompt" in dialog
-
-
 def test_a_second_execute_revokes_the_old_end_images():
     handler = _body(_web("app.js"), "function onEvent(ev, replay = false)")
     end = handler[handler.index('ev.kind === "exec_end"'):handler.index('ev.kind === "loop_end"')]
