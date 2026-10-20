@@ -319,6 +319,8 @@ class Feedback:
     mode: str = "start"  # "start": the scene is back at its start. "continue": it goes on from the end state
     frames: tuple[Frame, ...] = ()  # the frames for Claude. They go after the images now and before `images`
     ran_keyframes: tuple[int, int] = (0, 0)  # (K, N) when only the first K of N keyframes ran by design
+    instruction: str | None = None  # the new instruction of the person, when it replaces the earlier task
+    executed: bool = True  # False: the last plan did not run, so there is no result. Only with a new instruction
 
 
 def partial_line(k: int, n: int) -> str:
@@ -329,14 +331,19 @@ def partial_line(k: int, n: int) -> str:
 def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, start_seen: bool = False) -> list[str]:
     """The result of the last execution. Without `with_plan`, the lines leave out the last plan: the chat has it.
     With `start_seen`, a re-plan from the start sends only the end images: the chat has the start images."""
-    lines = [f"This is a re-plan, round {f.round}. Your last plan ran once in the physics."]
+    lines = _new_instruction_lines(f)
+    lines.append(f"This is a re-plan, round {f.round}." + (" Your last plan ran once in the physics." if f.executed
+                                                          else ""))
     if with_plan:
         last = json.dumps({"objects": list(f.objects), "keyframes": list(f.keyframes)}, separators=(",", ":"),
                           ensure_ascii=False)
         lines.append(f"Your last plan: {last}")
+    if not f.executed:
+        return [*lines, *_no_run_lines(f, start_seen)]
+    task = "the earlier task" if f.instruction else "the task"
     lines.append(f"Execution status: {f.status}.")
     if f.status not in ("cancelled", "error"):  # the check runs only at the end of a whole execution
-        lines.append(f"The automatic check says the task is {'solved' if f.success else 'not solved'}."
+        lines.append(f"The automatic check says {task} is {'solved' if f.success else 'not solved'}."
                      if f.check else "There is no automatic check for this task.")
     if f.status == "cancelled":
         lines.append(f"The person stopped the execution after action {f.ran} of {f.total}." if f.ran
@@ -358,7 +365,8 @@ def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, star
     end = first + len(f.frames)  # the number of the first end image
     if f.mode == "continue":
         lines.append("The scene did not reset. Images 1 and 2 show the scene now, at the end of the last "
-                     "execution. Plan from here, and do only what is left of the task.")
+                     "execution. " + ("Plan the new task from here." if f.instruction
+                                      else "Plan from here, and do only what is left of the task."))
     elif start_seen:
         lines.append("The scene is now back at its start, the same as the start images earlier in this chat.")
         lines.append(f"Image {end}: the {first_camera} camera at the end of the last execution. "
@@ -373,11 +381,30 @@ def _feedback_lines(f: Feedback, first_camera: str, with_plan: bool = True, star
     return lines
 
 
+def _new_instruction_lines(f: Feedback) -> list[str]:
+    """The first line of a re-plan with a new instruction of the person, else nothing."""
+    if not f.instruction:
+        return []
+    where = ("The scene continues from where the last execution ended." if f.executed
+             else "The scene is the same as at the start of your last plan.")
+    return [f"New instruction from the person: {f.instruction.rstrip('.')}. This replaces the earlier task. {where}"]
+
+
+def _no_run_lines(f: Feedback, start_seen: bool) -> list[str]:
+    """The images of a re-plan after a plan that did not run: the scene is as at the start of that plan."""
+    if start_seen and f.mode != "continue":
+        return ["The scene is the same as the start images earlier in this chat."]
+    return ["Images 1 and 2 show the scene now."]
+
+
 def _gripper_lines(obs: Observation, feedback: Feedback | None, gripper: str | None) -> list[str]:
     """What to plan, and the gripper now. Never the true positions, yaws or joints of the observation."""
     continues = feedback is not None and feedback.mode == "continue"
+    what = ("Plan the new task now, in one reply." if feedback is not None and feedback.instruction
+            else "Plan what is left of the task now, in one reply." if continues
+            else "Plan the whole task now, in one reply.")
     lines = [
-        "Plan what is left of the task now, in one reply." if continues else "Plan the whole task now, in one reply.",
+        what,
         f"Gripper at {fmt(obs.tcp)}, yaw {round(obs.gripper_yaw)}°, width {obs.gripper_width:.3f} m.",
         f"Gripper touching: {', '.join(obs.contacts) if obs.contacts else 'nothing'}.",
     ]

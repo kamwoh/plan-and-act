@@ -235,6 +235,7 @@ class Agent:
                            "round": feedback.round if feedback else 1, "parent": feedback.parent if feedback else None,
                            "end_step": feedback.end_step if feedback else None, "auto_rounds": auto_rounds,
                            "round_mode": feedback.mode if feedback else None,
+                           "new_instruction": bool(feedback and feedback.instruction),
                            "parent_check": _parent_check(feedback)})
         status = "error"
         try:
@@ -341,11 +342,12 @@ class Agent:
 
     def _save_plan_lessons(self, scene: str, lessons: tuple[str, ...], feedback: Feedback | None) -> None:
         """Save the lessons of a re-plan with the status of the execution that the feedback describes.
-        A round 1 plan saw no result, so its lessons are not saved."""
+        A round 1 plan, or a re-plan after a plan that did not run, saw no result: its lessons are not saved."""
         if not lessons:
             return
-        if feedback is None:
-            logging.getLogger(__name__).info("a round 1 plan wrote %d lessons: they are not saved", len(lessons))
+        if feedback is None or not feedback.executed:
+            logging.getLogger(__name__).info("a plan that saw no result wrote %d lessons: they are not saved",
+                                             len(lessons))
             return
         if self.store is None or not self.use_lessons:
             return
