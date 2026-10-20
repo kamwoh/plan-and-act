@@ -4,6 +4,8 @@
 
 Claude controls a simulated Franka Panda arm in MuJoCo, through the Claude Code CLI.
 
+![A run: Claude imagines the plan, the physics runs it, Claude re-plans](docs/images/demo.gif)
+
 ![The page during a run: the plan path on the cameras, and the chat with Claude](docs/images/screenshot.jpg)
 
 ## Setup
