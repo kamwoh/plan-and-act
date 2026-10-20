@@ -18,6 +18,7 @@ let planRunId = null;      // the id of the plan run on the page, for Execute an
 let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
 let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
 let planInstruction = "";  // the newest instruction of the chain on the page: another one in the box is new
+let planExecuted = false;  // the plan on the page has an execution: its Plan from here is after the execution
 let planDone = false;      // Claude's re-plan on the page says that the task is done
 let planImpossible = "";  // Claude's plan on the page says that the task is not possible: the reason
 let parentCheck = null;    // the auto-check of the execution before this re-plan: true, false or null
@@ -1118,6 +1119,7 @@ function onEvent(ev, replay = false) {
     planRound = ev.round || 1;
     planMode = ev.round_mode || null;
     planInstruction = ev.instruction || "";
+    planExecuted = false;
     planDone = false;
     planImpossible = "";
     parentCheck = typeof ev.parent_check === "boolean" ? ev.parent_check : null;
@@ -1195,6 +1197,8 @@ function onEvent(ev, replay = false) {
       setStatus("running the plan", "moving");
       setViewMode("camera");  // the live frames; a saved run keeps the imagined video
     }
+    if (ev.run_id === planRunId) planExecuted = true;
+    showReplanLabels();
     onExecStart(ev);
     if (own) setPath(ev.step, planView.cameras, planView.track && planView.track.start, ev.action_data, true);
   } else if (ev.kind === "exec_end") {
@@ -1530,6 +1534,8 @@ function planCheckEntry(scores, keyframes = [], done = false) {
   const moved = keyframes.map((k, i) => [i, k.moves || []]).filter(([, m]) => m.length)
     .map(([i, m]) => `${i + 1} · moves ${movesText(m)}`);
   if (moved.length) item.append(field("moves", lines(moved, "mono")));
+  const fromHere = planRunId && planRound < MAX_ROUND ? replanButton(true) : null;
+  if (fromHere && !keyframes.length) item.append(fromHere);
   if (!keyframes.length) return item;  // a done plan without keyframes has nothing to execute
   const exec = el("button", "▶ Execute plan", "btn exec-btn");
   exec.type = "button";
@@ -1540,6 +1546,7 @@ function planCheckEntry(scores, keyframes = [], done = false) {
     : "Run the keyframes once in the physics, from a fresh start of the same scene and seed. No model is called.";
   exec.addEventListener("click", executePlan);
   item.append(exec);
+  if (fromHere) item.append(fromHere);
   return item;
 }
 
@@ -1658,21 +1665,30 @@ function newInstruction() {
 }
 
 // "↻ Re-plan", or "▶ Plan from here" when the box has a new instruction. Only the buttons of the plan on the page.
+// The button of a plan check (onlyNew) shows only for a new instruction, while the plan has no execution.
 function replanLabel(b) {
   const fromHere = b.dataset.run === planRunId && Boolean(newInstruction());
   b.textContent = fromHere ? "▶ Plan from here" : "↻ Re-plan";
   b.title = fromHere ? FROM_HERE_TITLE : REPLAN_TITLE;
+  if (b.dataset.onlyNew) b.hidden = !fromHere || planExecuted;
 }
 
 function showReplanLabels() {
   for (const b of document.querySelectorAll(".replan-btn")) replanLabel(b);
 }
 
-function replanButton() {
+// onlyNew: the button of a plan check, for a new instruction before an execution (see replanLabel).
+function replanButton(onlyNew = false) {
   const b = el("button", "↻ Re-plan", "btn exec-btn replan-btn");
   b.type = "button";
   b.dataset.run = planRunId || "";
   b.disabled = running || !planRunId;
+  if (onlyNew) {
+    b.dataset.onlyNew = "true";
+    b.addEventListener("click", () => replan());
+    replanLabel(b);
+    return b;
+  }
   replanLabel(b);
   const fromStart = execError;  // the mode when the button is made: a later Execute must not change it
   const partial = execPartial;  // a re-plan after a partial run always continues

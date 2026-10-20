@@ -290,11 +290,12 @@ def _feedback(found: dict, history: RunStore, mode: str = "start") -> Feedback |
                     ran_keyframes=_ran_keyframes(end))
 
 
-def _no_run_feedback(found: dict) -> Feedback:
-    """The feedback of a saved plan that did not run: its plan only. The new round starts where that plan started."""
+def _no_run_feedback(found: dict, status: str = "not run") -> Feedback:
+    """The feedback of a saved plan without an end state: it did not run, or its execution ended with "error".
+    It has the plan only, and the status. The new round starts where that plan started."""
     objects, keyframes = _reply_format(found["plan"])
     mode = "continue" if found["start"].get("round_mode") == "continue" else "start"
-    return Feedback(objects, keyframes, "not run", False, False, None, None, (), found["folder"].name,
+    return Feedback(objects, keyframes, status, False, False, None, None, (), found["folder"].name,
                     plan_round(found["start"]) + 1, None, mode=mode, executed=False)
 
 
@@ -844,8 +845,9 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         if new is not None and body.mode == "start":
             raise HTTPException(409, NEW_FROM_START)
         feedback = _feedback(found, history, mode)
-        if feedback is None and new is not None:  # no execution yet: the round starts where that plan started
-            feedback = _no_run_feedback(found)
+        if new is not None and (feedback is None or feedback.status == "error"):
+            # No end state: the round starts where that plan started
+            feedback = _no_run_feedback(found, feedback.status if feedback else "not run")
         if feedback is None:
             raise HTTPException(404, "the plan has no finished execution yet: execute it first")
         if new is not None:

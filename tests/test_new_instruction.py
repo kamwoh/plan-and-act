@@ -165,3 +165,25 @@ def test_the_rounds_of_an_auto_replan_end_at_the_last_round(tmp_path):
         first = plan_and_execute(c)
         r = c.post(f"/api/plan/{first}/replan", json={"instruction": STACK, "auto": True, "rounds": 31})
     assert r.status_code == 422
+
+
+def test_a_new_instruction_after_an_execution_error_starts_from_the_start_of_that_round(tmp_path, monkeypatch):
+    def broken(self, keyframes, should_stop, on_action=None):
+        raise RuntimeError("the simulation broke")
+
+    monkeypatch.setattr(StateEnv, "execute_plan", broken)
+    backend = FakeBackend([good_plan(), good_plan()])
+    with app(tmp_path, backend) as c:
+        first = c.post("/api/plan", json={"instruction": PICK, "seed": 5}).json()["run_id"]
+        wait_idle(c)
+        assert c.post(f"/api/plan/{first}/execute").status_code == 200
+        wait_idle(c)
+        end = [e for e in run_events(tmp_path, first) if e["kind"] == "exec_end"][-1]
+        assert end["status"] == "error"
+        second = replan(c, first, instruction=STACK, mode="continue")  # the mode that the page sends
+    assert ENVS[-1].start is None  # no end state: the round starts where round 1 started
+    start = run_events(tmp_path, second)[0]
+    assert (start["round_mode"], start["new_instruction"], start["instruction"]) == ("start", True, STACK)
+    msg = backend.sent[-1][0].text
+    assert msg.startswith(SAME_START + "\n")
+    assert "The last execution failed with an error in the simulation." in msg and "Execution status" not in msg

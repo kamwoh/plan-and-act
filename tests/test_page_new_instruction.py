@@ -39,3 +39,19 @@ def test_the_round_divider_shows_a_new_instruction():
     assert "· new instruction" in divider and '"round-instr"' in divider
     assert "startRound(planMode, ev.new_instruction ? ev.instruction : null)" in _body(js, "function onEvent(ev, replay = false)")
     assert ".round-instr" in _web("style.css")
+
+
+def test_a_plan_without_an_execution_has_a_plan_from_here_button():
+    js = _web("app.js")
+    check = _body(js, "function planCheckEntry")
+    assert "replanButton(true)" in check
+    assert check.index("replanButton(true)") < check.index("if (!keyframes.length) return item;")
+    label = _body(js, "function replanLabel")
+    assert "if (b.dataset.onlyNew) b.hidden = !fromHere || planExecuted;" in label
+    handler = _body(js, "function onEvent(ev, replay = false)")
+    assert "planExecuted = false;" in handler and "planExecuted = true;" in handler
+
+
+def test_plan_from_here_after_an_execution_error_sends_continue():
+    body = _body(_web("app.js"), "async function replan")
+    assert 'const mode = text ? "continue" : fromStart' in body  # the server starts it where the round started

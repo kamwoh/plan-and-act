@@ -320,7 +320,7 @@ class Feedback:
     frames: tuple[Frame, ...] = ()  # the frames for Claude. They go after the images now and before `images`
     ran_keyframes: tuple[int, int] = (0, 0)  # (K, N) when only the first K of N keyframes ran by design
     instruction: str | None = None  # the new instruction of the person, when it replaces the earlier task
-    executed: bool = True  # False: the last plan did not run, so there is no result. Only with a new instruction
+    executed: bool = True  # False: no end state (no run, or an error), so the round starts where the last plan did
 
 
 def partial_line(k: int, n: int) -> str:
@@ -391,10 +391,12 @@ def _new_instruction_lines(f: Feedback) -> list[str]:
 
 
 def _no_run_lines(f: Feedback, start_seen: bool) -> list[str]:
-    """The images of a re-plan after a plan that did not run: the scene is as at the start of that plan."""
+    """The images of a re-plan after a plan without an end state: the scene is as at the start of that plan.
+    The status "error" says that its execution failed."""
+    failed = ["The last execution failed with an error in the simulation."] if f.status == "error" else []
     if start_seen and f.mode != "continue":
-        return ["The scene is the same as the start images earlier in this chat."]
-    return ["Images 1 and 2 show the scene now."]
+        return [*failed, "The scene is the same as the start images earlier in this chat."]
+    return [*failed, "Images 1 and 2 show the scene now."]
 
 
 def _gripper_lines(obs: Observation, feedback: Feedback | None, gripper: str | None) -> list[str]:

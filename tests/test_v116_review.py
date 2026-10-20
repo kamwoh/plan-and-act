@@ -73,7 +73,7 @@ def test_the_verdict_texts_say_that_a_partial_run_ran_by_design():
 # ---- 4. The pill of a re-plan after a partial run ----
 def test_a_replan_after_a_partial_run_says_continue():
     js = _web("app.js")
-    assert "const partial = execPartial;" in _body(js, "function replanButton()")
+    assert "const partial = execPartial;" in _body(js, "function replanButton(onlyNew = false)")
     body = _body(js, "async function replan(")
     assert 'const mode = text ? "continue" : fromStart ? "start" : partial ? "continue" : roundMode();' in body
 
