@@ -69,7 +69,7 @@ def test_the_page_shows_claudes_verdict_next_to_the_auto_check():
 
 def test_a_replan_after_an_execution_error_falls_back_to_from_start():
     js = _web("app.js")
-    assert 'const mode = fromStart ? "start" : partial ? "continue" : roundMode();' in _body(js, "async function replan")
+    assert 'const mode = text ? "continue" : fromStart ? "start" : partial ? "continue" : roundMode();' in _body(js, "async function replan")
     button = _body(js, "function replanButton")
     assert "if (!fromStart) return b;" in button and "starts from the start, also with Continue on" in button
     handler = _body(js, "function onEvent(ev, replay = false)")

@@ -13,7 +13,7 @@ def test_a_later_round_of_the_plan_on_the_page_keeps_the_chat_and_the_totals():
     assert 'const chained = ev.mode === "plan" && Boolean(ev.parent) && ev.parent === planRunId;' in start
     assert start.index("const chained") < start.index("clearPlan()")  # read the plan id before it goes
     assert re.search(r"if \(!chained\) \{\s*resetChat\(\);\s*resetTotals\(\);\s*\}", start)
-    assert "if (chained) startRound(planMode);" in start
+    assert "if (chained) startRound(planMode, ev.new_instruction ? ev.instruction : null);" in start
 
 
 def test_each_round_has_its_own_step_keys():
@@ -25,10 +25,10 @@ def test_each_round_has_its_own_step_keys():
 
 def test_older_rounds_fold_to_one_line():
     js, css = _web("app.js"), _web("style.css")
-    start = _body(js, "function startRound(mode)")
-    assert "foldRound(Number(r), true)" in start and "addEntry(roundDivider(chatRound, mode))" in start
-    div = _body(js, "function roundDivider(round, mode)")
-    assert "`── Round ${round}${modeText(mode)} ──`" in div
+    start = _body(js, "function startRound(mode, instruction = null)")
+    assert "foldRound(Number(r), true)" in start and "addEntry(roundDivider(chatRound, mode, instruction))" in start
+    div = _body(js, "function roundDivider(round, mode, instruction = null)")
+    assert '`── Round ${round}${instruction ? " · new instruction" : modeText(mode)} ──`' in div
     assert ".entry[hidden] { display: none; }" in css  # .entry is a flex box: hidden needs its own rule
 
 

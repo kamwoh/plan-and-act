@@ -178,13 +178,14 @@ textarea:focus, input[type="number"]:focus { border-color: var(--accent); box-sh
 }
 .entry[hidden] { display: none; }
 /* The first line of a round in a chain. A click folds the entries of the round. */
-.round-div { display: flex; }
+.round-div { display: flex; flex-direction: column; }
+.round-instr { text-align: center; font-size: 12px; color: var(--fg); padding: 0 8px 2px; overflow-wrap: anywhere; }
 .round-btn {
   flex: 1; display: flex; justify-content: center; gap: 8px; background: none; border: 0; padding: 2px 0; cursor: pointer;
   font: 11px var(--mono); color: var(--muted);
 }
 .round-btn:hover, .round-btn:focus-visible { color: var(--accent); outline: none; }
-.round-div.folded .round-btn { color: var(--faint); }
+.round-div.folded .round-btn, .round-div.folded .round-instr { color: var(--faint); }
 .round-count { color: var(--faint); }
 .entry.link { cursor: pointer; transition: border-color 0.15s, background 0.15s; }
 .entry.link:hover, .entry.link:focus-visible { background: #1a202b; outline: none; border-color: #3a4558; }

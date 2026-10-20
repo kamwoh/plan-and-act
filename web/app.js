@@ -17,6 +17,7 @@ let playerFailed = false;  // no WebGL: the page says so and keeps the camera im
 let planRunId = null;      // the id of the plan run on the page, for Execute and Re-plan
 let planRound = 1;         // the round of the plan on the page: Re-plan works up to MAX_ROUND
 let planMode = null;       // the mode of the plan on the page: "continue", "start", or null in round 1
+let planInstruction = "";  // the newest instruction of the chain on the page: another one in the box is new
 let planDone = false;      // Claude's re-plan on the page says that the task is done
 let planImpossible = "";  // Claude's plan on the page says that the task is not possible: the reason
 let parentCheck = null;    // the auto-check of the execution before this re-plan: true, false or null
@@ -69,6 +70,7 @@ function showMode() {
   $("mode").textContent = t ? `Auto-check: ${t.name}` : "No auto-check: Claude says when it is done";
   $("mode").classList.toggle("check", Boolean(t));
   for (const chip of $("examples").children) chip.classList.toggle("active", t ? chip.dataset.name === t.name : chip.dataset.name === "");
+  showReplanLabels();
 }
 
 function chip(label, name, instruction) {
@@ -633,7 +635,9 @@ function onRunStart(ev, chained = false) {
   sys.append(el("summary", "System prompt"), el("pre", ev.system_prompt || ""));
   if (!chained) item.append(field("task", el("span", ev.instruction)));
   if (ev.parent) {
-    const how = ev.round_mode === "continue"
+    const how = ev.new_instruction
+      ? "new instruction: the scene goes on from where that run left it, and Claude plans the new task"
+      : ev.round_mode === "continue"
       ? "continue: the scene goes on from the end of that run, and Claude plans what is left"
       : "from start: the scene starts again, and Claude also sees the end images";
     // A round without a session to resume starts a new chat. A chat_lost event can also say so later.
@@ -683,15 +687,17 @@ function resetChat() {
 }
 
 // "── Round 2 · continue ──": the first line of a round in the chat. A click folds the round to this line.
-function roundDivider(round, mode) {
+// A round with a new instruction says "· new instruction", and the next line shows that instruction.
+function roundDivider(round, mode, instruction = null) {
   const item = el("li", "", "round-div");
   item.dataset.round = String(round);
   const b = el("button", "", "round-btn");
   b.type = "button";
   b.setAttribute("aria-expanded", "true");
-  b.append(el("span", `── Round ${round}${modeText(mode)} ──`), el("span", "", "round-count"));
+  b.append(el("span", `── Round ${round}${instruction ? " · new instruction" : modeText(mode)} ──`), el("span", "", "round-count"));
   b.addEventListener("click", () => foldRound(round, b.getAttribute("aria-expanded") === "true"));
   item.append(b);
+  if (instruction) item.append(el("div", instruction, "round-instr"));
   return item;
 }
 
@@ -706,7 +712,7 @@ function foldRound(round, fold) {
 }
 
 // A later round of the chain on the page: the older rounds fold to one line each, and a divider starts this one.
-function startRound(mode) {
+function startRound(mode, instruction = null) {
   const shown = new Set([...$("chat").querySelectorAll(".entry[data-round]")].map((e) => e.dataset.round));
   for (const r of shown) {
     if (!$("chat").querySelector(`.round-div[data-round="${r}"]`)) {  // the first round of the chat has no divider yet
@@ -714,7 +720,7 @@ function startRound(mode) {
     }
     foldRound(Number(r), true);
   }
-  addEntry(roundDivider(chatRound, mode));
+  addEntry(roundDivider(chatRound, mode, instruction));
 }
 
 $("chat").addEventListener("scroll", () => {
@@ -1111,6 +1117,7 @@ function onEvent(ev, replay = false) {
     planRunId = ev.mode === "plan" ? ev.run_id : null;
     planRound = ev.round || 1;
     planMode = ev.round_mode || null;
+    planInstruction = ev.instruction || "";
     planDone = false;
     planImpossible = "";
     parentCheck = typeof ev.parent_check === "boolean" ? ev.parent_check : null;
@@ -1123,12 +1130,13 @@ function onEvent(ev, replay = false) {
       resetTotals();
     }
     chatRound = ev.mode === "plan" ? planRound : 1;
-    if (chained) startRound(planMode);
+    if (chained) startRound(planMode, ev.new_instruction ? ev.instruction : null);
     // A round that continues sends no end images: its own images show the end of the last round.
     roundFeedback[chatRound] = ev.parent && ev.end_step && planMode !== "continue" ? endImages(ev.parent, ev.end_step) : null;
     roundFrames[chatRound] = (ev.parent && runFrames[ev.parent]) || null;
     emptyMemo();
     onRunStart(ev, chained);
+    showReplanLabels();
     if (ev.mode === "plan") setStatus(`planning${roundText(planRound)} · Claude is thinking`, "thinking");
   } else if (ev.kind === "observation") {
     const key = stepKey(ev.step);
@@ -1181,6 +1189,7 @@ function onEvent(ev, replay = false) {
         planRunId = ev.run_id;
         planRound = ev.round || 1;
         planMode = ev.round_mode || null;
+        planInstruction = ev.instruction || "";
         chatRound = planRound;
       }
       setStatus("running the plan", "moving");
@@ -1638,13 +1647,33 @@ function endImages(runId, step) {
 }
 
 // Re-plan: the same rules as Execute disable it (see clearPlan and setRunning).
+const REPLAN_TITLE = "Claude sees this plan and its result. With Continue on, it plans the rest from where the " +
+  "execution ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
+const FROM_HERE_TITLE = "Claude gets the new instruction in the same chat, and the arm goes on from where it is now";
+
+// The text of the instruction box when it differs from the newest instruction of the chain on the page, else "".
+function newInstruction() {
+  const text = $("instruction").value.trim();
+  return planRunId && text && text !== planInstruction ? text : "";
+}
+
+// "↻ Re-plan", or "▶ Plan from here" when the box has a new instruction. Only the buttons of the plan on the page.
+function replanLabel(b) {
+  const fromHere = b.dataset.run === planRunId && Boolean(newInstruction());
+  b.textContent = fromHere ? "▶ Plan from here" : "↻ Re-plan";
+  b.title = fromHere ? FROM_HERE_TITLE : REPLAN_TITLE;
+}
+
+function showReplanLabels() {
+  for (const b of document.querySelectorAll(".replan-btn")) replanLabel(b);
+}
+
 function replanButton() {
   const b = el("button", "↻ Re-plan", "btn exec-btn replan-btn");
   b.type = "button";
   b.dataset.run = planRunId || "";
   b.disabled = running || !planRunId;
-  b.title = "Claude sees this plan and its result. With Continue on, it plans the rest from where the execution " +
-    "ended. With Continue off, it sees the end images and plans the whole task again from a fresh start.";
+  replanLabel(b);
   const fromStart = execError;  // the mode when the button is made: a later Execute must not change it
   const partial = execPartial;  // a re-plan after a partial run always continues
   b.addEventListener("click", () => replan(fromStart, partial));
@@ -1655,11 +1684,15 @@ function replanButton() {
   return box;
 }
 
+// Plan from here: a new instruction in the box always continues, and with Auto on it starts the Auto loop.
 async function replan(fromStart = false, partial = false) {
   if (running || !planRunId) return;
-  const mode = fromStart ? "start" : partial ? "continue" : roundMode();  // no end state after an error: see replanButton
-  setStatus(`re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
+  const text = newInstruction();
+  // No end state after an error: see replanButton. The server then refuses a new instruction.
+  const mode = text ? "continue" : fromStart ? "start" : partial ? "continue" : roundMode();
+  setStatus(text ? "planning from here · new instruction" : `re-planning · ${mode === "continue" ? "continue" : "from start"}`, "thinking");
   const body = { mode, max_keyframes: mode === "continue" ? perRound() : 0 };
+  if (text) Object.assign(body, { instruction: text, auto: $("auto").checked, rounds: roundsValue($("rounds").value) });
   if (await postJson(`/api/plan/${encodeURIComponent(planRunId)}/replan`, body)) setRunning(true);
 }
 

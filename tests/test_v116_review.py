@@ -75,7 +75,7 @@ def test_a_replan_after_a_partial_run_says_continue():
     js = _web("app.js")
     assert "const partial = execPartial;" in _body(js, "function replanButton()")
     body = _body(js, "async function replan(")
-    assert 'const mode = fromStart ? "start" : partial ? "continue" : roundMode();' in body
+    assert 'const mode = text ? "continue" : fromStart ? "start" : partial ? "continue" : roundMode();' in body
 
 
 # ---- 5. stepSent follows each attempt that sends images ----
