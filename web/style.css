@@ -320,6 +320,7 @@ summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted
 
 .seed-row { display: flex; gap: 4px; }
 .btn.icon { padding: 4px 9px; line-height: 0; }
+.btn.icon.with-label { display: inline-flex; align-items: center; gap: 5px; line-height: 1; }
 
 /* ---- Run history dialog: one line for each run ---- */
 .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
