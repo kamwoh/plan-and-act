@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from armmind.llm.claude_cli import ClaudeCLIBackend
-from armmind.llm.protocol import Final, LLMError, Message
+from plan_and_act.llm.claude_cli import ClaudeCLIBackend
+from plan_and_act.llm.protocol import Final, LLMError, Message
 
 FAKE = [sys.executable, str(Path(__file__).with_name("fake_claude.py"))]
 SCHEMA_A = {"type": "object", "properties": {"seen": {"type": "integer"}}}
@@ -99,4 +99,4 @@ async def test_without_a_chain_the_chat_is_not_saved(fake, tmp_path):
 
 def test_the_default_sessions_folder_is_outside_the_repo():
     folder = ClaudeCLIBackend().sessions_dir
-    assert folder == Path.home() / ".cache" / "armmind" / "sessions"
+    assert folder == Path.home() / ".cache" / "plan-and-act" / "sessions"

@@ -1,11 +1,11 @@
 """The loop stops an action list at the first surprise."""
 import pytest
 
-from armmind.agent.loop import Agent, AgentConfig
-from armmind.agent.parse import ReplyError, parse_reply
-from armmind.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_text
-from armmind.llm.fake import FakeBackend
-from armmind.types import Action, Observation
+from plan_and_act.agent.loop import Agent, AgentConfig
+from plan_and_act.agent.parse import ReplyError, parse_reply
+from plan_and_act.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_text
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.types import Action, Observation
 from tests.fakes import Recorder, ScriptEnv, direct, good
 
 MOVE = {"type": "move_to", "xyz": [0.5, 0.0, 0.1]}
@@ -121,8 +121,8 @@ def test_history_line_shows_the_stop():
 # ---- A real world ----
 
 def _real_run(scene, actions):
-    from armmind.env import MujocoEnv
-    from armmind.scenes import SCENES
+    from plan_and_act.env import MujocoEnv
+    from plan_and_act.scenes import SCENES
     env, rec = MujocoEnv(SCENES[scene], None, 0, "t"), Recorder()
     try:
         import asyncio
@@ -147,7 +147,7 @@ def test_real_move_into_the_panel_stops():
 
 @pytest.mark.assets
 def test_real_button_press_with_expect_nothing_runs_without_a_stop():
-    from armmind.scenes.buttons import press
+    from plan_and_act.scenes.buttons import press
     moves = [{"type": "move_to", "xyz": list(a.xyz)} for a in press("green")]
     step = _real_run("buttons", [{**CLOSE, "expect": {"holding": "nothing"}}, *moves])
     assert step["stopped"] is None and len(step["results"]) == 4
@@ -157,10 +157,10 @@ def test_real_button_press_with_expect_nothing_runs_without_a_stop():
 
 def _run_actions(scene_name, task_name, actions=None, seed=0):
     """Run actions (or the task solution) through check_result. Gives (results, stop reasons)."""
-    from armmind.agent.loop import check_result
-    from armmind.scenes import SCENES
-    from armmind.sim.arm import Arm
-    from armmind.sim.world import World
+    from plan_and_act.agent.loop import check_result
+    from plan_and_act.scenes import SCENES
+    from plan_and_act.sim.arm import Arm
+    from plan_and_act.sim.world import World
     scene = SCENES[scene_name]
     task = scene.tasks[task_name] if task_name else None
     w = World(scene)
@@ -180,7 +180,7 @@ def _run_actions(scene_name, task_name, actions=None, seed=0):
 @pytest.mark.assets
 @pytest.mark.parametrize("side", [(0, -1), (-1, 0)])
 def test_real_push_with_the_closed_gripper_is_not_holding(side):
-    from armmind.scenes import SCENES
+    from plan_and_act.scenes import SCENES
     bx, by, _ = SCENES["cubes"].layout(0)["blue_cube"]
     dx, dy = side
     seq = [Action("close", expect="nothing"), Action("move_to", (bx + dx * 0.08, by + dy * 0.08, 0.15)),
@@ -231,15 +231,15 @@ def test_real_kitchen_bottle_grasp_on_seed_1_is_held():
 
 
 def _solution_cases():
-    from armmind.scenes import SCENES
+    from plan_and_act.scenes import SCENES
     return [(s, t, seed) for s, sc in SCENES.items() for t in sc.tasks for seed in range(1)]
 
 
 @pytest.mark.assets
 @pytest.mark.parametrize(("scene", "task", "seed"), _solution_cases())
 def test_real_solutions_hold_every_grasp_and_never_stop_after_the_first_close(scene, task, seed):
-    from armmind.scenes import SCENES
-    from armmind.types import CLOSED_ON_NOTHING_M
+    from plan_and_act.scenes import SCENES
+    from plan_and_act.types import CLOSED_ON_NOTHING_M
     results, _ = _run_actions(scene, task, seed=seed)
     objects = {o.name for o in SCENES[scene].objects}
     closes = [i for i, r in enumerate(results) if r.action.type == "close"]
@@ -248,7 +248,7 @@ def test_real_solutions_hold_every_grasp_and_never_stop_after_the_first_close(sc
         touched = tuple(c for c in r.contacts if c in objects)
         if touched and r.gripper_width >= CLOSED_ON_NOTHING_M:
             assert r.held_after == touched, f"close {i}: {r.summary()}"
-    from armmind.agent.loop import check_result
+    from plan_and_act.agent.loop import check_result
     labels = {o.name: o.label for o in SCENES[scene].objects}
     late = [(i, check_result(r.action, r, labels)[1]) for i, r in enumerate(results) if closes and i > closes[0]]
     assert [x for x in late if x[1]] == []

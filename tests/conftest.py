@@ -1,8 +1,8 @@
 import pytest
 
-from armmind.scenes import SCENES
-from armmind.sim.assets import AssetsMissing, panda_dir
-from armmind.sim.meshes import have_meshes
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.assets import AssetsMissing, panda_dir
+from plan_and_act.sim.meshes import have_meshes
 
 # Scenes with scanned objects. A test with one of these names as a parameter needs the objects.
 MESH_SCENES = {name for name, s in SCENES.items() if s.meshes}

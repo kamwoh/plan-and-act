@@ -1,5 +1,5 @@
-from armmind.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_text
-from armmind.types import Observation
+from plan_and_act.agent.prompts import REPLY_SCHEMA, SYSTEM, StepSummary, build_user_text
+from plan_and_act.types import Observation
 
 OBS = Observation(b"", b"", (0.3, 0.0, 0.4), 0.08, ())
 SCENE = "Objects: red cube, 4 cm."
@@ -77,7 +77,7 @@ def test_debug_positions_show_the_object_yaw():
 def test_system_says_to_turn_for_the_narrow_side():
     assert "narrow side" in SYSTEM and "stand at an angle" in SYSTEM and "turned" not in SYSTEM
     assert "For an object taller than 7 cm, close the gripper 3.5 cm below its top" in SYSTEM
-    from armmind.scenes import SCENES
+    from plan_and_act.scenes import SCENES
     assert all("narrow side" not in s.fixtures_text for s in SCENES.values())
 
 
@@ -101,7 +101,7 @@ def test_user_text_says_none_without_lessons():
 
 
 def test_result_summary_shows_the_contact_change():
-    from armmind.types import Action, ActionResult
+    from plan_and_act.types import Action, ActionResult
     grab = ActionResult(Action("close"), "reached", (0.5, 0.0, 0.02), 0.04, ("red_cube",),
                         held_before=(), held_after=("red_cube",))
     assert grab.summary().endswith(", now holding red_cube")

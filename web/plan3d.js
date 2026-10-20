@@ -108,7 +108,7 @@
   }
 
   // A released entity falls onto the table (z 0) or onto the highest entity below it. It never rises.
-  // An entity without a size stays where it is. src/armmind/plan/track.py has the same rule in drop_pose.
+  // An entity without a size stays where it is. src/plan_and_act/plan/track.py has the same rule in drop_pose.
   function dropPose(name, byName, poses) {
     const e = byName[name], p = poses[name];
     if (!e || !e.size) return p;
@@ -139,7 +139,7 @@
   // the start. movesAt(k, keyframe) gives the predicted moves of keyframe
   // k: [{ name, xyz, yaw }]. On the segment into keyframe k, each moved entity goes to its new pose with the
   // timing of the agent. A carried entity does not move. A release drops the entity (see dropPose).
-  // src/armmind/plan/track.py has the same rules.
+  // src/plan_and_act/plan/track.py has the same rules.
   function posesAt(track, entities, t, carriedAt, movesAt) {
     const poses = {};
     const byName = {};

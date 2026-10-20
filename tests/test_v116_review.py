@@ -1,9 +1,9 @@
 """v1.16 review follow-ups: a stop names its keyframe, a partial run says so in each message and on the page."""
 import pytest
 
-from armmind.agent.prompts import build_chain_verdict_text, build_replan_text, build_verdict_text
-from armmind.plan.formats import Keyframe
-from armmind.scenes import SCENES
+from plan_and_act.agent.prompts import build_chain_verdict_text, build_replan_text, build_verdict_text
+from plan_and_act.plan.formats import Keyframe
+from plan_and_act.scenes import SCENES
 from tests.test_page_outcome import badge
 from tests.test_page_plan import _body, _web
 from tests.test_replan import OBS, feedback
@@ -14,7 +14,7 @@ PARTIAL = "Only the first 2 of your 5 keyframes ran, by design. The arm is now a
 # ---- 1. A stop names its keyframe ----
 @pytest.mark.assets
 def test_the_stop_of_an_execution_names_its_keyframe():
-    from armmind.env import MujocoEnv
+    from plan_and_act.env import MujocoEnv
     sc = SCENES["cubes"]
     kfs = (Keyframe((0.35, 0.0, 0.15), 0.0, "open", None, "above"),
            Keyframe((0.35, 0.0, 0.02), 0.0, "closed", "red cube", "grasp"),

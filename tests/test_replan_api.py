@@ -4,8 +4,8 @@ import time
 
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.server.app import create_app
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.server.app import create_app
 from tests.fakes import HangingBackend, judged
 from tests.test_agent_plan import PLAN, good_plan
 from tests.test_plan_api import ENVS, PICK, ApiPlanEnv, client
@@ -111,7 +111,7 @@ def test_replan_during_a_run_is_409_and_needs_same_origin(tmp_path):
 
 
 def test_replan_of_the_last_round_is_409(tmp_path, monkeypatch):
-    monkeypatch.setattr("armmind.server.app.MAX_ROUND", 5)  # 5 rounds keep the test short
+    monkeypatch.setattr("plan_and_act.server.app.MAX_ROUND", 5)  # 5 rounds keep the test short
     backend = FakeBackend([r for _ in range(5) for r in (good_plan(), judged())])
     with client(tmp_path, backend) as c:
         run_id = planned_and_executed(c)

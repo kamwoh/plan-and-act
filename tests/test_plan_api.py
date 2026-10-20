@@ -5,9 +5,9 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.scenes import SCENES
-from armmind.server.app import create_app
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.scenes import SCENES
+from plan_and_act.server.app import create_app
 from tests.fakes import HangingBackend, bad, good
 from tests.test_agent_plan import PlanEnv, good_plan
 from tests.test_server import make_env, wait_idle
@@ -141,7 +141,7 @@ def test_plan_body_is_strict_about_its_fields(tmp_path):
 
 
 def test_demo_backend_answers_a_plan(tmp_path):
-    from armmind.llm.fake import DemoBackend
+    from plan_and_act.llm.fake import DemoBackend
     with client(tmp_path, DemoBackend(delay_s=0.0)) as c:
         assert c.post("/api/plan", json={"instruction": PICK}).status_code == 200
         wait_idle(c)
@@ -152,8 +152,8 @@ def test_demo_backend_answers_a_plan(tmp_path):
 
 @pytest.mark.assets
 def test_a_real_plan_has_scores_a_view_and_png_images(tmp_path):
-    from armmind.llm.fake import DEMO_PLAN
-    from armmind.server.app import default_env_factory
+    from plan_and_act.llm.fake import DEMO_PLAN
+    from plan_and_act.server.app import default_env_factory
     app = create_app(FakeBackend([good_plan(DEMO_PLAN)]), default_env_factory, tmp_path / "runs",
                      lessons_dir=tmp_path / "lessons")
     with TestClient(app) as c:

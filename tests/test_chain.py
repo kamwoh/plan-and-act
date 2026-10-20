@@ -4,8 +4,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.agent.loop import Agent, Chain
-from armmind.agent.prompts import (
+from plan_and_act.agent.loop import Agent, Chain
+from plan_and_act.agent.prompts import (
     CHAIN_SYSTEM,
     JUDGE,
     PLAN_SYSTEM,
@@ -13,9 +13,9 @@ from armmind.agent.prompts import (
     build_chain_verdict_text,
     build_replan_text,
 )
-from armmind.llm.fake import FakeBackend
-from armmind.llm.protocol import Message
-from armmind.server.app import create_app
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.llm.protocol import Message
+from plan_and_act.server.app import create_app
 from tests.fakes import Recorder, direct, judged
 from tests.test_agent_plan import PLAN, PlanEnv, good_plan
 from tests.test_continue_api import ENVS, StateEnv, factory
@@ -229,7 +229,7 @@ async def test_the_fake_backend_keeps_each_chat():
 
 
 def test_the_run_store_finds_the_chain_of_a_round(tmp_path):
-    from armmind.store.runs import RunStore
+    from plan_and_act.store.runs import RunStore
     backend = FakeBackend([good_plan(), judged(), good_plan(), judged(), good_plan()])
     ids = []
     with app(tmp_path, backend) as c:

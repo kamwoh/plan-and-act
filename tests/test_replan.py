@@ -4,12 +4,12 @@ import logging
 
 import pytest
 
-from armmind.agent.loop import Agent
-from armmind.agent.parse import LESSON_CHARS, ReplyError, parse_plan
-from armmind.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM, SYSTEM, Feedback, build_plan_text
-from armmind.llm.fake import FakeBackend
-from armmind.store.lessons import LessonStore
-from armmind.types import Observation
+from plan_and_act.agent.loop import Agent
+from plan_and_act.agent.parse import LESSON_CHARS, ReplyError, parse_plan
+from plan_and_act.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM, SYSTEM, Feedback, build_plan_text
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.store.lessons import LessonStore
+from plan_and_act.types import Observation
 from tests.fakes import Recorder, direct
 from tests.test_agent_plan import PLAN, PlanEnv, good_plan
 

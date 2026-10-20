@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from armmind.scenes import SCENES
-from armmind.sim.render import GRID_X, GRID_Y, Cameras, jpeg, png
-from armmind.sim.world import World
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.render import GRID_X, GRID_Y, Cameras, jpeg, png
+from plan_and_act.sim.world import World
 
 LAYOUT = {"red_cube": (0.62, -0.25), "blue_cube": (0.45, 0.15), "green_cube": (0.62, 0.05)}
 

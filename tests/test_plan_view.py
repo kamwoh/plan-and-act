@@ -7,16 +7,16 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from armmind.plan.formats import Entity, Keyframe, build_track
-from armmind.scenes import SCENES
-from armmind.sim.planview import true_entities
+from plan_and_act.plan.formats import Entity, Keyframe, build_track
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.planview import true_entities
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_generic_modules_import_no_mujoco():
-    code = ("import sys, armmind.plan.formats, armmind.plan.scores; "
-            "bad = [m for m in sys.modules if m.split('.')[0] in ('mujoco', 'numpy') or m.startswith('armmind.sim')]; "
+    code = ("import sys, plan_and_act.plan.formats, plan_and_act.plan.scores; "
+            "bad = [m for m in sys.modules if m.split('.')[0] in ('mujoco', 'numpy') or m.startswith('plan_and_act.sim')]; "
             "print(bad); sys.exit(1 if bad else 0)")
     r = subprocess.run([sys.executable, "-c", code], check=False, capture_output=True, text=True, cwd=ROOT)
     assert r.returncode == 0, r.stdout + r.stderr
@@ -37,7 +37,7 @@ def test_build_track_follows_the_given_motion_rule():
 
 # ---- The MuJoCo arm environment ----
 def _env(scene="cubes", seed=0, task=None):
-    from armmind.env import MujocoEnv
+    from plan_and_act.env import MujocoEnv
     sc = SCENES[scene]
     return MujocoEnv(sc, sc.tasks.get(task) if task else None, seed, "")
 
@@ -65,7 +65,7 @@ def _entity_aabb(e: Entity):
 def test_fixture_list_agrees_with_the_fixture_xml(scene):
     import mujoco
 
-    from armmind.sim.world import World
+    from plan_and_act.sim.world import World
     sc = SCENES[scene]
     names = re.findall(r'<geom name="([^"]+)"', sc.fixtures_xml)
     assert sorted(e.name for e in sc.fixtures) == sorted(names)
@@ -110,7 +110,7 @@ def test_drawer_fixtures_follow_the_start_slide():
 def test_round_mesh_objects_are_cylinders_in_the_true_entities():
     if not SCENES["kitchen"].meshes:
         pytest.skip("no meshes")
-    from armmind.sim.meshes import have_meshes
+    from plan_and_act.sim.meshes import have_meshes
     if not have_meshes(set(SCENES["kitchen"].meshes)):
         pytest.skip("scanned objects missing")
     env = _env("kitchen", 0)
@@ -153,8 +153,8 @@ def test_agent_parts_and_the_finger_gap():
 
 @pytest.mark.assets
 def test_track_times_match_the_real_arm():
-    from armmind.sim.arm import Arm
-    from armmind.types import Action
+    from plan_and_act.sim.arm import Arm
+    from plan_and_act.types import Action
     env = _env("cubes", 0)
     try:
         kfs = (Keyframe((0.45, 0.25, 0.30), 40.0, "open", None, "a"),
@@ -210,6 +210,6 @@ def test_page_loads_one_exact_three_version():
 
 
 def test_scores_take_the_states_and_the_gap_from_the_environment():
-    src = (ROOT / "src" / "armmind" / "plan" / "scores.py").read_text()
+    src = (ROOT / "src" / "plan_and_act" / "plan" / "scores.py").read_text()
     for word in ('"open"', '"closed"', "OPEN_GAP", "0.08"):
         assert word not in src, word

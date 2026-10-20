@@ -1,5 +1,5 @@
 {
- "about": "One track for the poses of web/plan3d.js and src/armmind/plan/track.py. Keyframe 2 pushes the cube, keyframe 3 grasps it, keyframe 5 lets go 12 cm up over the box, so the cube falls onto the box. Keyframe 6 knocks it again. Keyframe 4 turns the ball.",
+ "about": "One track for the poses of web/plan3d.js and src/plan_and_act/plan/track.py. Keyframe 2 pushes the cube, keyframe 3 grasps it, keyframe 5 lets go 12 cm up over the box, so the cube falls onto the box. Keyframe 6 knocks it again. Keyframe 4 turns the ball.",
  "track": {
   "start": {
    "xyz": [

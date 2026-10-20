@@ -2,12 +2,12 @@
 import numpy as np
 import pytest
 
-from armmind.env import MujocoEnv
-from armmind.llm.fake import DEMO_PLAN_LOW
-from armmind.plan.formats import Keyframe
-from armmind.scenes import SCENES
-from armmind.sim.planview import true_entities
-from armmind.sim.state import StateMismatch, scene_version, state_problem
+from plan_and_act.env import MujocoEnv
+from plan_and_act.llm.fake import DEMO_PLAN_LOW
+from plan_and_act.plan.formats import Keyframe
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.planview import true_entities
+from plan_and_act.sim.state import StateMismatch, scene_version, state_problem
 
 CUBES = SCENES["cubes"]
 PICK = CUBES.tasks["pick"]
@@ -107,8 +107,8 @@ def test_execute_from_the_saved_state_goes_on_from_there(ended):
 
 @pytest.mark.assets
 def test_the_plan_check_and_the_view_start_with_the_cube_in_the_hand(ended):
-    from armmind.plan.formats import Entity
-    from armmind.plan.scores import prediction
+    from plan_and_act.plan.formats import Entity
+    from plan_and_act.plan.scores import prediction
     path, end = ended
     env = MujocoEnv(CUBES, PICK, 0, PICK.instruction, start=path)
     try:
@@ -135,7 +135,7 @@ def test_a_track_can_start_with_an_entity_in_the_hand_in_python_and_on_the_page(
     import subprocess
     from pathlib import Path
 
-    from armmind.plan.track import poses_at
+    from plan_and_act.plan.track import poses_at
     cube = {"name": "cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.5, 0.0, 0.08], "yaw": 0.0}
     track = {"start": {"xyz": [0.5, 0.0, 0.08], "yaw": 0.0, "state": "closed", "gap": 0.04, "carrying": "cube"},
              "keyframes": [{"xyz": [0.5, 0.1, 0.2], "yaw": 30.0, "state": "closed", "carrying": "cube", "gap": 0.04,

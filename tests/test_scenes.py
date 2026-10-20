@@ -4,10 +4,10 @@ import mujoco
 import numpy as np
 import pytest
 
-from armmind.scenes import SCENES
-from armmind.sim.arm import Arm
-from armmind.sim.world import World
-from armmind.types import Action
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.arm import Arm
+from plan_and_act.sim.world import World
+from plan_and_act.types import Action
 
 CASES = [(s, t) for s in SCENES for t in SCENES[s].tasks]
 
@@ -205,7 +205,7 @@ def test_success_check_on_set_poses(scene_name, task_name, poses, expected):
 @pytest.mark.parametrize("touch", [True, False])
 def test_tray_check_rejects_a_cube_the_gripper_holds(touch):
     """The gripper holds the red cube inside the tray. The check passes only after the gripper lets go."""
-    from armmind.types import Action
+    from plan_and_act.types import Action
     scene = SCENES["tray"]
     w = _posed("tray", {"red_cube": (0.5, 0.0, 0.02), **AWAY})
     arm = Arm(w)
@@ -258,7 +258,7 @@ def test_drawer_stays_where_it_is_left():
 
 @pytest.mark.assets
 def test_close_drawer_check_rejects_a_gripper_on_the_handle():
-    from armmind.scenes.drawer import handle_pos
+    from plan_and_act.scenes.drawer import handle_pos
     scene = SCENES["drawer"]
     w = World(scene)
     w.reset(scene.layout(0), {"drawer": 0.0})
@@ -286,7 +286,7 @@ def test_cube_in_drawer_check_needs_the_cube_inside():
 
 
 def _presses(*colours: str) -> list:
-    from armmind.scenes.buttons import press
+    from plan_and_act.scenes.buttons import press
     return [Action("close"), *(a for c in colours for a in press(c))]
 
 
@@ -327,7 +327,7 @@ def test_image_text_and_camera_labels():
 
 @pytest.mark.assets
 def test_joint_text_has_units_and_meaning():
-    from armmind.env import MujocoEnv
+    from plan_and_act.env import MujocoEnv
     for name, want in [("drawer", ("drawer slide 0.120 m (0 = closed)",)),
                        ("buttons", ("red button depth 0.000 m", "green button depth 0.000 m",
                                     "blue button depth 0.000 m"))]:
@@ -462,8 +462,8 @@ def test_mesh_checks_reject_an_item_the_gripper_holds(scene_name, task_name, ite
 def test_objects_txt_lists_every_scanned_object_once():
     from pathlib import Path
 
-    import armmind.scenes
-    listed = Path(armmind.scenes.__file__).with_name("objects.txt").read_text().split()
+    import plan_and_act.scenes
+    listed = Path(plan_and_act.scenes.__file__).with_name("objects.txt").read_text().split()
     used = [m for s in SCENES.values() for m in s.meshes]
     assert sorted(listed) == sorted(set(listed)) == sorted(set(used))
 

@@ -1,10 +1,10 @@
 """v1.17: a re-plan with a new instruction goes on from where the arm is now, in the same chat."""
 import pytest
 
-from armmind.agent.prompts import build_plan_text, build_replan_text
-from armmind.llm.fake import FakeBackend
-from armmind.scenes import SCENES
-from armmind.sim.state import END_STATE, START_STATE
+from plan_and_act.agent.prompts import build_plan_text, build_replan_text
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.state import END_STATE, START_STATE
 from tests.fakes import judged
 from tests.test_agent_plan import PLAN, good_plan
 from tests.test_auto_loop import folders

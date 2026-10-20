@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from armmind.agent.loop import Agent, AgentConfig
-from armmind.llm.fake import FakeBackend
-from armmind.scenes import SCENES
+from plan_and_act.agent.loop import Agent, AgentConfig
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.scenes import SCENES
 from tests.fakes import Recorder, direct
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +16,7 @@ JS = ROOT / "tests" / "js"
 
 
 def _env(scene="cubes", seed=0):
-    from armmind.env import MujocoEnv
+    from plan_and_act.env import MujocoEnv
     return MujocoEnv(SCENES[scene], None, seed, "")
 
 
@@ -28,7 +28,7 @@ def _seen_centre(pos, camera):
 @pytest.mark.assets
 @pytest.mark.parametrize("scene", ["cubes", "drawer"])
 async def test_run_start_has_the_cameras_of_the_scene(scene):
-    from armmind.sim.planview import cameras
+    from plan_and_act.sim.planview import cameras
     env, rec = _env(scene), Recorder()
     try:
         await Agent(FakeBackend([]), AgentConfig(max_steps=1)).run(env, direct, rec)
@@ -77,7 +77,7 @@ HALF_CUBE = 0.02
 @pytest.mark.parametrize("scene", ["cubes", "drawer"])
 @pytest.mark.parametrize("seed", [0])
 def test_the_page_projection_matches_the_mujoco_render(scene, seed, tmp_path):
-    from armmind.sim.planview import cameras
+    from plan_and_act.sim.planview import cameras
     env = _env(scene, seed)
     try:
         cases = []
@@ -152,7 +152,7 @@ def test_the_path_switch_is_on_by_default_and_its_storage_is_guarded():
         body = _body(js, fn)
         assert "localStorage" in body and "try {" in body and "catch (err)" in body
     assert "PATH_KEY" not in js.replace(_body(js, "function readShowPath()"), "").replace(
-        _body(js, "function writeShowPath(on)"), "").replace('const PATH_KEY = "armmind.showPath";', "")
+        _body(js, "function writeShowPath(on)"), "").replace('const PATH_KEY = "plan-and-act.showPath";', "")
 
 
 def test_the_overlay_clears_on_a_new_run_a_preview_and_a_reset():

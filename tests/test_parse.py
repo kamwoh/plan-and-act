@@ -1,7 +1,7 @@
 import pytest
 
-from armmind.agent.parse import ReplyError, parse_reply
-from armmind.types import Action
+from plan_and_act.agent.parse import ReplyError, parse_reply
+from plan_and_act.types import Action
 
 
 def reply(actions, **kw):

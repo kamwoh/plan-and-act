@@ -1,9 +1,9 @@
 """v1.15: one front camera frame at the end of each keyframe of an execution, and the pick of the frames for Claude."""
 import pytest
 
-from armmind.plan.formats import Keyframe
-from armmind.plan.frames import MAX_FRAMES, pick_frames
-from armmind.scenes import SCENES
+from plan_and_act.plan.formats import Keyframe
+from plan_and_act.plan.frames import MAX_FRAMES, pick_frames
+from plan_and_act.scenes import SCENES
 from tests.test_plan_scores import scripted_keyframes, with_holding
 
 
@@ -35,7 +35,7 @@ def test_pick_keeps_the_last_frame_of_a_stop_or_a_cancel():
 
 
 def _env(task="pick", seed=0):
-    from armmind.env import MujocoEnv
+    from plan_and_act.env import MujocoEnv
     sc = SCENES["cubes"]
     return MujocoEnv(sc, sc.tasks[task], seed, sc.tasks[task].instruction)
 
@@ -100,8 +100,8 @@ PLAN5 = {"objects": [{"name": "red cube", "shape": "box", "size": [0.04, 0.04, 0
 def _executed(tmp_path, factory=None):
     from fastapi.testclient import TestClient
 
-    from armmind.llm.fake import FakeBackend
-    from armmind.server.app import create_app
+    from plan_and_act.llm.fake import FakeBackend
+    from plan_and_act.server.app import create_app
     from tests.test_agent_plan import good_plan
     from tests.test_plan_api import PICK, plan_factory
     from tests.test_server import wait_idle
@@ -154,6 +154,6 @@ def test_a_stop_frame_is_saved_and_sent(tmp_path):
 
 
 def test_frame_names_are_valid_image_names():
-    from armmind.store.runs import valid_image_name
+    from plan_and_act.store.runs import valid_image_name
     assert valid_image_name("step002_kf01.png") and valid_image_name("step012_kf40_stop.png")
     assert not valid_image_name("step002_kf1.png") and not valid_image_name("step002_kf01_x.png")

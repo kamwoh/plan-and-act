@@ -6,10 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from armmind.llm.fake import FakeBackend
-from armmind.llm.protocol import LLMError
-from armmind.scenes import SCENES
-from armmind.server.app import Hub, create_app
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.llm.protocol import LLMError
+from plan_and_act.scenes import SCENES
+from plan_and_act.server.app import Hub, create_app
 from tests.fakes import FakeEnv, HangingBackend, bad, good
 
 TASKS = SCENES["cubes"].tasks
@@ -235,7 +235,7 @@ def test_custom_system_prompt_reaches_the_backend_and_the_log(tmp_path):
 
 @pytest.mark.parametrize("value", [None, "", "   \n"])
 def test_empty_system_prompt_uses_the_default(tmp_path, value):
-    from armmind.agent.prompts import SYSTEM
+    from plan_and_act.agent.prompts import SYSTEM
     backend = FakeBackend([good()])
     with TestClient(create_app(backend, fake_factory, tmp_path)) as c:
         assert c.post("/api/run", json={"instruction": REACH, "system_prompt": value}).status_code == 200
@@ -252,7 +252,7 @@ def test_system_prompt_over_10000_chars_is_422(tmp_path):
 
 
 def test_prompt_endpoint_returns_system_and_an_example(tmp_path):
-    from armmind.agent.prompts import SYSTEM
+    from plan_and_act.agent.prompts import SYSTEM
     with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
         body = c.get("/api/prompt").json()
     assert body["system"] == SYSTEM
@@ -292,7 +292,7 @@ def test_run_defaults_to_the_cubes_scene(tmp_path):
 
 
 def test_preview_without_assets_is_503_with_the_message(tmp_path):
-    from armmind.sim.assets import AssetsMissing
+    from plan_and_act.sim.assets import AssetsMissing
 
     def preview(scene, seed):
         raise AssetsMissing("scanned object X not found. Run scripts/fetch_objects.sh")

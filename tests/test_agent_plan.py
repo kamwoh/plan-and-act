@@ -1,12 +1,12 @@
 """Agent.plan: one call that gives a belief of the scene and a whole-task plan."""
 import asyncio
 
-from armmind.agent.loop import Agent
-from armmind.agent.prompts import CHAIN_SYSTEM, PLAN_REPLY_SCHEMA
-from armmind.llm.fake import FakeBackend
-from armmind.llm.protocol import Final, LLMError, Usage
-from armmind.store.lessons import LessonStore
-from armmind.types import Observation
+from plan_and_act.agent.loop import Agent
+from plan_and_act.agent.prompts import CHAIN_SYSTEM, PLAN_REPLY_SCHEMA
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.llm.protocol import Final, LLMError, Usage
+from plan_and_act.store.lessons import LessonStore
+from plan_and_act.types import Observation
 from tests.fakes import FakeEnv, HangingBackend, Recorder, bad, direct
 
 PLAN = {"objects": [{"name": "red_cube", "shape": "box", "size": [0.04, 0.04, 0.04], "xyz": [0.5, -0.1, 0.02],

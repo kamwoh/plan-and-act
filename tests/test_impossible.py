@@ -2,11 +2,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.agent.loop import Agent
-from armmind.agent.parse import ReplyError, parse_plan
-from armmind.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM
-from armmind.llm.fake import FakeBackend
-from armmind.server.app import create_app
+from plan_and_act.agent.loop import Agent
+from plan_and_act.agent.parse import ReplyError, parse_plan
+from plan_and_act.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.server.app import create_app
 from tests.fakes import Recorder, direct
 from tests.test_agent_plan import PLAN, PlanEnv, good_plan
 from tests.test_auto_loop import loop_end

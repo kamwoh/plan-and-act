@@ -4,8 +4,8 @@ from __future__ import annotations
 import asyncio
 from typing import ClassVar
 
-from armmind.llm.protocol import Final, LLMError, Usage
-from armmind.types import Action, ActionResult, Observation
+from plan_and_act.llm.protocol import Final, LLMError, Usage
+from plan_and_act.types import Action, ActionResult, Observation
 
 
 class FakeEnv:

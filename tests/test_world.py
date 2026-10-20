@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from armmind.scenes import SCENES
-from armmind.sim.assets import AssetsMissing, panda_dir
-from armmind.sim.world import World
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.assets import AssetsMissing, panda_dir
+from plan_and_act.sim.world import World
 
 CUBES = SCENES["cubes"]
 
@@ -11,7 +11,7 @@ LAYOUT = {"red_cube": (0.5, -0.1), "blue_cube": (0.5, 0.1), "green_cube": (0.6, 
 
 
 def test_panda_dir_missing_gives_clear_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("ARMMIND_ASSETS", str(tmp_path))
+    monkeypatch.setenv("PLAN_AND_ACT_ASSETS", str(tmp_path))
     with pytest.raises(AssetsMissing, match="fetch_assets.sh"):
         panda_dir()
 
@@ -53,7 +53,7 @@ def test_no_gripper_contacts_at_home():
 @pytest.mark.assets
 def test_scene_file_is_named_after_the_scene():
     w = World(CUBES)
-    assert (w.scene_file.name, w.scene_file.parent.joinpath("panda.xml").is_file()) == ("armmind_scene_cubes.xml", True)
+    assert (w.scene_file.name, w.scene_file.parent.joinpath("panda.xml").is_file()) == ("plan_and_act_scene_cubes.xml", True)
 
 
 @pytest.mark.assets
@@ -71,7 +71,7 @@ SLIDER_XML = """    <body name="slider" pos="0.6 -0.3 0.03">
 
 
 def _probe_scene():
-    from armmind.scenes.base import Scene, threshold_monitor
+    from plan_and_act.scenes.base import Scene, threshold_monitor
     return Scene(name="probe", title="Probe", objects=(), fixtures_xml=SLIDER_XML, fixtures_text="",
                  region=(0.4, 0.5, -0.1, 0.1), min_gap=0.1, tasks={}, joints={"slider": "slider out {:.3f} m"},
                  monitors=(threshold_monitor("slider", 0.05, 0.02, "slider out"),), initial_qpos={"slider": 0.01})

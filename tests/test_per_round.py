@@ -2,9 +2,9 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.server.app import create_app
-from armmind.sim.state import END_STATE, START_STATE
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.server.app import create_app
+from plan_and_act.sim.state import END_STATE, START_STATE
 from tests.fakes import judged
 from tests.test_agent_plan import PLAN, good_plan
 from tests.test_auto_loop import events, folders, loop_end

@@ -1,7 +1,7 @@
 """The poses of the entities along a track: carries, releases and the predicted moves."""
 import pytest
 
-from armmind.plan.track import poses_after, poses_at, wrap_deg
+from plan_and_act.plan.track import poses_after, poses_at, wrap_deg
 
 
 def kf(xyz, carrying=None, t=1.0, moves=(), yaw=0.0):
@@ -80,8 +80,8 @@ def test_a_carried_entity_ignores_a_move_during_the_segment():
 
 
 def test_timed_keyframes_keep_the_moves_of_believed_entities_only():
-    from armmind.plan.formats import Entity, Keyframe, Move
-    from armmind.sim.planview import timed_keyframes
+    from plan_and_act.plan.formats import Entity, Keyframe, Move
+    from plan_and_act.sim.planview import timed_keyframes
     belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.1, 0.02))]
     k = Keyframe((0.5, 0.0, 0.02), 0.0, "open", None, "push",
                  (Move("Blue_Cube", (0.5, 0.15, 0.02), 5.0), Move("ghost", (0.4, 0.0, 0.02))))

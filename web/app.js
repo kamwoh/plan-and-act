@@ -87,7 +87,7 @@ function chip(label, name, instruction) {
 }
 
 // ---- Scenes: the chosen scene sets the examples, the auto-check and the preview ----
-const SCENE_KEY = "armmind.scene";
+const SCENE_KEY = "plan-and-act.scene";
 
 function readScene() {
   try {
@@ -730,7 +730,7 @@ $("chat").addEventListener("scroll", () => {
 $("chat_latest").addEventListener("click", () => scrollChat(true));
 
 // ---- Lessons ----
-const LESSONS_KEY = "armmind.useLessons";
+const LESSONS_KEY = "plan-and-act.useLessons";
 let savedLessons = [];
 
 function readUseLessons() {
@@ -998,7 +998,7 @@ function roundsValue(text) {
 }
 
 // ---- The Auto switch ----
-const AUTO_KEY = "armmind.auto";
+const AUTO_KEY = "plan-and-act.auto";
 
 function readAuto() {
   try {
@@ -1020,7 +1020,7 @@ $("auto").checked = readAuto();
 $("auto").addEventListener("change", () => writeAuto($("auto").checked));
 
 // ---- The Continue switch: the mode of Re-plan and of the Auto loop after round 1 ----
-const CONTINUE_KEY = "armmind.continue";
+const CONTINUE_KEY = "plan-and-act.continue";
 
 function readContinue() {
   try {
@@ -1250,7 +1250,7 @@ function onEvent(ev, replay = false) {
 }
 
 // ---- Path overlay: the planned actions of a step on the camera images ----
-const PATH_KEY = "armmind.showPath";
+const PATH_KEY = "plan-and-act.showPath";
 let runCams = null;    // the camera data of the run on the page, or null for an old run without it
 let planView = null;   // the view of the plan on the page: its cameras and start pose serve Execute
 let stepStarts = {};   // step number -> { xyz, yaw }: the gripper pose of the observation

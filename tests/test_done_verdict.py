@@ -2,12 +2,12 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.agent.loop import Agent
-from armmind.agent.parse import ReplyError, parse_plan
-from armmind.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM
-from armmind.llm.fake import FakeBackend
-from armmind.llm.protocol import Final, Usage
-from armmind.server.app import create_app
+from plan_and_act.agent.loop import Agent
+from plan_and_act.agent.parse import ReplyError, parse_plan
+from plan_and_act.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.llm.protocol import Final, Usage
+from plan_and_act.server.app import create_app
 from tests.fakes import Recorder, direct
 from tests.test_agent_plan import PLAN, PlanEnv, good_plan
 from tests.test_auto_loop import OUTCOMES, LoopEnv, events, folders, loop_end
@@ -168,8 +168,8 @@ def test_execute_of_a_done_plan_without_keyframes_is_refused(tmp_path):
 
 @pytest.mark.assets
 def test_the_demo_free_text_loop_ends_on_claudes_done_after_2_rounds(tmp_path):
-    from armmind.llm.fake import DemoBackend
-    from armmind.server.app import default_env_factory
+    from plan_and_act.llm.fake import DemoBackend
+    from plan_and_act.server.app import default_env_factory
     app = create_app(DemoBackend(delay_s=0.0), default_env_factory, tmp_path / "runs",
                      lessons_dir=tmp_path / "lessons")
     app.state.runner.auto_view_s = 0.0
@@ -186,7 +186,7 @@ def test_the_demo_free_text_loop_ends_on_claudes_done_after_2_rounds(tmp_path):
 
 # ---- The verdict call after a manual Execute ----
 def test_a_manual_execute_ends_with_a_verdict_call_without_true_values(tmp_path):
-    from armmind.agent.prompts import CHAIN_SYSTEM, VERDICT_SCHEMA, build_chain_verdict_text
+    from plan_and_act.agent.prompts import CHAIN_SYSTEM, VERDICT_SCHEMA, build_chain_verdict_text
     from tests.test_replan_api import planned_and_executed, run_events, true_factory
     backend = FakeBackend([good_plan(), verdict(False, "The gripper is empty.")])
     with TestClient(create_app(backend, true_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
@@ -233,7 +233,7 @@ def test_a_stopped_execution_gets_no_verdict_call(tmp_path):
 
 
 def test_the_verdict_reply_is_checked():
-    from armmind.agent.parse import parse_verdict
+    from plan_and_act.agent.parse import parse_verdict
     assert parse_verdict({"done": True, "reason": "  ok  "}).reason == "ok"
     for bad in ({"done": "yes", "reason": "r"}, {"done": True}, {"reason": "r"}, [1]):
         with pytest.raises(ReplyError):
@@ -241,15 +241,15 @@ def test_the_verdict_reply_is_checked():
 
 
 def test_the_demo_verdict():
-    from armmind.agent.prompts import build_verdict_text
-    from armmind.llm.fake import DEMO_PLAN, DEMO_PLAN_LOW, demo_verdict
+    from plan_and_act.agent.prompts import build_verdict_text
+    from plan_and_act.llm.fake import DEMO_PLAN, DEMO_PLAN_LOW, demo_verdict
     def text(plan):
         return build_verdict_text("s", PICK, tuple(plan["objects"]), tuple(plan["keyframes"]))
     assert demo_verdict(text(DEMO_PLAN_LOW))["done"] is False and demo_verdict(text(DEMO_PLAN))["done"] is True
 
 
 def test_the_run_summary_counts_the_cost_of_the_verdict_call():
-    from armmind.store.runs import summarize
+    from plan_and_act.store.runs import summarize
     s = summarize("r", iter([{"kind": "run_start", "mode": "plan"},
                              {"kind": "plan", "usage": {"in": 10, "out": 5, "cost_usd": 0.01}},
                              {"kind": "verdict", "usage": {"in": 4, "out": 1, "cost_usd": 0.002}}]))
@@ -297,7 +297,7 @@ def test_stop_during_the_verdict_call_ends_the_run(tmp_path, auto):
 
 
 def test_an_llm_error_in_the_verdict_call_ends_the_run_with_no_verdict(tmp_path):
-    from armmind.llm.protocol import LLMError
+    from plan_and_act.llm.protocol import LLMError
     from tests.test_replan_api import planned_and_executed, run_events, true_factory
     backend = FakeBackend([good_plan(), [LLMError("backend", "the CLI failed")]])
     with TestClient(create_app(backend, true_factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:

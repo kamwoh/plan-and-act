@@ -1,10 +1,10 @@
 import numpy as np
 import pytest
 
-from armmind.scenes import SCENES
-from armmind.sim.arm import REACH_TOL, READY, Arm
-from armmind.sim.world import World
-from armmind.types import Action
+from plan_and_act.scenes import SCENES
+from plan_and_act.sim.arm import REACH_TOL, READY, Arm
+from plan_and_act.sim.world import World
+from plan_and_act.types import Action
 
 LAYOUT = {"red_cube": (0.5, -0.1), "blue_cube": (0.45, 0.15), "green_cube": (0.62, 0.05)}
 

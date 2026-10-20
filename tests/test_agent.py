@@ -1,8 +1,8 @@
 import asyncio
 
-from armmind.agent.loop import Agent, AgentConfig
-from armmind.llm.fake import FakeBackend
-from armmind.llm.protocol import LLMError
+from plan_and_act.agent.loop import Agent, AgentConfig
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.llm.protocol import LLMError
 from tests.fakes import DeafBackend, FakeEnv, HangingBackend, Recorder, bad, direct, good
 
 
@@ -143,7 +143,7 @@ async def test_stop_during_actions_wins_over_done():
 
 
 def usage(**kw):
-    from armmind.llm.protocol import Usage
+    from plan_and_act.llm.protocol import Usage
     return Usage("fake", kw.pop("latency_s", 1.0), kw.pop("in_tokens", 10), kw.pop("out_tokens", 5),
                  kw.pop("cost_usd", 0.01), **kw)
 
@@ -189,7 +189,7 @@ async def test_bad_reply_and_llm_error_carry_prompt_and_attempts():
 
 
 async def test_run_start_has_the_system_prompt():
-    from armmind.agent.prompts import SYSTEM
+    from plan_and_act.agent.prompts import SYSTEM
     rec = Recorder()
     await Agent(FakeBackend([good()]), AgentConfig(max_steps=1)).run(FakeEnv(), direct, rec)
     assert dict(rec.events)["run_start"]["system_prompt"] == SYSTEM
@@ -202,7 +202,7 @@ async def test_custom_system_prompt_reaches_the_backend():
 
 
 async def test_empty_system_prompt_falls_back_to_the_default():
-    from armmind.agent.prompts import SYSTEM
+    from plan_and_act.agent.prompts import SYSTEM
     backend = FakeBackend([good()])
     await Agent(backend, AgentConfig(max_steps=1), system="").run(FakeEnv(), direct, Recorder())
     assert backend.systems == [SYSTEM]

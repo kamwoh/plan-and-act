@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from armmind.agent.loop import (
+from plan_and_act.agent.loop import (
     BRANCH_CHAT,
     CHAT_TOO_LONG,
     MAX_CHAT_IMAGES,
@@ -11,11 +11,11 @@ from armmind.agent.loop import (
     Agent,
     Chain,
 )
-from armmind.agent.prompts import build_replan_text
-from armmind.llm.claude_cli import classify
-from armmind.llm.fake import FakeBackend
-from armmind.llm.protocol import LLMError
-from armmind.store.runs import RunStore
+from plan_and_act.agent.prompts import build_replan_text
+from plan_and_act.llm.claude_cli import classify
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.llm.protocol import LLMError
+from plan_and_act.store.runs import RunStore
 from tests.fakes import Recorder, direct, judged
 from tests.test_agent_plan import PLAN, PlanEnv, good_plan
 from tests.test_chain import app, assert_no_secrets
@@ -213,7 +213,7 @@ def test_a_stopped_plan_turn_leaves_the_chain_without_a_chat(tmp_path):
         execute(c, first)
     from fastapi.testclient import TestClient
 
-    from armmind.server.app import create_app
+    from plan_and_act.server.app import create_app
     with TestClient(create_app(HangingBackend(), factory, tmp_path / "runs", lessons_dir=tmp_path / "lessons")) as c:
         assert c.post(f"/api/plan/{first}/replan", json={"mode": "start"}).status_code == 200
         c.post("/api/stop")
@@ -226,7 +226,7 @@ def test_a_stopped_plan_turn_leaves_the_chain_without_a_chat(tmp_path):
 
 # ---- 6. One shared sessions folder ----
 async def test_every_chain_uses_the_shared_sessions_folder(tmp_path, monkeypatch):
-    from armmind.llm.claude_cli import ClaudeCLIBackend
+    from plan_and_act.llm.claude_cli import ClaudeCLIBackend
     from tests.test_claude_cli_session import FAKE, ask, calls
     monkeypatch.setenv("FAKE_CLAUDE_DIR", str(tmp_path))
     backend = ClaudeCLIBackend(command=FAKE, timeout_s=20, sessions_dir=tmp_path / "chats")
@@ -253,7 +253,7 @@ def test_the_lost_chat_note_keeps_the_thinking_entry():
 # ---- 9. Each CLI process has a temp folder of its own ----
 @pytest.fixture
 def cli(tmp_path, monkeypatch):
-    from armmind.llm.claude_cli import ClaudeCLIBackend
+    from plan_and_act.llm.claude_cli import ClaudeCLIBackend
     from tests.test_claude_cli_session import FAKE
     monkeypatch.setenv("FAKE_CLAUDE_DIR", str(tmp_path))
     return ClaudeCLIBackend(command=FAKE, timeout_s=20, sessions_dir=tmp_path / "chats", temp_dir=tmp_path / "tmp")

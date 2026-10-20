@@ -2,9 +2,9 @@ import threading
 
 import pytest
 
-from armmind.env import MujocoEnv, SimThread
-from armmind.scenes import SCENES
-from armmind.types import Action
+from plan_and_act.env import MujocoEnv, SimThread
+from plan_and_act.scenes import SCENES
+from plan_and_act.types import Action
 
 CUBES = SCENES["cubes"]
 TASKS = CUBES.tasks

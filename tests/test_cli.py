@@ -1,6 +1,6 @@
 import pytest
 
-from armmind.cli import main
+from plan_and_act.cli import main
 
 
 def test_serve_refuses_ps1_mind_port(capsys):
@@ -32,12 +32,12 @@ def test_scripted_uses_the_task_start_joints(capsys):
 def test_serve_uses_the_demo_backend_only_with_the_env_var(monkeypatch, tmp_path):
     import uvicorn
 
-    from armmind import cli
+    from plan_and_act import cli
     apps = []
     monkeypatch.setattr(uvicorn, "run", lambda app, host, port: apps.append(app))
-    monkeypatch.setenv("ARMMIND_FAKE_LLM", "1")
+    monkeypatch.setenv("PLAN_AND_ACT_FAKE_LLM", "1")
     assert cli.main(["serve", "--port", "8788", "--runs", str(tmp_path / "runs")]) == 0
-    monkeypatch.delenv("ARMMIND_FAKE_LLM")
+    monkeypatch.delenv("PLAN_AND_ACT_FAKE_LLM")
     assert cli.main(["serve", "--port", "8788", "--runs", str(tmp_path / "runs")]) == 0
     assert apps[0].state.runner.backend.name == "demo"
     assert apps[1].state.runner.backend.name != "demo"
@@ -48,10 +48,10 @@ def test_demo_mode_keeps_its_lessons_out_of_the_real_folder(monkeypatch, tmp_pat
 
     import uvicorn
 
-    from armmind import cli
+    from plan_and_act import cli
     apps = []
     monkeypatch.setattr(uvicorn, "run", lambda app, host, port: apps.append(app))
-    monkeypatch.setenv("ARMMIND_FAKE_LLM", "1")
+    monkeypatch.setenv("PLAN_AND_ACT_FAKE_LLM", "1")
     assert cli.main(["serve", "--port", "8788", "--runs", str(tmp_path / "runs")]) == 0
     root = apps[0].state.runner.lessons.root
     assert root != tmp_path / "lessons" and str(root).startswith(tempfile.gettempdir())

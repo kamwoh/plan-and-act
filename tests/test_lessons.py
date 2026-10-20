@@ -4,9 +4,9 @@ import logging
 
 import pytest
 
-from armmind.agent.loop import Agent, AgentConfig
-from armmind.llm.fake import FakeBackend
-from armmind.store.lessons import MAX_SAVED, LessonStore
+from plan_and_act.agent.loop import Agent, AgentConfig
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.store.lessons import MAX_SAVED, LessonStore
 from tests.fakes import FakeEnv, Recorder, direct, good
 
 
@@ -134,7 +134,7 @@ async def test_only_the_newest_30_run_lessons_go_to_the_model():
 
 
 def test_delete_checks_the_text_of_the_lesson(tmp_path):
-    from armmind.store.lessons import LessonChanged
+    from plan_and_act.store.lessons import LessonChanged
     store = LessonStore(tmp_path)
     store.append("cubes", ["a", "b"], run="r", outcome="done")
     with pytest.raises(LessonChanged):

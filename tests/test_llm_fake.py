@@ -1,5 +1,5 @@
-from armmind.llm.fake import FakeBackend
-from armmind.llm.protocol import Final, LLMError, Message
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.llm.protocol import Final, LLMError, Message
 
 
 async def test_fake_backend_replays_and_records():
@@ -13,9 +13,9 @@ async def test_fake_backend_replays_and_records():
 
 
 async def test_demo_backend_replies_by_step_number():
-    from armmind.agent.parse import parse_reply
-    from armmind.llm.fake import DEMO_REPLIES, DemoBackend
-    from armmind.llm.protocol import Final, Message
+    from plan_and_act.agent.parse import parse_reply
+    from plan_and_act.llm.fake import DEMO_REPLIES, DemoBackend
+    from plan_and_act.llm.protocol import Final, Message
     conv = await DemoBackend(delay_s=0).open("s")
     for n in (2, 1, 2):
         events = [e async for e in conv.send(Message("user", f"Task: t\nStep {n} of 5."))]
@@ -25,9 +25,9 @@ async def test_demo_backend_replies_by_step_number():
 
 
 async def test_demo_backend_plans_low_then_replans_with_a_lesson():
-    from armmind.agent.parse import parse_plan
-    from armmind.agent.prompts import PLAN_REPLY_SCHEMA
-    from armmind.llm.fake import DEMO_PLAN, DEMO_PLAN_LOW, DemoBackend
+    from plan_and_act.agent.parse import parse_plan
+    from plan_and_act.agent.prompts import PLAN_REPLY_SCHEMA
+    from plan_and_act.llm.fake import DEMO_PLAN, DEMO_PLAN_LOW, DemoBackend
     conv = await DemoBackend(delay_s=0).open("s")
 
     async def ask(text):

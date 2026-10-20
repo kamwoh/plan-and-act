@@ -1,4 +1,4 @@
-from armmind.llm.claude_cli import usage_from_result
+from plan_and_act.llm.claude_cli import usage_from_result
 
 
 def test_usage_keeps_all_token_fields():

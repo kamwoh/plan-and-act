@@ -2,11 +2,11 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.plan.formats import Keyframe
-from armmind.scenes import SCENES
-from armmind.server.app import create_app
-from armmind.types import Action
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.plan.formats import Keyframe
+from plan_and_act.scenes import SCENES
+from plan_and_act.server.app import create_app
+from plan_and_act.types import Action
 from tests.fakes import HangingBackend
 from tests.test_agent_plan import good_plan
 from tests.test_plan_api import ENVS, PICK, client, events, plan_factory
@@ -15,7 +15,7 @@ from tests.test_server import wait_idle
 
 
 def test_keyframes_become_moves_and_gripper_changes():
-    from armmind.env import keyframe_actions
+    from plan_and_act.env import keyframe_actions
     kfs = [Keyframe((0.5, 0.0, 0.15), 10.0, "open", None), Keyframe((0.5, 0.0, 0.02), 10.0, "closed", "red cube"),
            Keyframe((0.5, 0.2, 0.15), 0.0, "closed", "red cube"), Keyframe((0.5, 0.2, 0.06), 0.0, "open", None),
            Keyframe((0.5, 0.2, 0.06), 0.0, "closed", None)]
@@ -24,12 +24,12 @@ def test_keyframes_become_moves_and_gripper_changes():
         Action("close", expect="red cube"), Action("move_to", (0.5, 0.2, 0.15), yaw=0.0),
         Action("move_to", (0.5, 0.2, 0.06), yaw=0.0), Action("open", expect="nothing"),
         Action("move_to", (0.5, 0.2, 0.06), yaw=0.0), Action("close", expect="nothing")]
-    from armmind.env import keyframe_ends
+    from plan_and_act.env import keyframe_ends
     assert keyframe_ends(kfs) == [0, 2, 3, 5, 7]  # the last action of each keyframe
 
 
 def _execute(scene, task, seed, kfs_from=None, stop=lambda: False):
-    from armmind.env import MujocoEnv
+    from plan_and_act.env import MujocoEnv
     sc = SCENES[scene]
     env = MujocoEnv(sc, sc.tasks[task], seed, sc.tasks[task].instruction)
     try:
@@ -148,8 +148,8 @@ def test_stop_during_an_execution(tmp_path):
 
 @pytest.mark.assets
 def test_a_real_execution_streams_frames_and_logs_the_check(tmp_path):
-    from armmind.llm.fake import DEMO_PLAN
-    from armmind.server.app import default_env_factory
+    from plan_and_act.llm.fake import DEMO_PLAN
+    from plan_and_act.server.app import default_env_factory
     app = create_app(FakeBackend([good_plan(DEMO_PLAN)]), default_env_factory, tmp_path / "runs",
                      lessons_dir=tmp_path / "lessons")
     with TestClient(app) as c:
@@ -223,7 +223,7 @@ FINGER_HALF_M = 0.0105  # half the depth of the closed fingers along y
 
 def push_plan(world, name="red_cube"):
     """Keyframes that push the cube along y toward the middle of the table, and the predicted end pose."""
-    from armmind.plan.formats import Move
+    from plan_and_act.plan.formats import Move
     x, y, z = (float(v) for v in world.object_pos(name))
     sign = 1.0 if y < 0 else -1.0
     y0 = y - sign * PUSH_START_M
@@ -239,10 +239,10 @@ def push_plan(world, name="red_cube"):
 @pytest.mark.assets
 @pytest.mark.parametrize("seed", [0])
 def test_a_scripted_push_moves_the_cube_as_predicted(seed):
-    from armmind.env import MujocoEnv
-    from armmind.plan.formats import Entity
-    from armmind.plan.scores import prediction
-    from armmind.sim.planview import true_entities
+    from plan_and_act.env import MujocoEnv
+    from plan_and_act.plan.formats import Entity
+    from plan_and_act.plan.scores import prediction
+    from plan_and_act.sim.planview import true_entities
     sc = SCENES["cubes"]
     env = MujocoEnv(sc, None, seed, "push the red cube")
     try:
@@ -275,7 +275,7 @@ def test_a_stopped_execution_has_the_poses_of_the_keyframes_that_ran():
 
 
 def test_the_prediction_of_an_old_or_broken_view(caplog):
-    from armmind.server.app import _prediction
+    from plan_and_act.server.app import _prediction
     out = {"true_start": {"red_cube": {"xyz": [0.5, 0.0, 0.02], "yaw": 0.0}},
            "true_after": [{"red_cube": {"xyz": [0.5, 0.05, 0.02], "yaw": 0.0}}]}
     track = {"start": {"xyz": [0.3, 0.0, 0.4], "yaw": 0.0}, "duration": 1.5,
@@ -294,8 +294,8 @@ def test_the_prediction_of_an_old_or_broken_view(caplog):
 
 @pytest.mark.assets
 def test_a_cancel_inside_a_keyframe_leaves_it_out_of_the_poses():
-    from armmind.agent.parse import parse_plan
-    from armmind.llm.fake import DEMO_PLAN
+    from plan_and_act.agent.parse import parse_plan
+    from plan_and_act.llm.fake import DEMO_PLAN
     calls = []
 
     def stop():  # the first keyframe is a move and a close: cancel between the two
@@ -314,9 +314,9 @@ def test_a_cancel_inside_a_keyframe_leaves_it_out_of_the_poses():
 @pytest.mark.parametrize("seed, toward_mm", [(0, 4), (0, -6)])
 def test_a_small_belief_error_on_a_push_passes_every_check(seed, toward_mm):
     """The true cube starts toward_mm closer to the hand than the belief (negative: further away)."""
-    from armmind.env import MujocoEnv
-    from armmind.plan.formats import Entity
-    from armmind.sim.planview import true_entities
+    from plan_and_act.env import MujocoEnv
+    from plan_and_act.plan.formats import Entity
+    from plan_and_act.sim.planview import true_entities
     env = MujocoEnv(SCENES["cubes"], None, seed, "push the red cube")
     try:
         kfs = tuple(push_plan(env.world))

@@ -6,8 +6,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.server.app import create_app
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.server.app import create_app
 from tests.fakes import bad
 from tests.test_agent_plan import good_plan
 from tests.test_plan_api import ENVS, PICK, ApiPlanEnv
@@ -163,8 +163,8 @@ def test_without_auto_a_plan_is_one_round(tmp_path):
 
 @pytest.mark.assets
 def test_the_demo_loop_fails_round_1_and_solves_round_2(tmp_path):
-    from armmind.llm.fake import DemoBackend
-    from armmind.server.app import default_env_factory
+    from plan_and_act.llm.fake import DemoBackend
+    from plan_and_act.server.app import default_env_factory
     app = create_app(DemoBackend(delay_s=0.0), default_env_factory, tmp_path / "runs",
                      lessons_dir=tmp_path / "lessons")
     app.state.runner.auto_view_s = 0.0  # no wait for the imagined video
@@ -195,9 +195,9 @@ def test_state_shows_auto_at_once(tmp_path):
 def test_the_demo_loop_continues_from_where_round_1_left_the_cube(tmp_path):
     import numpy as np
 
-    from armmind.llm.fake import DemoBackend
-    from armmind.server.app import default_env_factory
-    from armmind.sim.state import END_STATE, START_STATE
+    from plan_and_act.llm.fake import DemoBackend
+    from plan_and_act.server.app import default_env_factory
+    from plan_and_act.sim.state import END_STATE, START_STATE
     app = create_app(DemoBackend(delay_s=0.0), default_env_factory, tmp_path / "runs",
                      lessons_dir=tmp_path / "lessons")
     app.state.runner.auto_view_s = 0.0
@@ -213,8 +213,8 @@ def test_the_demo_loop_continues_from_where_round_1_left_the_cube(tmp_path):
     with np.load(dirs[0] / END_STATE) as a, np.load(dirs[1] / START_STATE) as b:
         assert np.array_equal(a["qpos"], b["qpos"])
     view = next(e for e in rounds[1] if e["kind"] == "plan")["view"]
-    from armmind.env import MujocoEnv
-    from armmind.scenes import SCENES
+    from plan_and_act.env import MujocoEnv
+    from plan_and_act.scenes import SCENES
     env = MujocoEnv(SCENES["cubes"], SCENES["cubes"].tasks["pick"], 0, PICK, start=dirs[1] / START_STATE)
     try:
         assert env.world.object_pos("red_cube")[2] > 0.05  # in the hand, where round 1 left it, not on the table

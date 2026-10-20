@@ -6,8 +6,8 @@ import re
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.server.app import create_app
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.server.app import create_app
 from tests.fakes import HangingBackend
 from tests.test_server import fake_factory, wait_idle
 
@@ -295,7 +295,7 @@ def test_odd_image_names_are_404(tmp_path, name):
 
 
 def test_store_rejects_a_trailing_newline_and_unicode_digits(tmp_path):
-    from armmind.store.runs import RunStore
+    from plan_and_act.store.runs import RunStore
     runs = tmp_path / "runs"
     write_run(runs, "20261016-181045", old_run(), IMAGES)
     store = RunStore(runs)
@@ -306,7 +306,7 @@ def test_store_rejects_a_trailing_newline_and_unicode_digits(tmp_path):
 
 
 def test_id_and_name_patterns_are_ascii_and_exact():
-    from armmind.store.runs import valid_image_name, valid_run_id
+    from plan_and_act.store.runs import valid_image_name, valid_run_id
     assert valid_run_id("20261016-181045") and valid_run_id("20261016-181045-9999")
     for bad in ("20261016-181045\n", "２０２６１０１６-１８１０４５", "20261016-181045-12345", "x20261016-181045"):
         assert not valid_run_id(bad)

@@ -53,8 +53,8 @@ def test_history_loads_the_whole_chain_and_the_video_of_the_opened_round():
 def test_the_chain_endpoint(tmp_path):
     from fastapi.testclient import TestClient
 
-    from armmind.llm.fake import FakeBackend
-    from armmind.server.app import create_app
+    from plan_and_act.llm.fake import FakeBackend
+    from plan_and_act.server.app import create_app
     from tests.fakes import judged
     from tests.test_agent_plan import good_plan
     from tests.test_continue_api import factory
@@ -84,8 +84,8 @@ def test_the_plan_started_entry_says_the_same_chat_only_when_the_round_continues
 
 
 async def test_a_branch_round_starts_without_a_session_to_resume():
-    from armmind.agent.loop import BRANCH_CHAT, Agent, Chain
-    from armmind.llm.fake import FakeBackend
+    from plan_and_act.agent.loop import BRANCH_CHAT, Agent, Chain
+    from plan_and_act.llm.fake import FakeBackend
     from tests.fakes import Recorder, direct
     from tests.test_agent_plan import PlanEnv, good_plan
     from tests.test_replan import feedback

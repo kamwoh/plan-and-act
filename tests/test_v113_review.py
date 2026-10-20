@@ -3,9 +3,9 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.server.app import create_app
-from armmind.sim.state import END_STATE
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.server.app import create_app
+from plan_and_act.sim.state import END_STATE
 from tests.fakes import bad, judged
 from tests.test_agent_plan import good_plan
 from tests.test_auto_loop import loop_end
@@ -88,7 +88,7 @@ def test_the_verdict_call_checks_stop_before_it_asks(tmp_path):
 
 
 def test_an_error_in_the_verdict_step_still_gives_a_verdict_event(tmp_path, monkeypatch):
-    import armmind.server.app as server
+    import plan_and_act.server.app as server
 
     def broken(plan):
         raise KeyError("keyframes")
@@ -104,7 +104,7 @@ def test_an_error_in_the_verdict_step_still_gives_a_verdict_event(tmp_path, monk
 
 
 def runner_scene():
-    from armmind.scenes import SCENES
+    from plan_and_act.scenes import SCENES
     return SCENES["cubes"]
 
 
@@ -132,12 +132,12 @@ def test_the_done_note_shows_the_last_auto_check():
 
 # 3. The action data of exec_start starts from the real gripper.
 def test_exec_start_action_data_starts_from_the_gripper_of_the_plan_view():
-    from armmind.plan.formats import Keyframe
-    from armmind.server.app import _start_gripper
+    from plan_and_act.plan.formats import Keyframe
+    from plan_and_act.server.app import _start_gripper
     lift = (Keyframe((0.5, 0.0, 0.2), 0.0, "closed", "red cube"),)
     assert _start_gripper({"track": {"start": {"state": "closed"}}}) == "closed"
     assert _start_gripper(None) == "open" and _start_gripper({"track": {}}) == "open"
-    from armmind.env import keyframe_actions
+    from plan_and_act.env import keyframe_actions
     assert [a.type for a in keyframe_actions(lift, _start_gripper({"track": {"start": {"state": "closed"}}}))] == \
         ["move_to"]
 

@@ -4,9 +4,9 @@ import re
 import numpy as np
 import pytest
 
-from armmind.scenes.base import ObjSpec, Scene
-from armmind.sim.assets import AssetsMissing
-from armmind.sim.meshes import CONTACT, FRICTION, asset_xml, geoms_xml, mesh_dir
+from plan_and_act.scenes.base import ObjSpec, Scene
+from plan_and_act.sim.assets import AssetsMissing
+from plan_and_act.sim.meshes import CONTACT, FRICTION, asset_xml, geoms_xml, mesh_dir
 
 FAKE = "Fake_Object"
 
@@ -18,7 +18,7 @@ def fake_objects(tmp_path, monkeypatch):
     folder.mkdir()
     for f in ("model.obj", "texture.png", "model.xml", *(f"model_collision_{i}.obj" for i in (0, 1, 2, 10))):
         (folder / f).write_text("")
-    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path))
+    monkeypatch.setenv("PLAN_AND_ACT_OBJECTS", str(tmp_path))
     return folder
 
 
@@ -43,13 +43,13 @@ def test_geoms_xml_hides_collision_and_shifts_to_the_centre(fake_objects):
 
 
 def test_missing_object_gives_clear_error(tmp_path, monkeypatch):
-    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path))
+    monkeypatch.setenv("PLAN_AND_ACT_OBJECTS", str(tmp_path))
     with pytest.raises(AssetsMissing, match="fetch_objects.sh"):
         mesh_dir("Nothing_Here")
 
 
 def test_grasp_yaw_picks_the_narrow_axis():
-    from armmind.scenes.handling import grasp_yaw
+    from plan_and_act.scenes.handling import grasp_yaw
     # The fingers close along world x at yaw 0. A positive yaw turns them counter-clockwise.
     assert grasp_yaw(0.0, "x") == 0.0
     assert abs(grasp_yaw(0.0, "y")) == 90.0
@@ -102,7 +102,7 @@ def test_layout_puts_a_placed_object_at_its_place_and_keeps_others_clear():
 
 @pytest.mark.assets
 def test_quaternion_matches_the_yaw():
-    from armmind.sim.world import World
+    from plan_and_act.sim.world import World
     w = World(_boxes())
     w.reset({"a": (0.45, -0.1, 0.0), "b": (0.55, 0.1, 30.0)})
     adr = w.model.jnt_qposadr[w.model.joint("b").id]
@@ -116,7 +116,7 @@ def test_quaternion_matches_the_yaw():
 
 @pytest.mark.assets
 def test_object_info_of_a_box():
-    from armmind.sim.world import World
+    from plan_and_act.sim.world import World
     w = World(_boxes())
     info = w.object_info("b")
     assert (info.width, info.depth, info.height) == pytest.approx((0.06, 0.02, 0.04))
@@ -133,8 +133,8 @@ def test_mesh_spec_needs_a_mesh_name():
 
 @pytest.mark.objects
 def test_scanned_mesh_compiles_and_measures():
-    from armmind.scenes import SCENES
-    from armmind.sim.meshes import measure
+    from plan_and_act.scenes import SCENES
+    from plan_and_act.sim.meshes import measure
     for scene in ("kitchen", "toys"):
         for o in SCENES[scene].objects:
             if o.shape != "mesh":
@@ -149,9 +149,9 @@ def test_scanned_mesh_compiles_and_measures():
 @pytest.mark.objects
 @pytest.mark.parametrize("scene_name", ["kitchen", "toys"])
 def test_world_measures_mesh_objects_centred(scene_name):
-    from armmind.scenes import SCENES
-    from armmind.sim.meshes import measure
-    from armmind.sim.world import World
+    from plan_and_act.scenes import SCENES
+    from plan_and_act.sim.meshes import measure
+    from plan_and_act.sim.world import World
     scene = SCENES[scene_name]
     w = World(scene)
     for o in scene.objects:
@@ -169,8 +169,8 @@ def test_world_measures_mesh_objects_centred(scene_name):
 @pytest.mark.parametrize("scene_name", ["kitchen", "toys"])
 def test_mesh_objects_rest_on_the_table(scene_name):
     """Each object starts 2 mm above the table, at its layout yaw, and stands still for 2 s."""
-    from armmind.scenes import SCENES
-    from armmind.sim.world import World
+    from plan_and_act.scenes import SCENES
+    from plan_and_act.sim.world import World
     scene = SCENES[scene_name]
     w = World(scene)
     for seed in range(3):
@@ -195,11 +195,11 @@ def test_mesh_objects_rest_on_the_table(scene_name):
 @pytest.mark.parametrize("scene_name", ["kitchen", "toys"])
 @pytest.mark.parametrize("seed", [0])
 def test_scripted_grasp_lifts_every_item(scene_name, seed):
-    from armmind.scenes import SCENES
-    from armmind.scenes.handling import grip, items
-    from armmind.sim.arm import Arm
-    from armmind.sim.world import World
-    from armmind.types import Action
+    from plan_and_act.scenes import SCENES
+    from plan_and_act.scenes.handling import grip, items
+    from plan_and_act.sim.arm import Arm
+    from plan_and_act.sim.world import World
+    from plan_and_act.types import Action
     scene = SCENES[scene_name]
     w = World(scene)
     arm = Arm(w)
@@ -215,13 +215,13 @@ def test_scripted_grasp_lifts_every_item(scene_name, seed):
 
 
 def test_mesh_label_without_objects_is_the_plain_label(tmp_path, monkeypatch):
-    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path))
+    monkeypatch.setenv("PLAN_AND_ACT_OBJECTS", str(tmp_path))
     assert ObjSpec("x", "mesh", label="red can", mesh="Missing_Folder").text() == "red can"
 
 
 @pytest.mark.objects
 def test_mesh_label_has_the_measured_size():
-    from armmind.scenes import SCENES
+    from plan_and_act.scenes import SCENES
     bottle = next(o for o in SCENES["kitchen"].objects if o.name == "bottle")
     w, d, h = (round(v * 100, 1) for v in bottle.dims)
     assert bottle.text() == f"white bottle, {w:.1f} cm wide, {d:.1f} cm deep, {h:.1f} cm tall"
@@ -233,28 +233,28 @@ class _FakeWorld:
         self.h = height
 
     def object_info(self, name):
-        from armmind.sim.world import ObjInfo
+        from plan_and_act.sim.world import ObjInfo
         return ObjInfo(0.04, 0.04, self.h, -self.h / 2, "x")
 
 
 @pytest.mark.parametrize("height,want", [(0.03, 0.02), (0.04, 0.02), (0.06, 0.03), (0.07, 0.035),
                                          (0.109, 0.074), (0.15, 0.115)])
 def test_grip_height_is_the_centre_or_3_5_cm_below_a_tall_top(height, want):
-    from armmind.scenes.handling import grip_height
+    from plan_and_act.scenes.handling import grip_height
     assert grip_height(_FakeWorld(height), "x") == pytest.approx(want)
 
 
 def test_measure_and_pieces_follow_the_objects_dir(tmp_path, monkeypatch):
-    from armmind.sim import meshes
+    from plan_and_act.sim import meshes
     for d, n in (("a", 2), ("b", 3)):
         folder = tmp_path / d / FAKE
         folder.mkdir(parents=True)
         (folder / "model.obj").write_text("")
         for i in range(n):
             (folder / f"model_collision_{i}.obj").write_text("")
-    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path / "a"))
+    monkeypatch.setenv("PLAN_AND_ACT_OBJECTS", str(tmp_path / "a"))
     assert meshes.pieces(FAKE) == [0, 1]
-    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path / "b"))
+    monkeypatch.setenv("PLAN_AND_ACT_OBJECTS", str(tmp_path / "b"))
     assert meshes.pieces(FAKE) == [0, 1, 2]
     (tmp_path / "b" / FAKE / "model_collision_3.obj").write_text("")
     assert meshes.pieces(FAKE) == [0, 1, 2]  # the listing is cached
@@ -262,10 +262,10 @@ def test_measure_and_pieces_follow_the_objects_dir(tmp_path, monkeypatch):
 
 @pytest.mark.objects
 def test_measure_cache_key_has_the_objects_dir(monkeypatch, tmp_path):
-    from armmind.sim import meshes
+    from plan_and_act.sim import meshes
     mesh = "Krill_Oil"
     real = meshes.measure(mesh)
-    monkeypatch.setenv("ARMMIND_OBJECTS", str(tmp_path))
+    monkeypatch.setenv("PLAN_AND_ACT_OBJECTS", str(tmp_path))
     with pytest.raises(AssetsMissing):
         meshes.measure(mesh)
     monkeypatch.undo()
@@ -274,8 +274,8 @@ def test_measure_cache_key_has_the_objects_dir(monkeypatch, tmp_path):
 
 @pytest.mark.assets
 def test_worlds_of_one_scene_share_the_compiled_model():
-    from armmind.scenes import SCENES
-    from armmind.sim.world import World
+    from plan_and_act.scenes import SCENES
+    from plan_and_act.sim.world import World
     a, b = World(SCENES["cubes"]), World(SCENES["cubes"])
     assert a.model is b.model and a.data is not b.data
     assert World(SCENES["tray"]).model is not a.model

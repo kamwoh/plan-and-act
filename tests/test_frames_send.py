@@ -2,8 +2,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.agent.loop import CHAT_TOO_LONG, MAX_CHAT_IMAGES, Agent, Chain
-from armmind.agent.prompts import (
+from plan_and_act.agent.loop import CHAT_TOO_LONG, MAX_CHAT_IMAGES, Agent, Chain
+from plan_and_act.agent.prompts import (
     Frame,
     build_chain_verdict_text,
     build_plan_text,
@@ -11,10 +11,10 @@ from armmind.agent.prompts import (
     build_verdict_text,
     frame_label,
 )
-from armmind.llm.fake import FakeBackend
-from armmind.plan.formats import build_track
-from armmind.plan.track import moved_after
-from armmind.server.app import create_app
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.plan.formats import build_track
+from plan_and_act.plan.track import moved_after
+from plan_and_act.server.app import create_app
 from tests.fakes import Recorder, direct, judged
 from tests.test_agent_plan import PlanEnv, good_plan
 from tests.test_chain import assert_no_secrets
@@ -148,7 +148,7 @@ def _track(belief, keyframes):
 
 
 def test_moved_after_gives_the_carried_and_moved_entities_of_each_keyframe():
-    from armmind.agent.parse import parse_plan
+    from plan_and_act.agent.parse import parse_plan
     reply = parse_plan(CARRY)
     believed = [o.to_dict() for o in reply.objects]
     moved = moved_after(_track(reply.objects, reply.keyframes), believed)

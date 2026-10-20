@@ -1,10 +1,10 @@
 """Scores of a plan: the belief against the true scene, and the checks of each keyframe."""
 import pytest
 
-from armmind.plan.formats import Entity, Keyframe
-from armmind.plan.scores import drop, perception, plan_checks, yaw_error
-from armmind.scenes import SCENES
-from armmind.types import Action
+from plan_and_act.plan.formats import Entity, Keyframe
+from plan_and_act.plan.scores import drop, perception, plan_checks, yaw_error
+from plan_and_act.scenes import SCENES
+from plan_and_act.types import Action
 
 PARTS = [  # the agent of the arm environment, as in sim/planview.py
     {"name": "hand", "shape": "box", "size": [0.20, 0.058, 0.075], "xyz": [0.0, 0.0, 0.0825], "slide": 0},
@@ -206,8 +206,8 @@ def with_holding(kfs: list[Keyframe], world) -> list[Keyframe]:
                                          ("tray", "all_in_tray"), ("drawer", "cube_in_drawer")])
 @pytest.mark.parametrize("seed", [0])
 def test_a_true_belief_and_a_scripted_plan_score_clean(scene, task, seed):
-    from armmind.env import MujocoEnv
-    from armmind.sim.planview import true_entities
+    from plan_and_act.env import MujocoEnv
+    from plan_and_act.sim.planview import true_entities
     sc = SCENES[scene]
     env = MujocoEnv(sc, sc.tasks[task], seed, sc.tasks[task].instruction)
     try:
@@ -225,7 +225,7 @@ def test_a_true_belief_and_a_scripted_plan_score_clean(scene, task, seed):
 
 @pytest.mark.assets
 def test_reach_fails_outside_the_workspace():
-    from armmind.env import MujocoEnv
+    from plan_and_act.env import MujocoEnv
     env = MujocoEnv(SCENES["cubes"], None, 0, "")
     try:
         scores = env.check_plan((), (Keyframe((0.95, 0.0, 0.2), 0.0, "open", None),
@@ -278,7 +278,7 @@ def test_marks_say_what_the_true_scene_holds():
 
 # ---- v1.11: a predicted move allows contact on its own keyframe only ----
 def test_the_collision_check_ignores_a_moved_object_only_on_that_keyframe():
-    from armmind.plan.formats import Move
+    from plan_and_act.plan.formats import Move
     down = [Keyframe((0.5, 0.03, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None)]
     push = Move("blue cube", (0.5, 0.15, 0.02))
     kfs = [*down, Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (push,)),
@@ -294,7 +294,7 @@ def test_the_collision_check_ignores_a_moved_object_only_on_that_keyframe():
 
 
 def test_a_moved_true_object_shifts_by_the_predicted_displacement():
-    from armmind.plan.formats import Move
+    from plan_and_act.plan.formats import Move
     belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.08, 0.02))]  # 2 cm short of the truth
     kfs = [Keyframe((0.5, 0.01, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.01, 0.02), 0.0, "closed", None),
            Keyframe((0.5, 0.10, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.135, 0.02)),)),
@@ -327,7 +327,7 @@ def _true(cube, ball=(0.6, 0.2, 0.02)):
 
 
 def _score(true_start, true_after, track=PUSH_TRACK, believed=BELIEVED):
-    from armmind.plan.scores import prediction
+    from plan_and_act.plan.scores import prediction
     return prediction(track, believed, true_start, true_after, MATCH)
 
 
@@ -388,7 +388,7 @@ def _belief_checks(kfs):
 
 
 def test_a_moved_object_never_sinks_under_the_table():
-    from armmind.plan.formats import Move
+    from plan_and_act.plan.formats import Move
     kfs = [*pick(CUBE), Keyframe((0.5, 0.25, 0.2), 0.0, "closed", "red cube"),
            Keyframe((0.5, 0.25, 0.08), 0.0, "open", None, "let go 6 cm up"),
            Keyframe((0.5, 0.25, 0.2), 0.0, "closed", None, "up, close"),
@@ -402,7 +402,7 @@ def test_a_moved_object_never_sinks_under_the_table():
 
 
 def test_the_agent_must_not_overlap_a_moved_object_at_the_end():
-    from armmind.plan.formats import Move
+    from plan_and_act.plan.formats import Move
     down = [Keyframe((0.5, 0.03, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None)]
     short = Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.13, 0.02)),))
     marks = _belief_checks([*down, short])
@@ -420,7 +420,7 @@ def test_moved_or_not_looks_at_xy_only():
 
 
 def test_a_true_object_outside_the_belief_that_moved_is_a_disagreement():
-    from armmind.plan.scores import prediction
+    from plan_and_act.plan.scores import prediction
     start = {**_true((0.5, 0.0, 0.02)), "can": {"xyz": [0.5, 0.1, 0.03], "yaw": 0.0},
              "mug": {"xyz": [0.7, 0.1, 0.03], "yaw": 0.0}}
     after = {**_true((0.5, 0.05, 0.02)), "can": {"xyz": [0.5, 0.14, 0.03], "yaw": 0.0},
@@ -431,7 +431,7 @@ def test_a_true_object_outside_the_belief_that_moved_is_a_disagreement():
 
 
 def test_a_true_object_that_the_shift_puts_in_the_fingers_goes_further_along_the_push():
-    from armmind.plan.formats import Move
+    from plan_and_act.plan.formats import Move
     belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.104, 0.02))]  # the truth is 4 mm nearer
     down = [Keyframe((0.5, 0.03, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.03, 0.02), 0.0, "closed", None)]
     push = Keyframe((0.5, 0.12, 0.02), 0.0, "closed", None, "push", (Move("blue cube", (0.5, 0.1505, 0.02)),))
@@ -444,7 +444,7 @@ def test_a_true_object_that_the_shift_puts_in_the_fingers_goes_further_along_the
 
 
 def test_a_move_with_no_displacement_clears_the_agent_away_from_its_centre():
-    from armmind.plan.formats import Move
+    from plan_and_act.plan.formats import Move
     belief = [Entity("blue cube", "box", (0.04, 0.04, 0.04), (0.5, 0.15, 0.02))]  # believed 5 cm off the truth
     kfs = [Keyframe((0.5, 0.06, 0.15), 0.0, "closed", None), Keyframe((0.5, 0.06, 0.02), 0.0, "closed", None),
            Keyframe((0.5, 0.075, 0.02), 0.0, "closed", None, "touch", (Move("blue cube", (0.5, 0.15, 0.02)),))]

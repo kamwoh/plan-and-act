@@ -3,10 +3,10 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from armmind.llm.fake import FakeBackend
-from armmind.scenes import SCENES
-from armmind.server.app import create_app
-from armmind.sim.state import END_STATE, START_STATE, scene_version
+from plan_and_act.llm.fake import FakeBackend
+from plan_and_act.scenes import SCENES
+from plan_and_act.server.app import create_app
+from plan_and_act.sim.state import END_STATE, START_STATE, scene_version
 from tests.fakes import judged
 from tests.test_agent_plan import good_plan
 from tests.test_plan_api import PICK
@@ -17,7 +17,7 @@ ENVS: list = []
 
 
 def write_state(path, scene="cubes", seed=5, marker=0.0):
-    """A state file in the format of armmind.sim.state, with a marker value in qpos."""
+    """A state file in the format of plan_and_act.sim.state, with a marker value in qpos."""
     np.savez(path, scene=np.array(scene), seed=np.array(seed), version=np.array(scene_version(SCENES[scene])),
              time=np.array(1.5), yaw=np.array(0.0), events=np.array([], dtype=str), qpos=np.array([marker]),
              qvel=np.zeros(1), act=np.zeros(0), ctrl=np.zeros(1), qacc_warmstart=np.zeros(1))
@@ -179,8 +179,8 @@ def test_the_plan_mode_must_be_continue_or_start(tmp_path):
 
 
 def test_the_plan_prompt_speaks_of_a_round_that_continues():
-    from armmind.agent.prompts import PLAN_SYSTEM, Feedback, build_plan_text
-    from armmind.types import Observation
+    from plan_and_act.agent.prompts import PLAN_SYSTEM, Feedback, build_plan_text
+    from plan_and_act.types import Observation
     assert "re-plan that continues" in PLAN_SYSTEM and "did not reset" in PLAN_SYSTEM
     fb = Feedback((), (), "failed", True, False, None, None, (), "20261018-100000", 2, 2, mode="continue")
     obs = Observation(b"f", b"t", (0.5, -0.1, 0.08), 0.04, ("red_cube",))

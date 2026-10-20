@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from armmind.store.runlog import RunLog
+from plan_and_act.store.runlog import RunLog
 
 
 def test_event_writes_jsonl_and_png(tmp_path):

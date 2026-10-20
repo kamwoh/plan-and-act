@@ -1,9 +1,9 @@
 """The plan reply: parse_plan, the plan schema and the plan system prompt."""
 import pytest
 
-from armmind.agent.parse import ReplyError, parse_plan
-from armmind.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM, SYSTEM
-from armmind.plan.formats import Entity, Keyframe, Move
+from plan_and_act.agent.parse import ReplyError, parse_plan
+from plan_and_act.agent.prompts import PLAN_REPLY_SCHEMA, PLAN_SYSTEM, SYSTEM
+from plan_and_act.plan.formats import Entity, Keyframe, Move
 
 
 def obj(**kw):
