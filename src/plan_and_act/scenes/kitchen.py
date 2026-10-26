@@ -61,8 +61,10 @@ def _clear_plan(w):
     return [*_to_bowl(w, "bottle"), *_to_plate(w, "purple_box", 0.05), *_to_plate(w, "yellow_box", -0.05)]
 
 
+BRIEF = 'The bowl and the plate are heavy.'  # the fixed items for a prompt with names only: no positions or sizes
+
 KITCHEN = Scene(
-    name="kitchen", title="Kitchen", objects=OBJECTS, fixtures_xml="", fixtures_text=TEXT,
+    name="kitchen", fixtures_brief=BRIEF, title="Kitchen", objects=OBJECTS, fixtures_xml="", fixtures_text=TEXT,
     region=(0.34, 0.58, -0.16, 0.16), min_gap=0.14,
     tasks={t.name: t for t in (
         Task("bottle_in_bowl", f"Put the {BOTTLE.label} in the bowl.", lambda w: in_bowl(w, "bottle"),

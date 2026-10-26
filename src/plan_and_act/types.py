@@ -15,6 +15,19 @@ def fmt(p) -> str:
 
 
 @dataclass(frozen=True)
+class ArmFacts:
+    """What the prompts say about the robot arm."""
+    title: str = "Franka Panda"
+    base: tuple[float, float] = (0.0, 0.0)  # x, y of the robot base
+    open_width: float = 0.08  # the finger gap of the open gripper, m
+    start: Vec3 = (0.30, 0.0, 0.40)  # the gripper at the start
+    max_tilt: float = 0.0  # degrees: the gripper tilts up to this far from straight down where it must
+
+
+PANDA_FACTS = ArmFacts()
+
+
+@dataclass(frozen=True)
 class Action:
     type: ActionType
     xyz: Vec3 | None = None

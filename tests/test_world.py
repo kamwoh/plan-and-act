@@ -37,7 +37,7 @@ def test_home_pose_gripper_open_and_points_down():
     w = World(CUBES)
     w.reset(LAYOUT)
     assert w.gripper_width() == pytest.approx(0.08, abs=1e-3)
-    z_axis = w.data.xmat[w.hand_id].reshape(3, 3)[:, 2]
+    z_axis = w.data.site_xmat[w.tcp_id].reshape(3, 3)[:, 2]
     np.testing.assert_allclose(z_axis, [0, 0, -1], atol=1e-3)
     assert w.tcp()[2] > 0.3
 
@@ -51,9 +51,11 @@ def test_no_gripper_contacts_at_home():
 
 
 @pytest.mark.assets
-def test_scene_file_is_named_after_the_scene():
+def test_the_robot_comes_before_the_scene_in_the_model():
+    """The arm joints come first in qpos, as with the old include of panda.xml."""
     w = World(CUBES)
-    assert (w.scene_file.name, w.scene_file.parent.joinpath("panda.xml").is_file()) == ("plan_and_act_scene_cubes.xml", True)
+    assert [w.model.body(b).name for b in range(1, 4)] == ["link0", "link1", "link2"]
+    assert list(w.parts.arm_qpos) == list(range(7)) and w.model.joint(7).name == "finger_joint1"
 
 
 @pytest.mark.assets

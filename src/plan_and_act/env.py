@@ -16,10 +16,10 @@ from plan_and_act.agent.rules import check_result
 from plan_and_act.plan.formats import Keyframe
 from plan_and_act.scenes import Scene, Task
 from plan_and_act.sim import state as sim_state
-from plan_and_act.sim.arm import GRIP_CLOSED, Arm
+from plan_and_act.sim.arm import Arm
 from plan_and_act.sim.render import Cameras, jpeg, png
-from plan_and_act.sim.world import World
-from plan_and_act.types import Action, ActionResult, Observation
+from plan_and_act.sim.world import World, arm_facts
+from plan_and_act.types import Action, ActionResult, ArmFacts, Observation
 
 
 class Env(Protocol):
@@ -30,6 +30,7 @@ class Env(Protocol):
     has_check: bool
     check_name: str | None
     object_labels: dict[str, str]  # scene object name -> its label, e.g. "red_cube" -> "red cube, 4 cm"
+    arm_facts: ArmFacts  # the robot, for the prompts. An env without it has the Panda.
 
     def observe(self) -> Observation: ...
     def act(self, action: Action) -> ActionResult: ...
@@ -75,10 +76,12 @@ class MujocoEnv:
         self.has_check, self.check_name = task is not None, task.name if task else None
         self.object_labels = {o.name: o.label for o in scene.objects}
         self.world = World(scene)
+        self.arm_facts = arm_facts(scene)
         saved = sim_state.load(start, scene, seed) if start is not None else None
         self.world.reset(scene.layout(seed), task.initial_qpos if task else None)
         self.cams = Cameras(self.world)
         self._on_frame, self._n_frames = on_frame, 0
+        self.free_view: Callable[[], dict | None] | None = None  # the free camera of the page's Front box
         self.arm = Arm(self.world, on_frame=self._frame if on_frame else None)
         if saved is None:
             self.arm.reset_ready()
@@ -97,11 +100,13 @@ class MujocoEnv:
 
     def gripper_state(self) -> str:
         """"closed" when the last gripper command was a close, else "open"."""
-        return "closed" if self.world.data.ctrl[7] == GRIP_CLOSED else "open"
+        return "closed" if self.world.gripper_closed() else "open"
 
     def _frame(self) -> None:
         """Send the front camera on every frame and the top camera on every third frame. No shadows, for speed."""
-        self._on_frame("front", jpeg(self.cams.render("front", shadows=False)))
+        view = self.free_view() if self.free_view is not None else None
+        front = self.cams.render_free(view, shadows=False) if view else self.cams.render("front", shadows=False)
+        self._on_frame("front", jpeg(front))
         if self._n_frames % 3 == 2:
             self._on_frame("top", jpeg(np.asarray(self.cams.with_grid("top", shadows=False))))
         self._n_frames += 1
@@ -195,6 +200,14 @@ def render_preview(scene: Scene, seed: int) -> dict:
                 "top": base64.b64encode(png(env.cams.with_grid("top"))).decode()}
     finally:
         env.close()
+
+
+def free_image(env: MujocoEnv, view: dict | None) -> dict:
+    """A Front image of the env from a free camera, as base64, and the camera pose. No view: the pose that
+    matches the fixed Front camera."""
+    view = view or env.cams.free_view("front")
+    # No shadows: a drag asks for many images, and a render without shadows is about 5 times faster.
+    return {"jpg": base64.b64encode(jpeg(env.cams.render_free(view, shadows=False))).decode(), "view": view}
 
 
 class SimThread:

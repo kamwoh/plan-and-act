@@ -1,7 +1,9 @@
 const $ = (id) => document.getElementById(id);
 let tasks = [];       // the tasks of the chosen scene
 let scenes = [];
-let sceneName = "cubes";
+let sceneName = "cubes";  // the scene without the robot
+let robots = [];
+let robotName = "panda";
 const DEFAULT_CAMERAS = { front: "Front", top: "Top · grid" };
 let cameras = { ...DEFAULT_CAMERAS };  // the image labels of the chosen scene
 let runCameras = { ...DEFAULT_CAMERAS };  // the image labels of the scene of the last run, for its step details
@@ -34,7 +36,18 @@ let roundFrames = {};     // round -> the frames of the last round that its re-p
 let lastImages = null;     // the newest camera images of the chat, for a saved run
 let replayShowsPlan = true; // false while loadRun replays an older round of a chain: only the last video loads
 
-function cameraLabels(name) {
+// A scene key is the scene name, then "@" and the robot for an arm other than the Panda: "cubes@ur5e".
+function sceneKey(scene = sceneName, robot = robotName) {
+  return robot === "panda" ? scene : `${scene}@${robot}`;
+}
+
+function splitKey(key) {
+  const [scene, robot] = (key || "").split("@");
+  return { scene, robot: robot || "panda" };
+}
+
+function cameraLabels(key) {
+  const name = splitKey(key).scene;
   const scene = scenes.find((s) => s.name === name);
   return { ...DEFAULT_CAMERAS, ...((scene && scene.cameras) || {}) };
 }
@@ -88,21 +101,52 @@ function chip(label, name, instruction) {
 
 // ---- Scenes: the chosen scene sets the examples, the auto-check and the preview ----
 const SCENE_KEY = "plan-and-act.scene";
+const ROBOT_KEY = "plan-and-act.robot";
+const HINTS_KEY = "plan-and-act.hints";
 
-function readScene() {
+// The scene description that Claude gets: the names-only text or the full text of the scene, then the edits.
+function fillSceneText() {
+  const scene = scenes.find((x) => x.name === sceneName);
+  if (scene) $("scene_text").value = $("hints").value === "full" ? scene.description : scene.brief;
+}
+
+function readStored(key) {
   try {
-    return localStorage.getItem(SCENE_KEY);
+    return localStorage.getItem(key);
   } catch (err) {
     return null;
   }
 }
 
-function writeScene(name) {
+function store(key, value) {
   try {
-    localStorage.setItem(SCENE_KEY, name);
+    localStorage.setItem(key, value);
   } catch (err) {
     // storage is blocked: the choice lasts until the page closes
   }
+}
+
+function readScene() {
+  return readStored(SCENE_KEY);
+}
+
+function writeScene(name) {
+  store(SCENE_KEY, splitKey(name).scene);
+  store(ROBOT_KEY, robotName);
+}
+
+// save: false when the page shows an earlier run, so that the chosen robot stays in storage.
+function chooseRobot(name, save = true) {
+  robotName = robots.some((r) => r.name === name) ? name : "panda";
+  $("robot").value = robotName;
+  if (save) store(ROBOT_KEY, robotName);
+}
+
+// The scene and the robot of a scene key, as chooseScene takes them.
+function chooseKey(key, keepText = false, save = true) {
+  const { scene, robot } = splitKey(key);
+  chooseRobot(robot, save);
+  chooseScene(scene, keepText, save);
 }
 
 // keepText: true when a run starts, so that its instruction stays in the box.
@@ -115,41 +159,61 @@ function chooseScene(name, keepText = false, save = true) {
   sceneName = scene.name;
   tasks = scene.tasks;
   if (save) writeScene(sceneName);
-  for (const c of $("scenes").children) c.classList.toggle("active", c.dataset.name === sceneName);
+  $("scenes").value = sceneName;
   $("examples").replaceChildren(chip("Your own", "", ""), ...tasks.map((t) => chip(t.name, t.name, t.instruction)));
+  fillSceneText();
   cameras = cameraLabels(scene.name);
   for (const cam of ["front", "top"]) $(`cam_${cam}`).querySelector(".cam-label").textContent = cameras[cam];
+  setFreeLabel();
   showMode();
   loadLessons();
 }
 
-function sceneChip(s) {
-  const b = el("button", s.title, "chip");
-  b.type = "button";
-  b.dataset.name = s.name;
-  b.title = s.description;
-  b.disabled = running;
-  b.addEventListener("click", () => {
-    if (running || s.name === sceneName) return;
-    chooseScene(s.name);
-    loadPreview();
-  });
-  return b;
-}
-
 async function loadScenes() {
   try {
-    const r = await fetch("/api/scenes");
+    const [r, a] = await Promise.all([fetch("/api/scenes"), fetch("/api/robots")]);
     if (!r.ok) throw new Error(r.statusText);
     scenes = await r.json();
+    robots = a.ok ? await a.json() : [];
   } catch (err) {
     $("mode").textContent = "could not load scenes";
     $("mode").classList.remove("check");
     return;
   }
-  $("scenes").replaceChildren(...scenes.map(sceneChip));
+  $("scenes").replaceChildren(...scenes.map((s) => {
+    const o = el("option", s.title);
+    o.value = s.name;
+    o.title = s.description;
+    return o;
+  }));
+  $("robot").replaceChildren(...(robots.length ? robots : [{ name: "panda", title: "Franka Panda", note: "" }]).map((r) => {
+    const o = el("option", r.title);
+    o.value = r.name;
+    o.title = r.note;
+    return o;
+  }));
+  chooseRobot(readStored(ROBOT_KEY) || "panda");
+  $("hints").value = readStored(HINTS_KEY) === "full" ? "full" : "brief";
   chooseScene(readScene() || "cubes");
 }
+
+$("hints").addEventListener("change", () => {
+  store(HINTS_KEY, $("hints").value);
+  fillSceneText();
+});
+
+$("scenes").addEventListener("change", () => {
+  if (running || $("scenes").value === sceneName) return;
+  chooseScene($("scenes").value);
+  loadPreview();
+});
+
+$("robot").addEventListener("change", () => {
+  if (running) return;
+  chooseRobot($("robot").value);
+  loadLessons();
+  loadPreview();
+});
 
 $("instruction").addEventListener("input", showMode);
 // Enter in the instruction submits the form, so it runs Plan. Shift+Enter starts a new line.
@@ -161,10 +225,13 @@ $("instruction").addEventListener("keydown", (e) => {
 
 let running = false;
 
-// The scene chips are off while a run is active: the run keeps its scene.
+// The scene and robot lists are off while a run is active: the run keeps its scene and robot.
 function setRunning(value) {
   running = value;
-  for (const c of $("scenes").children) c.disabled = value;
+  $("scenes").disabled = value;
+  $("robot").disabled = value;
+  $("hints").disabled = value;
+  $("scene_text").disabled = value;
   $("shuffle").disabled = value;
   $("reset").disabled = value;
   for (const b of document.querySelectorAll(".exec-btn")) {
@@ -294,13 +361,153 @@ function paintBadges() {
   }
 }
 
-function showImage(id, src) {
+// free: a Front image of the free camera. Any other Front image waits until the free camera goes off.
+function showImage(id, src, free = false) {
+  if (id === "live" && freeView && !free) {
+    fixedSrc = src;
+    if (!running) pushFree();  // the scene changed: render it again from the free camera
+    return;
+  }
   const was = $(id).hidden, wasKey = imageKey;
   $(id).src = src;
   imageKey = runKey;
   $(id).hidden = viewMode !== "camera";  // the image waits behind the plan video
   if ($(id).hidden !== was || imageKey !== wasKey) drawPath();  // the path shows only over an image of its run
 }
+
+// ---- The free camera of the Front box ----
+// Drag: orbit. Right-drag or Shift-drag: pan. Wheel: zoom. W A S D: move, Q E: down and up. Double-click: back to
+// the fixed camera. The server renders the free camera. Claude always gets the fixed cameras.
+let freeView = null;   // {lookat, distance, azimuth, elevation} in metres and degrees, or null: the fixed camera
+let fixedSrc = null;   // the newest image of the fixed Front camera, shown again when the free camera goes off
+let freeBusy = false;  // a request is on its way: the next pose waits for it
+let freeAgain = false; // the pose changed while a request was on its way
+const ORBIT_DEG = 0.3, PAN = 0.0015, ZOOM = 0.0015, STEP = 0.04;
+
+async function pushFree() {
+  if (freeBusy) {
+    freeAgain = true;
+    return;
+  }
+  freeBusy = true;
+  try {
+    const r = await fetch("/api/freecam", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scene: sceneKey(), seed: Number($("seed").value) || 0, run: planRunId, view: freeView }),
+    });
+    if (!r.ok) return;
+    const out = await r.json();
+    if (!out.on) return;
+    if (out.view && !freeView) freeView = out.view;  // the start pose: the pose of the fixed camera
+    if (out.jpg && freeView) showImage("live", `data:image/jpeg;base64,${out.jpg}`, true);
+  } catch (err) {
+    // no image this time: the next move asks again
+  } finally {
+    freeBusy = false;
+    if (freeAgain) {
+      freeAgain = false;
+      pushFree();
+    }
+  }
+}
+
+function setFreeLabel() {
+  $("cam_front").classList.toggle("free", freeView !== null);
+  $("cam_front").querySelector(".cam-label").textContent = freeView ? "Free camera · double-click to reset" : cameras.front;
+}
+
+async function startFree() {
+  if (freeView) return true;
+  fixedSrc = $("live").src;
+  freeView = null;
+  freeBusy = false;
+  const r = await fetch("/api/freecam", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scene: sceneKey(), seed: Number($("seed").value) || 0, run: planRunId, view: null }),
+  }).catch(() => null);
+  if (!r || !r.ok) return false;
+  const out = await r.json();
+  freeView = out.view || null;
+  if (!freeView) return false;
+  setFreeLabel();
+  drawPath();
+  if (out.jpg) showImage("live", `data:image/jpeg;base64,${out.jpg}`, true);
+  return true;
+}
+
+function stopFree() {
+  if (!freeView) return;
+  freeView = null;
+  setFreeLabel();
+  fetch("/api/freecam", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ on: false }) }).catch(() => {});
+  if (fixedSrc) showImage("live", fixedSrc);
+  drawPath();
+}
+
+function freeAxes(v) {
+  const az = v.azimuth * Math.PI / 180, el = v.elevation * Math.PI / 180;
+  const fwd = [Math.cos(el) * Math.cos(az), Math.cos(el) * Math.sin(az), Math.sin(el)];
+  const right = [Math.sin(az), -Math.cos(az), 0];
+  const up = [right[1] * fwd[2] - right[2] * fwd[1], right[2] * fwd[0] - right[0] * fwd[2],
+    right[0] * fwd[1] - right[1] * fwd[0]];
+  return { fwd, right, up, flat: [Math.cos(az), Math.sin(az), 0] };
+}
+
+function moveLookat(d) {
+  freeView.lookat = freeView.lookat.map((v, i) => Math.round((v + d[i]) * 1e4) / 1e4);
+}
+
+(function freeControls() {
+  const img = $("live");
+  let drag = null;
+  img.addEventListener("contextmenu", (e) => e.preventDefault());
+  img.addEventListener("pointerdown", async (e) => {
+    if (viewMode !== "camera") return;
+    e.preventDefault();
+    img.setPointerCapture(e.pointerId);
+    const ready = await startFree();
+    if (ready) drag = { x: e.clientX, y: e.clientY, pan: e.button === 2 || e.shiftKey };
+  });
+  img.addEventListener("pointermove", (e) => {
+    if (!drag || !freeView) return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    if (drag.pan) {
+      const { right, up } = freeAxes(freeView), k = freeView.distance * PAN;
+      moveLookat(right.map((r, i) => -r * dx * k + up[i] * dy * k));
+    } else {
+      freeView.azimuth = (freeView.azimuth - dx * ORBIT_DEG) % 360;
+      freeView.elevation = Math.max(-89, Math.min(89, freeView.elevation + dy * ORBIT_DEG));
+    }
+    pushFree();
+  });
+  const end = () => { drag = null; };
+  img.addEventListener("pointerup", end);
+  img.addEventListener("pointercancel", end);
+  img.addEventListener("wheel", (e) => {
+    if (viewMode !== "camera" || !freeView) return;
+    e.preventDefault();
+    freeView.distance = Math.max(0.05, Math.min(8, freeView.distance * Math.exp(e.deltaY * ZOOM)));
+    pushFree();
+  }, { passive: false });
+  img.addEventListener("dblclick", stopFree);
+  // The keys work while the pointer is over the Front box, so that typing in the page never moves the camera.
+  let over = false;
+  img.addEventListener("pointerenter", () => { over = true; });
+  img.addEventListener("pointerleave", () => { over = false; });
+  document.addEventListener("keydown", (e) => {
+    if (!over || !freeView || e.target.closest("input, textarea, select")) return;
+    const { right, flat } = freeAxes(freeView), k = freeView.distance * STEP;
+    const moves = { w: flat, s: flat.map((v) => -v), d: right, a: right.map((v) => -v), e: [0, 0, 1], q: [0, 0, -1] };
+    const m = moves[e.key.toLowerCase()];
+    if (!m) return;
+    e.preventDefault();
+    moveLookat(m.map((v) => v * k));
+    pushFree();
+  });
+})();
 
 function clearPreviewError() {  // a good preview: drop the text of an earlier error
   for (const fig of ["cam_front", "cam_top"]) $(fig).querySelector(".placeholder").textContent = "";
@@ -764,7 +971,7 @@ function showLessons() {
 
 async function loadLessons() {
   try {
-    const r = await fetch(`/api/lessons?scene=${encodeURIComponent(sceneName)}`);
+    const r = await fetch(`/api/lessons?scene=${encodeURIComponent(sceneKey())}`);
     savedLessons = r.ok ? await r.json() : [];
   } catch (err) {
     savedLessons = [];
@@ -774,8 +981,7 @@ async function loadLessons() {
 }
 
 function fillLessonsDialog() {
-  const scene = scenes.find((x) => x.name === sceneName);
-  $("lessons_title").textContent = `Saved lessons · ${scene ? scene.title : sceneName}`;
+  $("lessons_title").textContent = `Saved lessons · ${sceneTitle(sceneKey())}`;
   $("lessons_clear").disabled = !savedLessons.length;
   if (!savedLessons.length) {
     $("lessons_list").replaceChildren(li("No saved lessons for this scene", "empty"));
@@ -797,7 +1003,7 @@ function fillLessonsDialog() {
 
 // The text goes with the index: if the list changed in the meantime, the server refuses with 409.
 async function deleteLessons(index = null) {
-  let q = `scene=${encodeURIComponent(sceneName)}`;
+  let q = `scene=${encodeURIComponent(sceneKey())}`;
   if (index !== null) q += `&index=${index}&text=${encodeURIComponent(savedLessons[index].text)}`;
   try {
     const r = await fetch(`/api/lessons?${q}`, { method: "DELETE" });
@@ -848,7 +1054,7 @@ async function renderPreview(seq) {
     autoLoop = Boolean(state.auto);
     setRunning(state.running);
     if (running) return;
-    const q = `scene=${encodeURIComponent(sceneName)}&seed=${encodeURIComponent($("seed").value || 0)}`;
+    const q = `scene=${encodeURIComponent(sceneKey())}&seed=${encodeURIComponent($("seed").value || 0)}`;
     const r = await fetch(`/api/preview?${q}`);
     if (seq !== previewSeq || running) return;
     if (r.status === 503) {  // files are missing: say which, and how to get them
@@ -895,7 +1101,7 @@ $("seed").addEventListener("input", () => {
 // ---- Start and Stop ----
 // Clear the page for a new run or plan. Reset before the POST: its events can arrive before the response.
 function beginRun(text) {
-  writeScene(sceneName);  // the scene of an earlier run on the page becomes the chosen scene
+  writeScene(sceneKey());  // the scene and the robot of an earlier run on the page become the chosen ones
   viewSeq++;
   previewSeq++;  // drop a preview that is still on its way
   setLoading(false);
@@ -953,7 +1159,8 @@ async function startPlan() {
 function planState() {
   return {
     runId: planRunId, round: planRound, newest: planInstruction, instruction: $("instruction").value.trim(),
-    scene: sceneName, seed: Number($("seed").value), useLessons: $("use_lessons").checked,
+    scene: sceneKey(), sceneText: $("scene_text").value.trim(), seed: Number($("seed").value),
+    useLessons: $("use_lessons").checked,
     auto: $("auto").checked, rounds: roundsValue($("rounds").value), mode: roundMode(), perRound: perRound(),
   };
 }
@@ -965,7 +1172,8 @@ function planRequest(s) {
   if (!s.runId || s.round >= MAX_ROUND) {
     return {
       label: "▶ Plan", title: s.runId ? LAST_ROUND_TITLE : PLAN_TITLE, url: "/api/plan",
-      body: { scene: s.scene, instruction: s.instruction, seed: s.seed, use_lessons: s.useLessons, auto: s.auto,
+      body: { scene: s.scene, scene_text: s.sceneText || null, instruction: s.instruction, seed: s.seed,
+        use_lessons: s.useLessons, auto: s.auto,
         rounds: s.rounds, mode: s.mode, max_keyframes: s.perRound },
     };
   }
@@ -1092,7 +1300,8 @@ function onEvent(ev, replay = false) {
       viewSeq++;  // a live run takes over the page from an earlier run
       setRunning(true);
     }
-    if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
+    if (ev.scene && ev.scene !== sceneKey()) chooseKey(ev.scene, true, !replay);
+    if (typeof ev.scene_text === "string") $("scene_text").value = ev.scene_text;
     runKey++;
     clearPlan();
     planRunId = ev.mode === "plan" ? ev.run_id : null;
@@ -1159,7 +1368,7 @@ function onEvent(ev, replay = false) {
     outcome = null;
     const own = planView && ev.run_id === planRunId;  // the cameras and the start pose of the plan on the page
     runCameras = cameraLabels(ev.scene);
-    if (ev.scene && ev.scene !== sceneName) chooseScene(ev.scene, true, !replay);
+    if (ev.scene && ev.scene !== sceneKey()) chooseKey(ev.scene, true, !replay);
     if (!replay) {
       viewSeq++;
       setRunning(true);
@@ -1324,7 +1533,7 @@ function drawPath() {
   for (const [name, img] of [["front", "live"], ["top", "top"]]) {
     const canvas = $(`path_${name}`);
     const cam = show && stepPath.cameras.find((c) => c.name === name);
-    canvas.hidden = !cam || $(img).hidden;
+    canvas.hidden = !cam || $(img).hidden || (name === "front" && freeView !== null);  // drawn for the fixed camera
     if (canvas.hidden) continue;
     // object-fit shows the image smaller than its pixels: scale the text and the lines back to screen size
     const box = canvas.getBoundingClientRect();
@@ -1772,9 +1981,12 @@ function runTime(t) {
   return new Date(t * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function sceneTitle(name) {
+function sceneTitle(key) {
+  const { scene: name, robot } = splitKey(key);
   const scene = scenes.find((s) => s.name === name);
-  return scene ? scene.title : name;
+  const arm = robots.find((r) => r.name === robot);
+  const title = scene ? scene.title : name;
+  return robot === "panda" ? title : `${title} · ${arm ? arm.title : robot}`;
 }
 
 function historyRow(run) {
@@ -1909,7 +2121,7 @@ function connect() {
   ws.onmessage = (m) => {
     const msg = JSON.parse(m.data);
     if (msg.type === "frame") {
-      showImage(msg.cam === "top" ? "top" : "live", `data:image/jpeg;base64,${msg.jpg}`);
+      showImage(msg.cam === "top" ? "top" : "live", `data:image/jpeg;base64,${msg.jpg}`, msg.cam !== "top");
       if (running) setCamState("live");
     } else if (msg.type === "event") {
       onEvent(msg);

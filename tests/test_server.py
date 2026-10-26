@@ -261,11 +261,64 @@ def test_prompt_endpoint_returns_system_and_an_example(tmp_path):
     assert "(0.300, 0.000, 0.400)" in ex and "touching: nothing" in ex
 
 
+def test_scenes_give_the_full_and_the_names_only_description(tmp_path):
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        body = c.get("/api/scenes").json()
+    drawer = next(s for s in body if s["name"] == "drawer")
+    assert drawer["description"] == SCENES["drawer"].full() and "0.53" in drawer["description"]
+    assert drawer["brief"] == SCENES["drawer"].brief() and "red cube" in drawer["brief"]
+    assert not any(ch.isdigit() for ch in drawer["brief"]) and "find them in the images" in drawer["brief"]
+
+
+def test_a_plan_gives_the_scene_text_of_the_page_to_the_env(tmp_path):
+    seen = []
+
+    def factory(scene, task, instruction, seed, show_positions, on_frame):
+        seen.append(scene.describe())
+        return fake_factory(scene, task, instruction, seed, show_positions, on_frame)
+
+    with TestClient(create_app(FakeBackend([]), factory, tmp_path)) as c:
+        c.post("/api/plan", json={"instruction": "Pick up the red cube.", "scene": "cubes",
+                                  "scene_text": "  Objects: a red thing.  "})
+        wait_idle(c)
+    assert seen == ["Objects: a red thing."]
+
+
+def test_the_free_camera_turns_on_and_off_and_follows_a_run(tmp_path):
+    from plan_and_act.server.app import Hub
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        assert c.post("/api/freecam", json={"on": False}).json() == {"on": False}
+        bad = c.post("/api/freecam", json={"view": {"lookat": [0, 0], "distance": 1, "azimuth": 0, "elevation": 0}})
+        assert bad.status_code == 422
+    assert Hub().free_view is None
+
+
+@pytest.mark.assets
+def test_the_free_camera_renders_the_scene(tmp_path):
+    from plan_and_act.env import MujocoEnv, free_image
+    env = MujocoEnv(SCENES["cubes"], None, 0, "")
+    try:
+        first = free_image(env, None)
+        view = first["view"]
+        assert view["elevation"] < 0 and view["distance"] > 0.5  # the front camera looks down at the table
+        turned = free_image(env, {**view, "azimuth": view["azimuth"] + 90})
+        assert first["jpg"] != turned["jpg"] and turned["view"]["azimuth"] == view["azimuth"] + 90
+    finally:
+        env.close()
+
+
+def test_robots_list_the_panda_first(tmp_path):
+    with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
+        body = c.get("/api/robots").json()
+    assert body[0] == {"name": "panda", "title": "Franka Panda", "note": "7 joints, parallel gripper"}
+    assert {"ur5e", "yam_ultra"} <= {r["name"] for r in body}
+
+
 def test_scenes_list_every_scene_with_its_tasks(tmp_path):
     with TestClient(create_app(FakeBackend([]), fake_factory, tmp_path)) as c:
         body = c.get("/api/scenes").json()
-    assert [s["name"] for s in body] == ["cubes", "tray", "zones", "shapes", "drawer", "buttons", "kitchen",
-                                           "toys"]
+    assert [s["name"] for s in body] == list(SCENES)
+    assert [s["name"] for s in body][:8] == ["cubes", "tray", "zones", "shapes", "drawer", "buttons", "kitchen", "toys"]
     tray = body[1]
     assert tray["title"] == "Tray" and tray["description"] == SCENES["tray"].describe()
     assert tray["cameras"] == {"front": "Front", "top": "Top · grid"}

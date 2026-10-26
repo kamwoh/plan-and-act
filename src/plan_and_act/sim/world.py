@@ -1,7 +1,6 @@
-"""MuJoCo world: the Panda arm, a table and the objects and fixed items of a scene."""
+"""MuJoCo world: a robot arm, a table and the objects and fixed items of a scene."""
 from __future__ import annotations
 
-import os
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,15 +11,15 @@ import numpy as np
 
 from plan_and_act.scenes.base import Layout, ObjSpec, Scene
 from plan_and_act.sim import meshes
-from plan_and_act.sim.assets import panda_dir
+from plan_and_act.sim.robots import ROBOTS, ROT0, Robot, copy_options, parts, robot_spec, width_of
+from plan_and_act.types import PANDA_FACTS, ArmFacts
 
 TEMPLATE = Path(__file__).with_name("scene.xml")
-TCP_OFFSET = np.array([0.0, 0.0, 0.1034])  # from the hand frame to the point between the fingertips
-GRIPPER_BODIES = ("hand", "left_finger", "right_finger")
 CAMERAS = {  # name: (pos, xyaxes). A scene can replace one.
     "front": ("1.45 0 0.80", "0 1 0 -0.55 0 0.835"),
     "top": ("0.5 0 1.2", "0 1 0 -1 0 0"),
 }
+SHUT_GAP = 0.003  # m: a closed gripper this close to its closed-on-nothing gap holds nothing
 SPAWN_GAP = 0.002  # a mesh object starts this far above the table, so that it does not start inside it
 
 
@@ -70,38 +69,62 @@ def scene_xml(scene: Scene) -> str:
                                                      assets=assets)
 
 
-_MODELS: dict[tuple[Path, str], mujoco.MjModel] = {}  # (folder, scene XML) -> the compiled model
+_MODELS: dict[tuple[str, str], tuple[mujoco.MjModel, object]] = {}  # (robot, scene XML) -> model, parts
 _MODELS_LOCK = threading.Lock()
 
 
-def _compiled(scene: Scene, folder: Path, scene_file: Path) -> mujoco.MjModel:
-    """The compiled model of a scene. Each scene XML compiles once. The worlds share the model and never
-    change it: each world has its own MjData."""
+def robot_of(scene: Scene) -> Robot:
+    return ROBOTS[scene.robot]
+
+
+def arm_facts(scene: Scene) -> ArmFacts:
+    """What the prompts say about the robot of the scene. The Panda needs no model."""
+    if scene.robot == "panda":
+        return PANDA_FACTS
+    robot, (_, p) = robot_of(scene), _compiled(scene)
+    return ArmFacts(robot.title, (robot.base[0], robot.base[1]), p.open_width, robot.ready, robot.max_tilt)
+
+
+def _build(scene: Scene, xml: str) -> mujoco.MjModel:
+    """The robot spec with the scene attached to it, so that the robot bodies come first."""
+    robot = robot_spec(robot_of(scene))
+    world = mujoco.MjSpec.from_string(xml)
+    copy_options(robot, world)
+    robot.attach(world, frame=robot.worldbody.add_frame(), prefix="")
+    head, glob = robot.visual.headlight, robot.visual.global_
+    head.diffuse, head.ambient, head.specular = (world.visual.headlight.diffuse, world.visual.headlight.ambient,
+                                                world.visual.headlight.specular)
+    glob.offwidth, glob.offheight = world.visual.global_.offwidth, world.visual.global_.offheight
+    return robot.compile()
+
+
+def _compiled(scene: Scene):
+    """The compiled model of a scene and its robot parts. Each one compiles once. The worlds share the model
+    and never change it: each world has its own MjData."""
     xml = scene_xml(scene)
     with _MODELS_LOCK:
-        if (folder, xml) not in _MODELS:
-            tmp = folder / f".plan_and_act_scene_{scene.name}.{os.getpid()}.xml"
-            tmp.write_text(xml)
-            os.replace(tmp, scene_file)  # a whole file at all times, also for another process
-            _MODELS[folder, xml] = mujoco.MjModel.from_xml_path(str(scene_file))
-        return _MODELS[folder, xml]
+        if (scene.robot, xml) not in _MODELS:
+            model = _build(scene, xml)
+            _MODELS[scene.robot, xml] = (model, parts(robot_of(scene), model))
+        return _MODELS[scene.robot, xml]
 
 
 class World:
-    def __init__(self, scene: Scene, model_dir: Path | None = None):
+    def __init__(self, scene: Scene):
         self.scene = scene
-        folder = model_dir or panda_dir()
-        self.scene_file = folder / f"plan_and_act_scene_{scene.name}.xml"  # MJCF resolves <include> next to it
-        self.model = _compiled(scene, folder, self.scene_file)
+        self.robot = robot_of(scene)
+        self.model, self.parts = _compiled(scene)
         self.data = mujoco.MjData(self.model)
-        self.hand_id = self.model.body("hand").id
-        self._gripper = {self.model.body(n).id for n in GRIPPER_BODIES}
+        self.tcp_id = self.parts.tcp_site
+        self._gripper = set(self.parts.gripper_bodies)
         self.events: list[str] = []  # brief happenings, such as a button press, since the reset
         self.monitors: list = []
-        home = mujoco.MjData(self.model)
-        mujoco.mj_resetDataKeyframe(self.model, home, 0)
-        mujoco.mj_kinematics(self.model, home)
-        self.rot0 = home.xmat[self.hand_id].reshape(3, 3).copy()  # the home orientation: yaw 0, points down
+        self.rot0 = ROT0  # the tcp orientation at yaw 0: the gripper points down
+        if self.robot.ik_from_home:  # the home pose points down: use it as measured, as the old Panda code did
+            home = mujoco.MjData(self.model)
+            mujoco.mj_resetDataKeyframe(self.model, home, 0)
+            mujoco.mj_kinematics(self.model, home)
+            self.rot0 = home.site_xmat[self.tcp_id].reshape(3, 3).copy()
         self._info = {o.name: self._measure(o) for o in scene.objects}
         # The collision points of each object in its body frame, to find its lowest point.
         self._points = {o.name: np.vstack([meshes.geom_points(self.model, g) for g in
@@ -170,16 +193,23 @@ class World:
         return {n: self.joint_pos(n) for n in self.scene.joints}
 
     def tcp(self) -> np.ndarray:
-        rot = self.data.xmat[self.hand_id].reshape(3, 3)
-        return self.data.xpos[self.hand_id] + rot @ TCP_OFFSET
+        return self.data.site_xpos[self.tcp_id].copy()
 
     def gripper_yaw(self) -> float:
-        """The turn of the hand about world +z from the home orientation, in degrees."""
-        turn = self.data.xmat[self.hand_id].reshape(3, 3) @ self.rot0.T
+        """The turn of the gripper about world +z from the yaw 0 orientation, in degrees."""
+        turn = self.data.site_xmat[self.tcp_id].reshape(3, 3) @ self.rot0.T
         return float(np.degrees(np.arctan2(turn[1, 0], turn[0, 0])))
 
     def gripper_width(self) -> float:
-        return float(self.data.qpos[7] + self.data.qpos[8])
+        """The finger gap. A gripper whose fingers cannot meet, closed on nothing, gives 0, as a gripper whose
+        fingers meet does. Then "closed on nothing" means the same for every arm."""
+        gap = width_of(self.parts, self.model, self.data)
+        shut = self.parts.closed_width
+        return 0.0 if shut > SHUT_GAP and gap <= shut + SHUT_GAP else gap
+
+    def gripper_closed(self) -> bool:
+        """True when the last gripper command was a close."""
+        return bool(self.data.ctrl[self.parts.grip_ctrl] == self.parts.grip_closed)
 
     def object_pos(self, name: str) -> np.ndarray:
         return self.data.body(name).xpos.copy()

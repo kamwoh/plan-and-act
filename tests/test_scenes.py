@@ -13,13 +13,18 @@ CASES = [(s, t) for s in SCENES for t in SCENES[s].tasks]
 
 
 def test_registry_order_and_tasks():
-    assert list(SCENES) == ["cubes", "tray", "zones", "shapes", "drawer", "buttons", "kitchen", "toys"]
+    assert list(SCENES) == ["cubes", "tray", "zones", "shapes", "drawer", "buttons", "kitchen", "toys", "ranking",
+                            "shelf", "peg", "hanoi", "bucket", "mouse", "stapler", "switch", "laptop", "microwave"]
     assert {n: list(s.tasks) for n, s in SCENES.items()} == {
         "cubes": ["reach", "pick", "stack"], "tray": ["red_in_tray", "all_in_tray"],
         "zones": ["red_on_green", "sort"], "shapes": ["pick_cylinder", "small_on_big"],
         "drawer": ["open_drawer", "close_drawer", "cube_in_drawer"], "buttons": ["press_green", "press_sequence"],
         "kitchen": ["bottle_in_bowl", "purple_box_on_plate", "clear_table"],
-        "toys": ["panda_in_tray", "all_toys_in_tray"]}
+        "toys": ["panda_in_tray", "all_toys_in_tray"], "ranking": ["rank_rgb", "rank_size"],
+        "shelf": ["red_on_top_shelf", "all_on_shelf"], "peg": ["insert_peg", "fill_both_holes"],
+        "hanoi": ["top_ring_to_right", "last_two_moves"], "bucket": ["food_in_bucket", "lift_bucket"],
+        "mouse": ["mouse_on_pad", "click_on_pad"], "stapler": ["press_stapler"], "switch": ["switch_on", "switch_off"],
+        "laptop": ["open_laptop", "close_laptop"], "microwave": ["open_door", "food_in_microwave", "cook"]}
 
 
 def test_cubes_layout_is_unchanged():
@@ -100,7 +105,8 @@ def test_fixtures_are_outside_the_region(name):
         apart = cx + hx < x0 - grow or cx - hx > x1 + grow or cy + hy < y0 - grow or cy - hy > y1 + grow
         assert apart, f"{m.body(b).name} geom {g} overlaps the region"
     assert fixtures == {"cubes": 0, "tray": 5, "zones": 3, "shapes": 0, "drawer": 5, "buttons": 1, "kitchen": 0,
-                        "toys": 5}[name]
+                        "toys": 5, "ranking": 4, "shelf": 5, "peg": 5, "hanoi": 4, "bucket": 0,
+                        "mouse": 1, "stapler": 2, "switch": 1, "laptop": 1, "microwave": 6}[name]
 
 
 @pytest.mark.assets
@@ -484,3 +490,16 @@ def test_on_plate_rejects_an_item_on_the_rim():
     w.data.qpos[adr + 2] -= rim - 0.011  # down to about the plate floor: then it passes
     mujoco.mj_forward(w.model, w.data)
     assert SCENES["kitchen"].tasks["purple_box_on_plate"].success(w)
+
+
+@pytest.mark.parametrize("name", list(SCENES))
+def test_the_names_only_description_has_no_sizes_or_positions(name):
+    import re
+    scene = SCENES[name]
+    brief = scene.brief()
+    assert not re.search(r"\d", re.sub(r"[Ss]lot \d", "", brief)), brief
+    for o in scene.objects:
+        assert o.label.split(",")[0] in brief
+    assert scene.describe() == scene.full()
+    from dataclasses import replace
+    assert replace(scene, prompt_text="x").describe() == "x"

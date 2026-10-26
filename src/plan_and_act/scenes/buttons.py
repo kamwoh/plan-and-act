@@ -52,8 +52,10 @@ def press(colour: str) -> list[Action]:
             Action("move_to", (PANEL_X, y, LIFT_Z))]
 
 
+BRIEF = 'A low grey panel with three round buttons on top: red, green and blue. Close the gripper first, then push a button down with the fingertips. An open gripper straddles the button and lands on the panel.'  # the fixed items for a prompt with names only: no positions or sizes
+
 BUTTONS_SCENE = Scene(
-    name="buttons", title="Buttons", objects=(), fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
+    name="buttons", fixtures_brief=BRIEF, title="Buttons", objects=(), fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.35, 0.45, -0.1, 0.1), min_gap=0.1, joints={f"{c}_button": f"{c} button depth {{:.3f}} m" for c in BUTTONS},
     monitors=tuple(threshold_monitor(f"{c}_button", FIRE, REARM, f"{c} button pressed") for c in BUTTONS),
     tasks={t.name: t for t in (

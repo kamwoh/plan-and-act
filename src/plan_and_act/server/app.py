@@ -30,10 +30,11 @@ from plan_and_act.plan.formats import Keyframe
 from plan_and_act.plan.frames import pick_frames
 from plan_and_act.plan.scores import prediction
 from plan_and_act.plan.track import moved_after, wrap_deg
-from plan_and_act.scenes import SCENES, Scene, Task
+from plan_and_act.scenes import SCENES, Scene, Task, find_scene
 from plan_and_act.sim.assets import AssetsMissing
 from plan_and_act.sim.meshes import warm
 from plan_and_act.sim.state import END_STATE, START_STATE, state_problem
+from plan_and_act.sim.world import arm_facts
 from plan_and_act.store.lessons import LessonChanged, LessonStore
 from plan_and_act.store.runlog import RunLog
 from plan_and_act.store.runs import RunStore, valid_run_id
@@ -44,6 +45,7 @@ EnvFactory = Callable[..., Env]
 Preview = Callable[[Scene, int], dict]
 
 
+MAX_SCENE_TEXT = 4000  # characters of the scene description from the page
 MAX_ROUND = 30  # a plan and at most 29 re-plans
 MAX_RUN_KEYFRAMES = 30  # the largest "Run per round"
 RoundMode = Literal["continue", "start"]  # a re-plan goes on from the end state, or starts at the reset
@@ -52,6 +54,7 @@ RoundMode = Literal["continue", "start"]  # a re-plan goes on from the end state
 class RunRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
     scene: str = "cubes"
+    scene_text: str | None = Field(None, max_length=MAX_SCENE_TEXT)  # the scene description from the page
     seed: int = Field(0, ge=0)
     max_steps: int = Field(30, ge=1, le=200)
     show_positions: bool = False
@@ -75,6 +78,7 @@ class RunRequest(BaseModel):
 class PlanRequest(BaseModel):
     instruction: str = Field(min_length=1, max_length=500)
     scene: str = "cubes"
+    scene_text: str | None = Field(None, max_length=MAX_SCENE_TEXT)  # the scene description from the page
     seed: int = Field(0, ge=0)
     use_lessons: bool = True
     auto: bool = False  # the Auto loop: plan, execute and re-plan until the auto-check passes
@@ -101,6 +105,52 @@ class ReplanRequest(BaseModel):
         return (v or "").strip() or None  # empty means: keep the instruction of the round
 
 
+class FreeView(BaseModel):
+    """A free camera pose, as in the MuJoCo viewer: metres and degrees."""
+    lookat: list[float] = Field(min_length=3, max_length=3)
+    distance: float = Field(gt=0.02, le=10.0)
+    azimuth: float
+    elevation: float = Field(ge=-89.9, le=89.9)
+
+
+class FreeCamRequest(BaseModel):
+    scene: str = "cubes"
+    seed: int = Field(0, ge=0)
+    run: str | None = None  # a plan run whose execution ended: the image shows its end state
+    view: FreeView | None = None  # None with on: start at the pose of the fixed Front camera
+    on: bool = True  # False: back to the fixed Front camera
+
+
+class FreeCam:
+    """The scene of the free camera of the page's Front box, while no run is active. It keeps one scene open on
+    its own thread, so that each new pose renders fast. The run frames follow Hub.free_view."""
+
+    def __init__(self):
+        self._key, self._sim, self._env = None, None, None
+        self._lock = asyncio.Lock()
+
+    async def render(self, scene: Scene, seed: int, state: Path | None, view: dict | None) -> dict:
+        async with self._lock:
+            key = (scene.name, seed, str(state))
+            if key != self._key:
+                await self.close()
+                from plan_and_act.env import MujocoEnv
+                self._sim = SimThread()
+                self._env = await self._sim.call(functools.partial(MujocoEnv, scene, None, seed, "", start=state))
+                self._key = key
+            from plan_and_act.env import free_image
+            return await self._sim.call(free_image, self._env, view)
+
+    async def close(self) -> None:
+        if self._sim is not None:
+            sim, env, self._sim, self._env, self._key = self._sim, self._env, None, None, None
+            try:
+                if env is not None:
+                    await sim.call(env.close)
+            finally:
+                sim.shutdown()
+
+
 class ExecuteRequest(BaseModel):
     max_keyframes: int = Field(0, ge=0, le=MAX_RUN_KEYFRAMES)  # run only the first K keyframes. 0: all
 
@@ -118,6 +168,7 @@ class Hub:
     def __init__(self):
         self.clients: set = set()
         self.loop: asyncio.AbstractEventLoop | None = None
+        self.free_view: dict | None = None  # the free camera of the Front box, or None for the fixed camera
 
     async def publish(self, msg: dict) -> None:
         for ws in list(self.clients):
@@ -162,10 +213,18 @@ def _same_origin(headers) -> bool:
     return origin is None or urlsplit(origin).netloc == headers.get("host")
 
 
-def _scene(name: str) -> Scene:
-    if name not in SCENES:
+def _scene(name: str, text: str | None = None) -> Scene:
+    """The scene of a key. A text from the page replaces its description in the prompts."""
+    scene = find_scene(name)
+    if scene is None:
         raise HTTPException(404, f"unknown scene {name!r}")
-    return SCENES[name]
+    return _with_text(scene, text)
+
+
+def _with_text(scene: Scene, text) -> Scene:
+    """The scene with this description in the prompts. No text (an old run): the full description."""
+    text = text.strip() if isinstance(text, str) else ""
+    return dataclasses.replace(scene, prompt_text=text) if text else scene
 
 
 def _b64(b: bytes) -> str:
@@ -324,7 +383,8 @@ def start_state(found: dict) -> Path | None:
 def saved_plan(found: dict) -> tuple[Scene, Task | None, str, int, tuple[Keyframe, ...]] | None:
     """The scene, the task, the instruction, the seed and the keyframes of a saved plan, or None."""
     start, plan = found["start"], found["plan"]
-    scene = SCENES.get(start.get("scene") or "")
+    scene = find_scene(start.get("scene") or "")
+    scene = _with_text(scene, start.get("scene_text")) if scene is not None else None
     try:
         keyframes = tuple(Keyframe.from_dict(k) for k in plan["keyframes"])
         seed = int(start.get("seed", 0))
@@ -545,7 +605,8 @@ class Runner:
                 raise LookupError("the execution has no end images")
             images = tuple(p.read_bytes() for p in paths)
             objects, keyframes = _reply_format(found["plan"])
-            agent = Agent(self.backend, run_id=folder.name, chain=branch_chain(found, self.history))
+            agent = Agent(self.backend, run_id=folder.name, chain=branch_chain(found, self.history),
+                          arm=arm_facts(scene))
             part[:] = [agent.stop]
             if should_stop():
                 detail = {"error": "stopped"}
@@ -750,6 +811,8 @@ class Runner:
                 before(emit)
             make = self.env_factory if start is None else functools.partial(self.env_factory, start=start)
             env = await sim.call(make, scene, task, instruction, seed, show_positions, on_frame)
+            if hasattr(env, "free_view"):  # the run frames of the Front box follow the free camera of the page
+                env.free_view = lambda: self.hub.free_view
             return await body(env, sim.call, emit)
         except Exception as e:  # noqa: BLE001  report and end the run, never kill the server
             emit(end_kind, {"status": "error", "message": f"{type(e).__name__}: {e}"})
@@ -779,6 +842,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
     lessons = LessonStore(Path(lessons_dir) if lessons_dir is not None else Path(runs_dir).parent / "lessons")
     history = RunStore(Path(runs_dir))
     runner = Runner(backend, env_factory or default_env_factory, Path(runs_dir), hub, lessons, history)
+    freecam = FreeCam()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -788,6 +852,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
                              daemon=True, name="warm-meshes").start()
         yield
         await runner.stop()
+        await freecam.close()
 
     app = FastAPI(lifespan=lifespan)
 
@@ -800,8 +865,14 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.get("/api/scenes")
     def scenes() -> list[dict]:
-        return [{"name": s.name, "title": s.title, "description": s.describe(), "tasks": task_list(s),
+        return [{"name": s.name, "title": s.title, "description": s.full(), "brief": s.brief(), "tasks": task_list(s),
                  "cameras": s.camera_labels} for s in SCENES.values()]
+
+    @app.get("/api/robots")
+    def robots() -> list[dict]:
+        """The robot arms, the Panda first. A scene key "<scene>@<robot>" picks one."""
+        from plan_and_act.sim.robots import ROBOTS
+        return [{"name": r.name, "title": r.title, "note": r.note} for r in ROBOTS.values()]
 
     @app.get("/api/state")
     def state() -> dict:
@@ -814,7 +885,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
 
     @app.post("/api/run", dependencies=[Depends(same_origin)])
     async def run(req: RunRequest) -> dict:
-        scene = _scene(req.scene)
+        scene = _scene(req.scene, req.scene_text)
         task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
         return {"run_dir": str(await runner.start(req, scene, task))}
 
@@ -822,7 +893,7 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
     async def plan(req: PlanRequest) -> dict:
         if req.auto and req.max_keyframes > 0 and req.mode == "start":
             raise HTTPException(409, START_WITH_K)
-        scene = _scene(req.scene)
+        scene = _scene(req.scene, req.scene_text)
         task = next((t for t in scene.tasks.values() if t.instruction == req.instruction), None)
         folder = await runner.start_plan(req, scene, task)
         return {"run_dir": str(folder), "run_id": folder.name}
@@ -875,9 +946,11 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
             feedback = _no_run_feedback(found, feedback.status if feedback else "not run")
         if new is not None:
             feedback = dataclasses.replace(feedback, instruction=new)
-        scene = SCENES.get(start.get("scene") or "")
+        scene = find_scene(start.get("scene") or "")
+        scene = _with_text(scene, start.get("scene_text")) if scene is not None else None
         try:
             req = PlanRequest(instruction=new or old_instruction, scene=start.get("scene") or "",
+                              scene_text=start.get("scene_text"),
                               seed=int(start.get("seed", 0)), use_lessons=start.get("use_lessons") is not False,
                               auto=body.auto, rounds=min(body.rounds, MAX_ROUND - plan_round(start)),
                               mode=body.mode, max_keyframes=body.max_keyframes)
@@ -972,6 +1045,30 @@ def create_app(backend: LLMBackend, env_factory: EnvFactory | None = None, runs_
         except LessonChanged as e:  # another tab or a run end changed the list: reload it
             raise HTTPException(409, str(e)) from e
         return {"ok": True}
+
+    @app.post("/api/freecam", dependencies=[Depends(same_origin)])
+    async def free_camera(req: FreeCamRequest) -> dict:
+        """Set the free camera of the Front box. While no run is active, give its image of the start layout of
+        the scene and seed, or of the end state of a run. During a run, the next frames show it."""
+        if not req.on:
+            hub.free_view = None
+            return {"on": False}
+        view = req.view.model_dump() if req.view is not None else None
+        hub.free_view = view
+        if runner.running:
+            return {"on": True, "live": True, "view": view}
+        scene = _scene(req.scene)
+        state = None
+        if req.run and valid_run_id(req.run) and (Path(runs_dir) / req.run / END_STATE).is_file():
+            state = Path(runs_dir) / req.run / END_STATE
+            if state_problem(state, scene, req.seed):
+                state = None
+        try:
+            out = await freecam.render(scene, req.seed, state, view)
+        except AssetsMissing as e:
+            raise HTTPException(503, str(e)) from e
+        hub.free_view = out["view"]
+        return {"on": True, **out}
 
     @app.post("/api/stop", dependencies=[Depends(same_origin)])
     async def stop() -> dict:

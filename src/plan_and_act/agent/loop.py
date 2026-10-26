@@ -19,10 +19,8 @@ from plan_and_act.agent.parse import (
     parse_verdict,
 )
 from plan_and_act.agent.prompts import (
-    CHAIN_SYSTEM,
     PLAN_REPLY_SCHEMA,
     REPLY_SCHEMA,
-    SYSTEM,
     VERDICT_SCHEMA,
     Feedback,
     Frame,
@@ -32,11 +30,14 @@ from plan_and_act.agent.prompts import (
     build_replan_text,
     build_user_text,
     build_verdict_text,
+    chain_system,
 )
+from plan_and_act.agent.prompts import system as step_system
 from plan_and_act.agent.rules import check_result
 from plan_and_act.env import Env
 from plan_and_act.llm.protocol import Conversation, Final, LLMBackend, LLMError, Message, Usage
 from plan_and_act.store.lessons import LessonStore
+from plan_and_act.types import PANDA_FACTS, ArmFacts
 
 Emit = Callable[[str, dict], None]
 Call = Callable[..., Awaitable]
@@ -100,8 +101,9 @@ MAX_RUN_LESSONS = 30  # the newest lessons of this run that go into each step me
 class Agent:
     def __init__(self, backend: LLMBackend, config: AgentConfig | None = None, system: str | None = None,
                  store: LessonStore | None = None, use_lessons: bool = True, run_id: str = "",
-                 chain: Chain | None = None):
-        """`chain` is the chat of a plan run and of a verdict. Without it, the run starts a chain of its own."""
+                 chain: Chain | None = None, arm: ArmFacts | None = None):
+        """`chain` is the chat of a plan run and of a verdict. Without it, the run starts a chain of its own.
+        `arm` names the robot in the prompts. A run takes it from the env."""
         self.backend, self.cfg = backend, config or AgentConfig()
         self.store, self.use_lessons, self.run_id = store, use_lessons, run_id
         self.chain = chain or Chain(run_id)
@@ -110,7 +112,9 @@ class Agent:
         self.chat_start = False  # the chat has the start images of the scene
         self.saved_lessons: tuple[str, ...] = ()  # from earlier runs of the scene, oldest first
         self.run_lessons: list[str] = []  # the new lessons of this run, oldest first, without duplicates
-        self.system = system or SYSTEM
+        self.custom_system = system
+        self.arm = arm or PANDA_FACTS
+        self.system = system or step_system(self.arm)
         self._stop = asyncio.Event()
         self._conv: Conversation | None = None
 
@@ -121,8 +125,10 @@ class Agent:
 
     async def run(self, env: Env, call: Call, emit: Emit) -> str:
         self.run_lessons = []
+        self.arm = getattr(env, "arm_facts", self.arm)
+        self.system = self.custom_system or step_system(self.arm)
         self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
-        start = {"scene": env.scene_name, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
+        start = {"scene": env.scene_name, "scene_text": env.scene_text, "instruction": env.instruction, "max_steps": self.cfg.max_steps,
                  "check": env.check_name, "system_prompt": self.system,
                  "use_lessons": self.use_lessons, "saved_lessons": list(self.saved_lessons)}
         if hasattr(env, "cameras"):  # the page draws the planned path on the camera images with these
@@ -234,10 +240,12 @@ class Agent:
         the plan and builds the view of the page. Nothing moves. With feedback, this is a re-plan: a later round
         that sees the last plan, its result and its end images. auto_rounds is set in a round of the Auto loop.
         All rounds of a chain share one chat: a re-plan continues the chat of self.chain."""
+        self.arm = getattr(env, "arm_facts", self.arm)
         self.saved_lessons = tuple(self.store.texts(env.scene_name)) if self.store and self.use_lessons else ()
-        emit("run_start", {"mode": "plan", "scene": env.scene_name, "instruction": env.instruction, "seed": seed,
+        emit("run_start", {"mode": "plan", "scene": env.scene_name, "scene_text": env.scene_text,
+                           "instruction": env.instruction, "seed": seed,
                            "run_id": self.run_id, "max_steps": 1, "check": env.check_name,
-                           "system_prompt": CHAIN_SYSTEM, "use_lessons": self.use_lessons,
+                           "system_prompt": chain_system(self.arm), "use_lessons": self.use_lessons,
                            "chain": self.chain.id, "session_id": self.chain.session if feedback else None,
                            "saved_lessons": list(self.saved_lessons),
                            "round": feedback.round if feedback else 1, "parent": feedback.parent if feedback else None,
@@ -332,7 +340,7 @@ class Agent:
         if note is not None:
             emit("chat_lost", {"step": 1, "message": note, "error": None})
         while True:
-            self._conv = await self.backend.open(CHAIN_SYSTEM, chain=self.chain.id, resume=resume)
+            self._conv = await self.backend.open(chain_system(self.arm), chain=self.chain.id, resume=resume)
             try:
                 reply, error, _ = await self._ask(msg, attempts, on_ask, schema, parse)
                 kept = error is None or error.kind == "schema"  # a reply in the wrong format still ends the turn

@@ -252,9 +252,12 @@ def test_replayed_events_change_no_run_state_or_saved_scene():
     handler = _body(js, "function onEvent(ev, replay = false)")
     assert re.search(r"if \(!replay\) \{[^}]*setRunning\(true\)", handler)
     assert "if (!replay && !autoLoop) setRunning(false)" in handler  # an Auto loop stays busy until loop_end
-    assert "chooseScene(ev.scene, true, !replay)" in handler
+    assert "chooseKey(ev.scene, true, !replay)" in handler  # the scene and the robot of the run
     choose = _body(js, "function chooseScene(name, keepText = false, save = true)")
     assert "if (save) writeScene(sceneName)" in choose
+    key = _body(js, "function chooseKey(key, keepText = false, save = true)")
+    assert "chooseRobot(robot, save)" in key and "chooseScene(scene, keepText, save)" in key
+    assert "if (save) store(ROBOT_KEY, robotName)" in _body(js, "function chooseRobot(name, save = true)")
 
 
 def test_observation_images_are_base64_or_server_urls():

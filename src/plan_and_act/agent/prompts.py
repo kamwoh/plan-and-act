@@ -4,12 +4,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from plan_and_act.types import Observation, fmt
+from plan_and_act.types import PANDA_FACTS, ArmFacts, Observation, fmt
 
 # Parts that the step prompt and the plan prompt share. Each part ends with a newline.
 COORDS = """\
 Coordinates are in metres, in the world frame:
-- The robot base is at x=0, y=0. The table surface is at z=0.
+- The robot base is at x={bx}, y={by}. The table surface is at z=0.
 - +x points away from the robot. +y points to the right in both images.
 - In the top image, +x points down. In the front image, +x points toward the camera.
 - Both images have a grid on the table, with labels for x and y. Use it to find positions.
@@ -20,7 +20,7 @@ The centre of an object on the table is at half its height.
 """
 GRIPPER = """\
 The gripper position is the point between the two fingertips. The gripper always points down.
-The gripper is 0.08 m wide when open. When it closes on an object, the width is about the width of the object. \
+The gripper is {width} m wide when open. When it closes on an object, the width is about the width of the object. \
 When it closes on nothing, the width is about 0.
 """
 YAW = """\
@@ -37,7 +37,7 @@ An object can stand at an angle. Then turn the gripper with "yaw" so that the fi
 its narrow side.
 """
 
-SYSTEM = f"""\
+_SYSTEM = f"""\
 You control a Franka Panda robot arm in a physics simulation. Each step, you get two camera images \
 and the state of the gripper. You reply with a short plan and a list of actions.
 
@@ -65,7 +65,7 @@ Write a "lessons" item only when an action had a result you did not expect. Writ
 for example "Closing 9 cm up on the bottle slipped. 6 cm up held." \
 Set "done" to true when you are sure the task is complete. The actions in the same reply still run first."""
 
-PLAN_SYSTEM = f"""\
+_PLAN_SYSTEM = f"""\
 You plan a whole task for a Franka Panda robot arm in a physics simulation, before the arm moves. \
 You get two camera images of the start and the state of the gripper. You reply in one message \
 with what you believe the scene is, and with the keyframes of the whole task.
@@ -192,10 +192,45 @@ You judge if a robot arm finished a task in a physics simulation. You get the ta
 ran, and two camera images of the scene after the run. """ + JUDGE
 
 # One chat for a chain: the round 1 plan, then each re-plan and each verdict as the next message.
-CHAIN_SYSTEM = PLAN_SYSTEM + """
+_CHAIN_TAIL = """
 
 After an execution, a message can ask for your verdict instead of a plan: did the arm finish the task? \
 It has two camera images of the scene after the run. """ + JUDGE
+
+
+_CLAMP = "The arm moves a target outside this box to the nearest point inside it."
+_OTHER_ARM = " This arm cannot reach every point of the box. A move out of its reach fails."
+_DOWN = "The gripper always points down."
+_TILT = ("Where this arm cannot point it straight down, it tilts the gripper up to {:g} degrees. "
+         "The gripper position is still the point between the fingertips.")
+
+
+def _fill(text: str, arm: ArmFacts) -> str:
+    """The text for this arm: its name, base, open width and start point. The box of REACH is the box of the
+    Panda, so another arm gets a warning after it."""
+    text = (text.replace("{bx}", f"{arm.base[0]:g}").replace("{by}", f"{arm.base[1]:g}")
+            .replace("{width}", f"{arm.open_width:g}").replace("Franka Panda", arm.title)
+            .replace("x 0.30, y 0.00, z 0.40", "x {:.2f}, y {:.2f}, z {:.2f}".format(*arm.start)))
+    if arm.max_tilt:
+        text = text.replace(_DOWN, f"{_DOWN} {_TILT.format(arm.max_tilt)}")
+    return text if arm == PANDA_FACTS else text.replace(_CLAMP, _CLAMP + _OTHER_ARM)
+
+
+def system(arm: ArmFacts = PANDA_FACTS) -> str:
+    """The system prompt of a step run."""
+    return _fill(_SYSTEM, arm)
+
+
+def plan_system(arm: ArmFacts = PANDA_FACTS) -> str:
+    return _fill(_PLAN_SYSTEM, arm)
+
+
+def chain_system(arm: ArmFacts = PANDA_FACTS) -> str:
+    """The system prompt of a chain: the plan prompt and the verdict rules."""
+    return plan_system(arm) + _CHAIN_TAIL
+
+
+SYSTEM, PLAN_SYSTEM, CHAIN_SYSTEM = system(), plan_system(), chain_system()
 
 VERDICT_SCHEMA = {
     "type": "object",

@@ -25,8 +25,8 @@ def plan_request(**state):
     return json.loads(out)
 
 
-def new_chain(auto=False):
-    return {"scene": "cubes", "instruction": TEXT, "seed": 7, "use_lessons": True, "auto": auto, "rounds": 3,
+def new_chain(auto=False, scene_text=None):
+    return {"scene": "cubes", "scene_text": scene_text, "instruction": TEXT, "seed": 7, "use_lessons": True, "auto": auto, "rounds": 3,
             "mode": "continue", "max_keyframes": 2}
 
 
@@ -36,6 +36,11 @@ def test_without_a_chain_plan_starts_a_new_chain(case):
     r = plan_request(runId=None, newest=TEXT)
     assert (r["label"], r["url"], r["body"]) == ("▶ Plan", "/api/plan", new_chain())
     assert r["title"].startswith("Claude writes its belief of the scene")
+
+
+def test_a_new_chain_sends_the_scene_description_of_the_box():
+    r = plan_request(runId=None, sceneText="Objects: red cube.")
+    assert r["body"] == new_chain(scene_text="Objects: red cube.")
 
 
 def test_a_new_instruction_goes_on_from_the_newest_round():

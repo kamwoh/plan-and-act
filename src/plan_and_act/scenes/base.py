@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 Layout = dict[str, tuple[float, float, float]]  # name -> (x, y, yaw in degrees)
 Monitor = Callable[["World"], "str | None"]  # called after each physics step; returns an event or None
+NO_HINTS = "The message gives no positions or sizes: find them in the images."
 MAX_TRIES = 10000  # random points to try before layout() gives up
 
 
@@ -133,6 +134,9 @@ class Scene:
     # The fixed items as shapes, one for each geom of fixtures_xml, at the scene start. A test checks that
     # the two agree. The plan view draws them.
     fixtures: tuple[Entity, ...] = ()
+    robot: str = "panda"  # the name of the robot arm in plan_and_act.sim.robots
+    fixtures_brief: str = ""  # the fixed items without positions or sizes, for the names-only description
+    prompt_text: str | None = None  # the scene description from the page: it replaces describe() in the prompts
 
     @property
     def meshes(self) -> tuple[str, ...]:
@@ -168,5 +172,16 @@ class Scene:
         return {o.name: out[o.name] for o in self.objects}
 
     def describe(self) -> str:
+        """The scene description of the prompts: the text from the page, or else the full description."""
+        return self.prompt_text if self.prompt_text is not None else self.full()
+
+    def full(self) -> str:
+        """The objects with their sizes, and the fixed items with their positions and sizes."""
         text = "Objects: " + ("; ".join(o.text() for o in self.objects) or "none") + "."
         return f"{text} {self.fixtures_text}" if self.fixtures_text else text
+
+    def brief(self) -> str:
+        """Names only: Claude finds the positions and the sizes in the images."""
+        text = "Objects: " + ("; ".join(o.label.split(",")[0] for o in self.objects) or "none") + "."
+        text = f"{text} {self.fixtures_brief}" if self.fixtures_brief else text
+        return f"{text} {NO_HINTS}"

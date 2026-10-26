@@ -34,6 +34,29 @@ class Cameras:
         self._r.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = int(shadows)
         return self._r.render().copy()
 
+    def render_free(self, view: dict, shadows: bool = True) -> np.ndarray:
+        """An image from a free camera: {"lookat": [x, y, z], "distance", "azimuth", "elevation"} in metres and
+        degrees, as in the MuJoCo viewer. For the page only: Claude always gets the fixed cameras."""
+        cam = mujoco.MjvCamera()
+        cam.type = mujoco.mjtCamera.mjCAMERA_FREE
+        cam.lookat[:] = view["lookat"]
+        cam.distance, cam.azimuth, cam.elevation = view["distance"], view["azimuth"], view["elevation"]
+        self._r.update_scene(self.world.data, camera=cam)
+        self._r.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = int(shadows)
+        return self._r.render().copy()
+
+    def free_view(self, cam: str = "front") -> dict:
+        """The free camera pose that shows what a fixed camera shows: it looks at the point where the camera
+        axis meets the table, or 1 m ahead when the axis does not meet it."""
+        m, d = self.world.model, self.world.data
+        cid = m.camera(cam).id
+        pos, fwd = d.cam_xpos[cid], -d.cam_xmat[cid].reshape(3, 3)[:, 2]
+        dist = -pos[2] / fwd[2] if fwd[2] < -1e-3 else 1.0
+        lookat = pos + fwd * dist
+        return {"lookat": [round(float(v), 4) for v in lookat], "distance": round(float(dist), 4),
+                "azimuth": round(float(np.degrees(np.arctan2(fwd[1], fwd[0]))), 2),
+                "elevation": round(float(np.degrees(np.arcsin(np.clip(fwd[2], -1.0, 1.0)))), 2)}
+
     def project(self, cam: str, points) -> np.ndarray:
         m, d = self.world.model, self.world.data
         cid = m.camera(cam).id

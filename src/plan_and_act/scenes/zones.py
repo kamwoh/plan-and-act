@@ -38,8 +38,10 @@ def _sort_plan(w):
     return [a for c in ZONES for a in _to_zone(w, f"{c}_cube", c)]
 
 
+BRIEF = 'Three flat coloured squares (zones) on the table: red, blue and green.'  # the fixed items for a prompt with names only: no positions or sizes
+
 ZONES_SCENE = Scene(
-    name="zones", title="Zones", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
+    name="zones", fixtures_brief=BRIEF, title="Zones", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.40, 0.58, -0.25, 0.25), min_gap=0.10,
     tasks={t.name: t for t in (
         Task("red_on_green", "Put the red cube on the green zone.", lambda w: on_zone(w, "red_cube", "green"),

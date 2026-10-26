@@ -142,8 +142,10 @@ def _cube_plan(w) -> list[Action]:
             _at(centre, LIFT_Z)]
 
 
+BRIEF = 'A wooden cabinet with a drawer. The drawer slides out toward the robot (-x). Its handle is a dark bar along y, in front of the drawer front.'  # the fixed items for a prompt with names only: no positions or sizes
+
 DRAWER = Scene(
-    name="drawer", title="Drawer", objects=(RED,), fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
+    name="drawer", fixtures_brief=BRIEF, title="Drawer", objects=(RED,), fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.35, 0.45, -0.25, -0.12), min_gap=0.10, joints={"drawer": "drawer slide {:.3f} m (0 = closed)"},
     # The front camera would see only the back of the cabinet. A side camera shows the drawer slide left-right.
     camera_overrides={"front": SIDE_CAMERA}, camera_labels={"front": "Side", "top": "Top · grid"},

@@ -46,7 +46,7 @@ def test_plan_request_uses_the_same_fields_as_start():
     assert 'url: "/api/plan"' in body
     for field in ("scene: s.scene", "instruction: s.instruction", "seed: s.seed", "use_lessons: s.useLessons"):
         assert field in body
-    assert "scene: sceneName" in _body(js, "function planState()")
+    assert "scene: sceneKey()" in _body(js, "function planState()")
     assert "show_positions" not in body  # a plan never gets the true positions
 
 
@@ -99,7 +99,7 @@ def test_clear_plan_forgets_the_plan_and_disables_execute():
     assert "!planRunId" in _body(js, "function setRunning")
     handler = _body(js, "function onEvent(ev, replay = false)")
     start = handler[handler.index('ev.kind === "exec_start"'):handler.index('ev.kind === "exec_end"')]
-    assert "chooseScene(ev.scene, true, !replay)" in start
+    assert "chooseKey(ev.scene, true, !replay)" in start
 
 
 def test_scripts_never_wait_for_the_cdn():

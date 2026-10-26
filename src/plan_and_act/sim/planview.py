@@ -15,12 +15,6 @@ from plan_and_act.types import fmt
 
 VIEW_VERSION = 1
 TABLE = Entity("table", "box", (2.0, 2.0, 0.01), (0.0, 0.0, -0.005), 0.0, (0.55, 0.5, 0.42, 1.0))
-OPEN_GAP = 0.08  # the finger gap of the open gripper
-# The gripper as boxes in its own frame: the origin is the point between the fingertips, and the fingers
-# close along x. Measured from the Panda model: the fingertips reach 1 cm below the origin.
-HAND = {"name": "hand", "shape": "box", "size": [0.20, 0.058, 0.075], "xyz": [0.0, 0.0, 0.0825], "slide": 0}
-FINGER_SIZE, FINGER_Z = [0.027, 0.021, 0.057], 0.0185
-AGENT_COLOR = [0.86, 0.87, 0.9, 1.0]
 
 
 def _vec(v) -> list[float]:
@@ -73,26 +67,25 @@ def resolve(name: str | None, believed: list[Entity]) -> Entity | None:
     return next((b for b in believed if norm_name(b.name) == norm_name(name)), None)
 
 
-def finger_gap(k: Keyframe, believed: list[Entity]) -> float:
-    """Open: 0.08. Closed: the narrow width of the carried entity, at most 0.08, or 0 on nothing."""
+def finger_gap(k: Keyframe, believed: list[Entity], open_gap: float) -> float:
+    """Open: the open gap. Closed: the narrow width of the carried entity, at most the open gap, or 0 on
+    nothing."""
     if k.state == "open":
-        return OPEN_GAP
+        return open_gap
     held = resolve(k.carrying, believed)
-    return round(min(OPEN_GAP, held.size[0], held.size[1]), 4) if held is not None else 0.0
+    return round(min(open_gap, held.size[0], held.size[1]), 4) if held is not None else 0.0
 
 
-def true_gap(state: str, held: Entity | None) -> float:
+def true_gap(state: str, held: Entity | None, open_gap: float) -> float:
     """The finger gap with a true held object: as finger_gap, from the measured narrow width."""
     if state == "open":
-        return OPEN_GAP
-    return min(OPEN_GAP, held.size[0], held.size[1]) if held is not None else 0.0
+        return open_gap
+    return min(open_gap, held.size[0], held.size[1]) if held is not None else 0.0
 
 
-def agent() -> dict:
-    fingers = [{"name": f"finger_{side}", "shape": "box", "size": FINGER_SIZE,
-                "xyz": [sign * FINGER_SIZE[0] / 2, 0.0, FINGER_Z], "slide": sign}
-               for side, sign in (("left", 1), ("right", -1))]
-    return {"parts": [HAND, *fingers], "slide_axis": [1.0, 0.0, 0.0], "color": AGENT_COLOR}
+def agent(world: World) -> dict:
+    """The gripper of the robot as boxes in its own frame: the origin is the tcp, and the fingers close along x."""
+    return world.parts.agent
 
 
 def timed_keyframes(belief, keyframes) -> list[Keyframe]:
@@ -124,13 +117,14 @@ def build_view(world: World, belief, keyframes, marks: list[dict] | None, width:
         start["carrying"] = match[true_held]
     track = build_track(start, timed_keyframes(believed, keyframes),
                         move_s=lambda a, b, ya, yb: move_duration(np.asarray(a), np.asarray(b), ya, yb),
-                        settle_s=SETTLE_S, change_s=GRIP_S, gap=lambda k: finger_gap(k, believed))
+                        settle_s=SETTLE_S, change_s=GRIP_S,
+                        gap=lambda k: finger_gap(k, believed, world.parts.open_width))
     return {
         "version": VIEW_VERSION,
         "cameras": cameras(world, width, height),
         "grid": {"x": list(GRID_X), "y": list(GRID_Y), "z": 0.0},
         "fixtures": [e.to_dict() for e in fixtures(world)],
-        "agent": agent(),
+        "agent": agent(world),
         "believed": [e.to_dict() for e in believed],
         "true_match": match,
         "track": track,
@@ -158,8 +152,8 @@ def check_plan(world: World, arm: Arm, belief, keyframes, state: str = "open") -
         start["holds"] = true_held
         if true_held in match:
             start["carrying"] = match[true_held]
-    marks = plan_checks(start, list(keyframes), truth, names, round_names, agent()["parts"], reach,
-                        open_state="open", gap=true_gap, believed_to_true={b: t for t, b in match.items()},
+    marks = plan_checks(start, list(keyframes), truth, names, round_names, agent(world)["parts"], reach,
+                        open_state="open", gap=lambda state, held: true_gap(state, held, world.parts.open_width), believed_to_true={b: t for t, b in match.items()},
                         belief=believed)
     return {"perception": p["rows"], "missing": p["missing"], "invented": p["invented"],
             "summary": {**p["summary"], "failed_keyframes": sum(not m["ok"] for m in marks)}, "marks": marks}

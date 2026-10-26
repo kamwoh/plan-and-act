@@ -60,8 +60,10 @@ def _all_plan(w):
     return [a for name, xy in SPOTS.items() for a in put(w, name, xy, RELEASE_Z)]
 
 
+BRIEF = 'A grey tray with low walls.'  # the fixed items for a prompt with names only: no positions or sizes
+
 TRAY = Scene(
-    name="tray", title="Tray", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
+    name="tray", fixtures_brief=BRIEF, title="Tray", objects=THREE_CUBES, fixtures_xml=FIXTURES, fixtures_text=TEXT, fixtures=SHAPES,
     region=(0.40, 0.65, -0.25, 0.12), min_gap=0.10,
     tasks={t.name: t for t in (
         Task("red_in_tray", "Put the red cube in the tray.", lambda w: in_tray(w, "red_cube"), _red_plan),

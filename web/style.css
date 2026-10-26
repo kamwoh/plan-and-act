@@ -127,6 +127,16 @@ textarea:focus, input[type="number"]:focus { border-color: var(--accent); box-sh
 .switches .switch { padding-bottom: 2px; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--muted); font-weight: 500; }
 .field input { width: 76px; padding: 6px 9px; font-family: var(--mono); font-size: 13px; }
+.field select {
+  background: var(--bg); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 9px; font-size: 13px;
+  max-width: 220px; outline: none;
+}
+.field select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(91, 140, 255, 0.18); }
+.field select:disabled { opacity: 0.5; cursor: not-allowed; }
+.field.inline { flex-direction: row; align-items: center; gap: 6px; }
+.scene-text { display: flex; flex-direction: column; gap: 6px; }
+.scene-text-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#scene_text { font-size: 12px; color: var(--muted); min-height: 44px; }
 .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); cursor: pointer; padding-bottom: 6px; }
 .switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .track { width: 30px; height: 17px; border-radius: 999px; background: var(--line-2); position: relative; transition: background 0.15s; flex: none; }
@@ -395,3 +405,6 @@ canvas[hidden] { display: none; }
 .btn.replan-btn:hover { background: rgba(91, 140, 255, 0.12); }
 .run-round { background: rgba(91, 140, 255, 0.16); color: var(--accent); }
 .run-parent { color: var(--muted); font-size: 11px; }
+#live { cursor: grab; touch-action: none; user-select: none; }
+#live:active { cursor: grabbing; }
+.cam.free .cam-label { color: var(--accent); }

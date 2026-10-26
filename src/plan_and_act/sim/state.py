@@ -22,11 +22,12 @@ class StateMismatch(ValueError):
 
 
 def scene_version(scene: Scene) -> str:
-    """A short hash of the MuJoCo XML of the scene. A change to the scene model changes it."""
-    if scene.name not in _VERSIONS:
+    """A short hash of the robot name and the MuJoCo XML of the scene. A change to either changes it."""
+    key = f"{scene.name}@{scene.robot}"
+    if key not in _VERSIONS:
         from plan_and_act.sim.world import scene_xml
-        _VERSIONS[scene.name] = hashlib.sha256(scene_xml(scene).encode()).hexdigest()[:16]
-    return _VERSIONS[scene.name]
+        _VERSIONS[key] = hashlib.sha256(f"{scene.robot}\n{scene_xml(scene)}".encode()).hexdigest()[:16]
+    return _VERSIONS[key]
 
 
 def save(path: Path, scene: Scene, seed: int, data: mujoco.MjData, yaw: float, events: list[str]) -> None:

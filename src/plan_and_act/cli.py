@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import argparse
 
-from plan_and_act.scenes import SCENES
+from plan_and_act.scenes import SCENES, find_scene
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -13,6 +13,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--scene", choices=list(SCENES), default="cubes")
     s.add_argument("--task", required=True, help="a task of the scene")
     s.add_argument("--seed", type=int, default=0)
+    s.add_argument("--robot", default="panda", help="the robot arm, for example ur5e")
     v = sub.add_parser("serve", help="start the web app")
     v.add_argument("--host", default="127.0.0.1")
     v.add_argument("--port", type=int, default=8780)
@@ -23,7 +24,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.port == 8765:
             p.error("port 8765 is for ps1-mind. Use another port, for example 8780")
         return _serve(args.host, args.port, args.model, args.runs)
-    scene = SCENES[args.scene]
+    scene = find_scene(f"{args.scene}@{args.robot}")
+    if scene is None:
+        from plan_and_act.sim.robots import ROBOTS
+        p.error(f"unknown robot {args.robot!r}. Choose from: {', '.join(ROBOTS)}")
     if args.task not in scene.tasks:
         p.error(f"scene {scene.name} has no task {args.task!r}. Choose from: {', '.join(scene.tasks)}")
     return _scripted(scene.name, args.task, args.seed)
@@ -57,7 +61,7 @@ def _scripted(scene_name: str, task_name: str, seed: int) -> int:
     from plan_and_act.sim.arm import Arm
     from plan_and_act.sim.world import World
 
-    scene = SCENES[scene_name]
+    scene = find_scene(scene_name)
     task = scene.tasks[task_name]
     w = World(scene)
     w.reset(scene.layout(seed), task.initial_qpos)
